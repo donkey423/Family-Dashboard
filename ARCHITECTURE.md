@@ -115,6 +115,39 @@ Gmail query
 
 若使用者選擇「保存到家庭文件匣」，application service 才將該 attachment 寫入 `StoragePort`，並更新 Document 的本地持久化狀態。
 
+### Gmail Sync Use Case 與 Trigger
+
+Gmail 同步的業務邏輯集中在單一 `GmailSyncUseCase`。Trigger 只負責「何時執行」，不得自行實作 Gmail 搜尋、附件解析、去重或 Finance 寫入。
+
+```text
+               +-- Manual: 立即同步 Gmail
+               |
+Trigger --------+-- Scheduler: 每 30 分鐘
+               |
+               +-- Future: Gmail Push / Pub/Sub
+                         |
+                         v
+                  GmailSyncUseCase
+                         |
+                         v
+               Gmail DocumentSource
+                         |
+                         v
+                 DocumentProcessor
+                         |
+                         v
+                  Finance / Jobs
+```
+
+實作順序固定為：
+
+1. **Manual sync first**：先由 UI/API 手動觸發，完整驗證 Gmail query、remote reference、attachment bytes、processor、去重與 Finance persistence。
+2. **Incremental sync second**：保存 Gmail sync cursor/state，只處理上次成功同步後的新變更；若 state 過期則受控 fallback。
+3. **Scheduler third**：前兩步穩定後，才加入預設每 30 分鐘一次的本機 scheduler，呼叫同一個 `GmailSyncUseCase`。
+4. **Push optional**：只有產品真的需要近即時更新時，才導入 Gmail Push / Pub/Sub；Push 仍只是一種 trigger。
+
+Windows 關機時 scheduler 不執行，這是 local-first 架構的預期行為。重新開機後由 incremental sync 補抓關機期間的新信，因此不要求主機 24 小時常駐。
+
 ### 即時查看原始帳單
 
 ```text
