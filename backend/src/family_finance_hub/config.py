@@ -1,0 +1,26 @@
+from dataclasses import dataclass
+import os
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Settings:
+    database_url: str = "sqlite:///./data/family-finance-hub.db"
+    storage_root: Path = Path("./data/documents")
+    max_upload_bytes: int = 25 * 1024 * 1024
+    cors_origins: tuple[str, ...] = ("http://127.0.0.1:5173", "http://localhost:5173")
+
+    @classmethod
+    def from_environment(cls) -> "Settings":
+        return cls(
+            database_url=os.getenv(
+                "FAMILY_FINANCE_HUB_DATABASE_URL",
+                "sqlite:///./data/family-finance-hub.db",
+            ),
+            storage_root=Path(os.getenv("FAMILY_FINANCE_HUB_STORAGE_ROOT", "./data/documents")),
+            max_upload_bytes=int(os.getenv("FAMILY_FINANCE_HUB_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024))),
+            cors_origins=tuple(filter(None, os.getenv(
+                "FAMILY_FINANCE_HUB_CORS_ORIGINS",
+                "http://127.0.0.1:5173,http://localhost:5173",
+            ).split(","))),
+        )

@@ -1,0 +1,98 @@
+import csv
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+from hashlib import sha256
+import json
+from io import StringIO
+from uuid import uuid4
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ..documents.service import DocumentService
+from ..models import FinanceTransaction, ImportJob
+from ..storage.ports import StoragePort
+
+
+def _date_value(value: str | None) -> date | None:
+    if not value:
+        return None
+    for pattern in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(value.strip(), pattern).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _field(row: dict[str, str], *names: str) -> str:
+    normalized = {str(key or "").strip().casefold(): (value or "").strip() for key, value in row.items()}
+    return next((normalized[name] for name in names if normalized.get(name)), "")
+
+
+class FinanceCsvImportService:
+    def __init__(self, storage: StoragePort):
+        self.documents = DocumentService(storage)
+        self.storage = storage
+
+    def import_csv(self, session: Session, filename: str, content: bytes) -> dict[str, int | str | bool]:
+        if not filename.lower().endswith(".csv"):
+            raise ValueError("財務匯入僅接受 CSV 檔案")
+        imported = self.documents.import_bytes(session, filename, content, "finance")
+        text = content.decode("utf-8-sig")
+        reader = csv.DictReader(StringIO(text))
+        if not reader.fieldnames:
+            raise ValueError("CSV 缺少標題列")
+        headers = {header.strip().casefold() for header in reader.fieldnames if header}
+        if not ({"amount", "transaction amount"} & headers) and not ({"debit", "withdrawal", "credit", "deposit"} & headers):
+            raise ValueError("CSV 需要 amount 欄位，或 debit/credit 欄位")
+
+        created = 0
+        for row_number, row in enumerate(reader, start=1):
+            description = _field(row, "description", "memo", "name", "payee", "merchant")
+            amount_text = _field(row, "amount", "transaction amount")
+            if amount_text:
+                amount_text = amount_text.replace(",", "").replace("$", "")
+                try:
+                    amount = Decimal(amount_text)
+                except InvalidOperation as error:
+                    raise ValueError(f"第 {row_number} 筆金額格式無效") from error
+            else:
+                debit = _field(row, "debit", "withdrawal")
+                credit = _field(row, "credit", "deposit")
+                if not debit and not credit:
+                    raise ValueError("CSV 需要 amount 欄位，或 debit/credit 欄位")
+                try:
+                    amount = -Decimal(debit.replace(",", "").replace("$", "") or "0")
+                    amount += Decimal(credit.replace(",", "").replace("$", "") or "0")
+                except InvalidOperation as error:
+                    raise ValueError(f"第 {row_number} 筆金額格式無效") from error
+
+            normalized_row = json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            row_hash = sha256(f"{imported.document.id}:{row_number}:{normalized_row}".encode("utf-8")).hexdigest()
+            if session.scalar(select(FinanceTransaction.id).where(FinanceTransaction.row_hash == row_hash)):
+                continue
+            transaction = FinanceTransaction(
+                id=str(uuid4()),
+                source_document_id=imported.document.id,
+                row_hash=row_hash,
+                transaction_date=_date_value(_field(row, "date", "posted_at", "transaction_date")),
+                description=description or f"CSV 第 {row_number} 筆",
+                amount=amount,
+                currency=(_field(row, "currency") or "TWD").upper()[:8],
+                raw_json=normalized_row,
+            )
+            session.add(transaction)
+            created += 1
+
+        job = ImportJob(
+            id=str(uuid4()),
+            document_id=imported.document.id,
+            source_type="csv",
+            target_module="finance",
+            status="completed",
+            summary=f"新增 {created} 筆交易" + ("；文件內容已存在" if imported.duplicate else ""),
+        )
+        session.add(job)
+        session.commit()
+        return {"document_id": imported.document.id, "duplicate_document": imported.duplicate, "created_transactions": created}
