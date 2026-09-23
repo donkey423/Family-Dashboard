@@ -6,6 +6,7 @@
 Windows 主機
   React/Vite Web UI  ->  FastAPI Modular Monolith  ->  SQLite + Alembic
                                                 ->  Local filesystem adapter
+                                                ->  Future external source adapters
 MacBook / iPhone  -- Tailscale private network --> Windows 主機
 ```
 
@@ -17,23 +18,34 @@ MacBook / iPhone  -- Tailscale private network --> Windows 主機
 Presentation (React)
         -> HTTP API / Application services
         -> Domain services and domain models
-        -> Ports (storage, future source/provider boundaries)
+        -> Ports (storage, document source, processor/provider boundaries)
 Infrastructure adapters implement ports
 ```
 
-Domain 不直接依賴 FastAPI、SQLite、Windows 路徑或第三方服務。模組之間透過 application service/API 與穩定識別碼互動，不直接修改其他模組資料表。
+Domain 不直接依賴 FastAPI、SQLite、Windows 路徑、Gmail SDK 或其他第三方服務。模組之間透過 application service/API 與穩定識別碼互動，不直接修改其他模組資料表。
+
+## Documents 的定位
+
+Documents 是文件的 logical identity、metadata 與來源關聯，不應等同「一定有一份本地實體檔案」。
+
+文件可能有兩種主要生命週期：
+
+1. **Local persisted document**：內容由 `StoragePort` 持久化在 Windows 本機 filesystem。
+2. **Remote referenced document**：SQLite 保存可重新取得內容的 source reference；實際 bytes 由對應的 `DocumentSource` adapter 按需取得。
+
+因此未來的 Document metadata 應能描述來源類型、provider reference、內容 hash、是否已本地持久化等資訊，而不假設每筆 Document 都有可直接讀取的 local storage key。
 
 ## v0.1 模組
 
-- Documents：共用文件身分、SHA-256、metadata 與檔案儲存 port。允許 PDF/JPG/PNG/CSV。
-- Finance：CSV 解析、交易資料及來源文件關聯；CSV 必須先由 Documents 接收。
+- Documents：共用文件身分、SHA-256、metadata 與檔案儲存 port。v0.1 允許 PDF/JPG/PNG/CSV，且內容均為本地持久化。
+- Finance：CSV 解析、交易資料及來源文件關聯；v0.1 CSV 必須先由 Documents 接收。
 - Jobs：匯入作業狀態、來源與可供 UI 顯示的錯誤摘要。
 - Search：跨文件 metadata 與 Finance 交易的查詢服務。
 - Dashboard：以 Finance 查詢服務提供統計資料。
 
 SQLAlchemy 持久化 model 集中在 infrastructure/schema 邊界，由各 domain service 擁有其資料操作。Alembic migration 是資料庫 schema 變更的正式路徑。
 
-## 匯入流程
+## v0.1 本機匯入流程
 
 ```text
 HTTP multipart upload
@@ -46,16 +58,96 @@ HTTP multipart upload
  -> persist transactions linked to source document
 ```
 
-檔案儲存使用 content-addressed 相對路徑，先寫暫存檔再原子替換。雜湊唯一索引處理併發重複匯入；單一程序和 SQLite transaction 是 v0.1 的一致性範圍。交易 row hash 含來源文件及列序，因此相同 CSV 重送不重複匯入，同一檔案內內容相同但列序不同的兩筆交易仍可保留。
+檔案儲存使用 content-addressed 相對路徑，先寫暫存檔再原子替換。雜湊唯一索引負責資料完整性；應用層仍需在後續實作補齊併發重複匯入的衝突 recovery。交易 row hash 含來源文件及列序，因此相同 CSV 重送不重複匯入，同一檔案內內容相同但列序不同的兩筆交易仍可保留。
+
+## 下一階段：DocumentSource / DocumentProcessor
+
+```text
+                     +---------------- Local File
+                     |
+DocumentSource ------+---------------- Gmail Attachment
+                     |
+                     +---------------- Future: Drive / other provider
+                                  |
+                                  v
+                         Document identity/metadata
+                                  |
+                                  v
+                        DocumentProcessor boundary
+                          |       |        |
+                         PDF     CSV      Image
+                          |
+                   password-protected PDF
+                          |
+                         OCR
+                                  |
+                                  v
+                               Finance
+```
+
+`DocumentSource` 負責「如何取得 bytes」；`DocumentProcessor` 負責「如何理解 bytes」。兩者必須分離，避免 Finance 或其他 domain 直接依賴 Gmail、filesystem、PDF library 或 OCR provider。
+
+### Gmail attachment 流程
+
+```text
+Gmail query
+ -> identify message + attachment
+ -> save/update Document source reference
+ -> fetch attachment bytes on demand
+ -> keep bytes in memory or controlled temporary buffer
+ -> compute/verify SHA-256
+ -> run PDF/CSV processor
+ -> persist normalized Finance data + source relationship
+ -> discard transient bytes
+```
+
+預設不將 Gmail attachment 永久寫入 Windows storage。SQLite 只保存必要的 source reference 與 metadata，例如：
+
+- provider/source type
+- Gmail message ID
+- Gmail attachment ID
+- filename
+- sender
+- received_at
+- SHA-256
+- parsed_at
+- optional local persistence state
+
+若使用者選擇「保存到家庭文件匣」，application service 才將該 attachment 寫入 `StoragePort`，並更新 Document 的本地持久化狀態。
+
+### 即時查看原始帳單
+
+```text
+Browser requests original document
+ -> Backend resolves Document source
+ -> Gmail DocumentSource fetches attachment bytes
+ -> Backend streams bytes with correct media type
+ -> Browser PDF viewer displays content
+ -> no permanent local copy required
+```
+
+Gmail 暫時不可用、權限失效或原始信件遭刪除時，remote-only document 可能無法重新取得內容；UI 應清楚顯示 source availability，並允許使用者事前選擇保存本地副本。
+
+### 密碼保護 PDF
+
+Password-protected PDF processor 可以對 memory/temporary bytes 解密與解析，不要求永久落地。PDF 密碼、OAuth token、refresh token 與其他 secret 不得存入一般 SQLite table、log、repository 或明文設定檔；Windows 整合採 Credential Manager/SecretStore。
 
 ## 擴充介面
 
-儲存透過 `StoragePort` 隔離，v0.1 adapter 為本機檔案系統。未來可在來源/處理器邊界接 Gmail、密碼保護 PDF、OCR 與 `AIProvider`，不讓核心依賴供應商 SDK。Insurance、Assets、Warranty、Travel、Vehicle、Subscriptions、Property 等 domain 僅於需要時新增模組與 migration。
+儲存透過 `StoragePort` 隔離，v0.1 adapter 為本機檔案系統。外部內容取得透過 `DocumentSource` 隔離；內容理解透過 `DocumentProcessor` 隔離。未來可接 Gmail、Google Drive、密碼保護 PDF、OCR 與 `AIProvider`，不讓核心依賴供應商 SDK。
+
+Insurance、Assets、Warranty、Travel、Vehicle、Subscriptions、Property 等 domain 僅於需要時新增模組與 migration。
+
+## 一致性原則
+
+跨 Documents、Finance、Jobs 的 use case 應由 application/use-case 層擁有 transaction boundary；較底層的 document/source/processor service 不應自行決定整個 use case 的 commit 時機。這是下一階段調整現有 v0.1 service 的方向。
 
 ## 安全與限制
 
-- 不記錄文件內容、秘密或完整敏感欄位；一般操作 log 僅可包含 job/document ID 與狀態。
-- SQLite、storage 和備份均視為家庭敏感資料，需保留在受控 Windows 使用者目錄並納入備份。
+- 不記錄文件內容、PDF 密碼、OAuth token、secret 或完整敏感欄位；一般操作 log 僅可包含 job/document ID、provider 類型與狀態。
+- Transient attachment bytes 不應寫入一般 log、crash dump 或永久 temporary directory；若處理 library 必須使用 temporary file，應使用受控位置並在處理完成後可靠刪除。
+- SQLite、local storage 和備份均視為家庭敏感資料，需保留在受控 Windows 使用者目錄並納入備份。
+- Remote-only document 的可用性依賴外部 provider；metadata 與已解析的 normalized data 可保留，但原始內容不保證永久可重新取得。
 - v0.1 尚無多使用者授權；部署於 Tailscale 私有網路並限可信家庭裝置。
 - 遠端使用的非 loopback 綁定須搭配 Windows 防火牆僅允許 Tailscale 介面/網段。不可公開埠至 Internet。
 - 未來秘密使用 Windows Credential Manager/SecretStore，不存 SQLite 或 repository 設定檔。

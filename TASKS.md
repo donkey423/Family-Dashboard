@@ -34,9 +34,26 @@
 - [x] frontend production build
 - [x] 本機啟動及核心流程檢查
 
+## M5：文件來源抽象與 Gmail 帳單
+
+- [ ] 調整 Documents model，使 logical document identity 不要求每筆都有 local storage key
+- [ ] 定義 `DocumentSource` port，v0.1 local upload 與未來 Gmail attachment 都透過來源邊界取得 bytes
+- [ ] 定義 `DocumentProcessor` port，分離 PDF / CSV / Image / password-protected PDF / OCR 處理
+- [ ] 將 Documents + Finance + Jobs 的 transaction ownership 上移至 application/use-case 層
+- [ ] 補齊 SHA-256 併發重複匯入的 IntegrityError recovery 與測試
+- [ ] 實作 Gmail source authentication 與安全的 token/secret storage
+- [ ] 以 Gmail message ID + attachment ID 保存 remote source reference，不預設永久下載附件
+- [ ] Gmail attachment 以 memory/受控 temporary buffer 解析，完成後移除 transient bytes
+- [ ] 支援「查看原始帳單」：Backend 即時 fetch Gmail attachment 並 stream 給瀏覽器
+- [ ] 支援「保存到家庭文件匣」：使用者明確選擇後才將 remote attachment 寫入 StoragePort
+- [ ] 定義 Gmail 原始信件被刪除、授權失效或 attachment 不可取得時的 UI/error handling
+- [ ] 密碼保護 PDF processor：可在 memory/temporary bytes 解密，不在一般 DB/log/plain config 保存密碼
+- [ ] 以真實台灣信用卡帳單驗證第一個 bank/card parser，再決定 bank-specific adapter interface
+
 ## 延後項目
 
-- [ ] Gmail、密碼保護 PDF、OCR、AIProvider
+- [ ] OCR、AIProvider
 - [ ] Insurance、Assets、Warranty、Travel、Vehicle、Subscriptions、Property
+- [ ] Google Drive 或其他 DocumentSource provider
 - [ ] Windows Credential Manager/SecretStore adapter
 - [ ] Tailscale 家庭裝置部署檢查與備份/還原操作演練

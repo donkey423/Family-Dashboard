@@ -14,19 +14,26 @@
 ## 邊界與限制
 
 - 保持 Modular Monolith；不引入 microservices、Redis、Kafka、Kubernetes 或 PostgreSQL。
-- 所有文件先由 Documents domain 接收。Finance 只能透過文件服務匯入 CSV，並保存來源文件 ID。
+- v0.1 本機匯入仍由 Documents 接收並使用 StoragePort；後續不可再假設所有 Document 都必須有永久 local file。
+- Documents 是 logical document identity + metadata + source relationship。未來 Local File、Gmail Attachment、Drive 等來源應透過 `DocumentSource` port 取得內容。
+- PDF、CSV、Image、password-protected PDF、OCR 等內容理解應透過 `DocumentProcessor` 邊界，不得讓 Finance domain 直接依賴 Gmail SDK、filesystem 或特定 parser/provider SDK。
+- Gmail attachment 預設採 remote-reference 模式：解析可使用 memory/受控 temporary bytes，但除非使用者明確選擇保存，否則不要永久寫入本機 Documents storage。
+- 查看 remote-only 原始文件時，優先由 source adapter 即時取得並 stream；必須處理 provider unavailable、authorization expired、source deleted 等錯誤。
+- 跨 Documents、Finance、Jobs 的 use case transaction 由 application/use-case 層擁有；底層 service 不應自行 commit 整個 use case。
 - Domain/Application 不直接依賴 Windows filesystem、FastAPI request objects 或供應商 SDK。
 - SQLAlchemy/Alembic 是 SQLite schema 持久化路徑；migration 不可由生產程式啟動時靜默取代。
-- 不記錄文件內容、secret、token 或完整敏感資料。未來秘密使用 Windows Credential Manager/SecretStore。
-- v0.1 只做 Documents、通用 Finance CSV、Dashboard、Search、Jobs/import history 與 tests。
+- 不記錄文件內容、PDF 密碼、secret、OAuth token 或完整敏感資料。未來秘密使用 Windows Credential Manager/SecretStore。
 - 新增模組應新增自己的 domain/service/schema migration，避免直接操作其他模組資料。
+- v0.1 已完成；下一階段工作以 TASKS.md 的 M5 為準，不得把尚未實作的 Gmail/remote source 功能寫成已完成。
 
 ## 驗證
 
 從 repository 根目錄執行 `python -m pytest backend\tests` 與 `cd frontend; npm run build`。資料庫 schema 變更需另外檢查 `alembic -c backend\alembic.ini upgrade head`。若環境未安裝 Python 或前端依賴，明確回報未執行的驗證，不可宣稱通過。
 
+若只修改設計文件，不必為了文件變更虛構程式驗證；HANDOFF 必須清楚區分「已決定/已規劃」與「已實作/已驗證」。
+
 ## 完成標準
 
 - 更新與實際行為相符的文件及 HANDOFF。
 - 執行受影響的測試/建置並回報結果。
-- 不自動 commit、push、merge、reset，也不覆蓋使用者未提交內容。
+- 未收到使用者明確要求時，不自動 commit、push、merge、reset，也不覆蓋使用者未提交內容。
