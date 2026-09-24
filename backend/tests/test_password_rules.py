@@ -1,0 +1,205 @@
+import json
+from datetime import datetime, timezone
+
+from pydantic import ValidationError
+from sqlalchemy import select
+
+from family_finance_hub.database import Base, make_engine, make_session_factory
+from family_finance_hub.models import DocumentSecurityProfile, PasswordRuleRecord, SecretProfile
+from family_finance_hub.security.password_rules.composer import PasswordComposer
+from family_finance_hub.security.password_rules.extractor import PasswordInstructionContext, PasswordInstructionExtractor
+from family_finance_hub.security.password_rules.openai_responses import OpenAIResponsesInterpreter
+from family_finance_hub.security.password_rules.schema import PasswordRule
+from family_finance_hub.security.password_rules.service import PasswordRuleService
+
+
+class MemorySecretStore:
+    def __init__(self, values):
+        self.values = values
+
+    def get(self, reference):
+        return self.values.get(reference)
+
+
+def make_rule(transform="suffix", count=4, date_format="YYYYMMDD", separator=""):
+    parts = [{
+        "source": "national_id",
+        "transform": transform,
+        "start": None,
+        "length": count,
+        "date_format": None,
+        "case": "upper",
+    }]
+    if date_format:
+        parts.append({
+            "source": "birthday",
+            "transform": "date_format",
+            "start": None,
+            "length": None,
+            "date_format": date_format,
+            "case": "preserve",
+        })
+    return PasswordRule.model_validate({
+        "version": 1,
+        "status": "resolved",
+        "candidates": [{"parts": parts, "separator": separator}],
+    })
+
+
+def test_extractor_sends_only_redacted_password_instruction_lines():
+    extracted = PasswordInstructionExtractor().extract(
+        PasswordInstructionContext(
+            subject="信用卡電子帳單密碼說明",
+            sender="person@example.test",
+            filename="statement-A123456789.pdf",
+            body=(
+                "您好，附件為本期帳單。\n"
+                "密碼規則：身分證字號末四碼 + 出生年月日 YYYYMMDD。\n"
+                "身分證字號 A123456789，生日 19840302。\n"
+                "消費明細：早餐 120 元。\n"
+            ),
+        ),
+        sensitive_values=("A123456789", "1984-03-02"),
+    )
+
+    assert "密碼規則" in extracted
+    assert "YYYYMMDD" in extracted
+    assert "A123456789" not in extracted
+    assert "19840302" not in extracted
+    assert "120 元" not in extracted
+    assert "person@example.test" not in extracted
+    assert "statement-A123456789.pdf" not in extracted
+
+
+def test_extractor_can_use_password_metadata_without_sending_email_or_account_numbers():
+    extracted = PasswordInstructionExtractor().extract(
+        PasswordInstructionContext(
+            sender="Bank Password Notice <statements@example.test>",
+            filename="password-rule-A123456789.pdf",
+            body="附件密碼為生日月日與證件末四碼，帳號 987654321。",
+        ),
+        sensitive_values=("A123456789",),
+    )
+
+    assert "Bank Password Notice" in extracted
+    assert "password-rule" in extracted
+    assert "statements@example.test" not in extracted
+    assert "987654321" not in extracted
+    assert "A123456789" not in extracted
+
+
+def test_password_composer_uses_explicit_roc_date_format_and_never_expands_candidates():
+    rule = PasswordRule.model_validate({
+        "version": 1,
+        "status": "ambiguous",
+        "candidates": [
+            {"parts": [
+                {"source": "national_id", "transform": "suffix", "start": None, "length": 4, "date_format": None, "case": "upper"},
+                {"source": "birthday", "transform": "date_format", "start": None, "length": None, "date_format": "ROCYYYMMDD", "case": "preserve"},
+            ], "separator": ""},
+            {"parts": [
+                {"source": "birthday", "transform": "date_format", "start": None, "length": None, "date_format": "YYYYMMDD", "case": "preserve"},
+            ], "separator": ""},
+        ],
+    })
+    store = MemorySecretStore({"national": "A123456789", "birthday": "1984-03-02"})
+
+    candidates = PasswordComposer(store).compose(rule, "national", "birthday")
+
+    assert candidates == ("67890730302", "19840302")
+    assert len(candidates) <= 3
+
+
+def test_password_rule_schema_rejects_unlisted_operations_and_excess_candidates():
+    rule = make_rule()
+    payload = rule.model_dump(mode="json")
+    payload["candidates"][0]["parts"][0]["transform"] = "python"
+    try:
+        PasswordRule.model_validate(payload)
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("unlisted operations must be rejected")
+
+    payload = {
+        "version": 1,
+        "status": "ambiguous",
+        "candidates": [{"parts": [{
+            "source": "national_id", "transform": "full", "start": None,
+            "length": None, "date_format": None, "case": "preserve",
+        }], "separator": ""}] * 4,
+    }
+    try:
+        PasswordRule.model_validate(payload)
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("candidate limit must be enforced")
+
+
+def test_password_rule_is_persisted_only_as_verified_dsl_and_fingerprint(tmp_path):
+    engine = make_engine(f"sqlite:///{(tmp_path / 'rules.db').as_posix()}")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+    service = PasswordRuleService()
+    context = {"institution": "測試銀行", "document_type": "PDF statement"}
+    fingerprint = service.fingerprint("密碼為身分證末四碼", context)
+    rule = make_rule(date_format=None)
+
+    with factory.begin() as session:
+        session.add(SecretProfile(
+            id="secret-profile", display_name="成員",
+            national_id_credential_ref="ref-id", birthday_credential_ref="ref-birthday",
+            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        ))
+        session.add(DocumentSecurityProfile(
+            id="document-profile", display_name="測試銀行卡片", institution="測試銀行",
+            secret_profile_id="secret-profile", created_at=datetime.now(timezone.utc),
+        ))
+        service.save_verified(session, "document-profile", fingerprint, rule)
+
+    with factory() as session:
+        stored = session.scalar(select(PasswordRuleRecord))
+        assert stored.rule_json == rule.model_dump(mode="json")
+        assert stored.instruction_fingerprint == fingerprint
+        assert service.get_verified(session, "document-profile", fingerprint) == rule
+        assert service.get_verified(session, "document-profile", "f" * 64) is None
+        db_text = json.dumps(stored.rule_json)
+        assert "national_id_value" not in db_text
+        assert "birthday_value" not in db_text
+    engine.dispose()
+
+
+def test_openai_adapter_sends_only_rule_context_and_disables_response_storage(monkeypatch):
+    captured = {}
+    rule_json = make_rule().model_dump(mode="json")
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps({"output_text": json.dumps(rule_json)}).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["headers"] = dict(request.header_items())
+        captured["payload"] = json.loads(request.data)
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("family_finance_hub.security.password_rules.openai_responses.urlopen", fake_urlopen)
+    result = OpenAIResponsesInterpreter("sk-test-secret", "configured-model").interpret(
+        "身分證末四碼加出生日期 YYYYMMDD",
+        {"institution": "測試銀行", "document_type": "PDF statement"},
+    )
+
+    assert result == PasswordRule.model_validate(rule_json)
+    assert captured["payload"]["store"] is False
+    user_text = captured["payload"]["input"][1]["content"][0]["text"]
+    assert "身分證末四碼" in user_text
+    assert "national_id_value" not in user_text
+    assert "birthday_value" not in user_text
+    assert "sk-test-secret" not in json.dumps(captured["payload"])

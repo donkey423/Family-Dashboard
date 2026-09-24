@@ -1,0 +1,9 @@
+from typing import Protocol
+
+
+class SecretStore(Protocol):
+    def set(self, reference: str, value: str) -> None: ...
+
+    def get(self, reference: str) -> str | None: ...
+
+    def delete(self, reference: str) -> None: ...

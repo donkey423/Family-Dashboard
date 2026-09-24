@@ -9,6 +9,8 @@ class Settings:
     storage_root: Path = Path("./data/documents")
     max_upload_bytes: int = 25 * 1024 * 1024
     cors_origins: tuple[str, ...] = ("http://127.0.0.1:5173", "http://localhost:5173")
+    tesseract_executable: str | None = None
+    ocr_languages: str = "chi_tra+eng"
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -23,4 +25,6 @@ class Settings:
                 "FAMILY_FINANCE_HUB_CORS_ORIGINS",
                 "http://127.0.0.1:5173,http://localhost:5173",
             ).split(","))),
+            tesseract_executable=os.getenv("FAMILY_FINANCE_HUB_TESSERACT") or None,
+            ocr_languages=os.getenv("FAMILY_FINANCE_HUB_OCR_LANG", "chi_tra+eng"),
         )

@@ -2,7 +2,7 @@ import csv
 from dataclasses import dataclass
 from io import StringIO
 
-from .ports import DocumentProcessor
+from .ports import DocumentProcessor, ProcessingRequest
 
 
 @dataclass(frozen=True)
@@ -12,8 +12,8 @@ class ParsedCsv:
 
 
 class CsvDocumentProcessor(DocumentProcessor[ParsedCsv]):
-    def process(self, content: bytes) -> ParsedCsv:
-        text = content.decode("utf-8-sig")
+    def process(self, request: ProcessingRequest) -> ParsedCsv:
+        text = request.content.decode("utf-8-sig")
         reader = csv.DictReader(StringIO(text))
         if not reader.fieldnames:
             raise ValueError("CSV 缺少標題列")
