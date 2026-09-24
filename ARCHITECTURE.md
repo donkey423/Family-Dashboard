@@ -33,17 +33,17 @@ Documents 是文件的 logical identity、metadata 與來源關聯，不應等�
 1. **Local persisted document**：內容由 `StoragePort` 持久化在 Windows 本機 filesystem。
 2. **Remote referenced document**：SQLite 保存可重新取得內容的 source reference；實際 bytes 由對應的 `DocumentSource` adapter 按需取得。
 
-因此未來的 Document metadata 應能描述來源類型、provider reference、內容 hash、是否已本地持久化等資訊，而不假設每筆 Document 都有可直接讀取的 local storage key。
+Document metadata 以來源類型及 optional provider reference 描述內容來源；`storage_key` 僅供本機持久化來源使用，不假設每筆 Document 都有可直接讀取的 local storage key。
 
 ## v0.1 模組
 
-- Documents：共用文件身分、SHA-256、metadata 與檔案儲存 port。v0.1 允許 PDF/JPG/PNG/CSV，且內容均為本地持久化。
+- Documents：共用文件身分、SHA-256、metadata 與來源關聯。v0.1 上傳內容經 StoragePort 本地持久化；`storage_key` 可空，來源由 `source_type` 與 optional source reference 描述。
 - Finance：CSV 解析、交易資料及來源文件關聯；v0.1 CSV 必須先由 Documents 接收。
 - Jobs：匯入作業狀態、來源與可供 UI 顯示的錯誤摘要。
 - Search：跨文件 metadata 與 Finance 交易的查詢服務。
 - Dashboard：以 Finance 查詢服務提供統計資料。
 
-SQLAlchemy 持久化 model 集中在 infrastructure/schema 邊界，由各 domain service 擁有其資料操作。Alembic migration 是資料庫 schema 變更的正式路徑。
+SQLAlchemy 持久化 model 集中在 infrastructure/schema 邊界，由各 domain service 擁有其資料操作。Application use case 協調跨模組工作並擁有 transaction boundary；底層 service 不可 commit 整個 use case。Alembic migration 是資料庫 schema 變更的正式路徑。
 
 ## v0.1 本機匯入流程
 
@@ -51,14 +51,16 @@ SQLAlchemy 持久化 model 集中在 infrastructure/schema 邊界，由各 domai
 HTTP multipart upload
  -> validate extension/size
  -> Documents service computes SHA-256
+ -> application use case owns the database transaction
  -> existing hash: reuse document; otherwise StoragePort writes local file
- -> create import job
- -> Finance CSV parser reads the imported document bytes
+ -> record source_type=local_file and create import job
+ -> DocumentSourceRegistry reads imported bytes through LocalFileDocumentSource
+ -> CsvDocumentProcessor parses CSV structure; Finance maps normalized values
  -> row hash (source document + row index + normalized row) prevents re-import duplicates
- -> persist transactions linked to source document
+ -> persist transactions linked to source document and commit the use case
 ```
 
-檔案儲存使用 content-addressed 相對路徑，先寫暫存檔再原子替換。雜湊唯一索引負責資料完整性；應用層仍需在後續實作補齊併發重複匯入的衝突 recovery。交易 row hash 含來源文件及列序，因此相同 CSV 重送不重複匯入，同一檔案內內容相同但列序不同的兩筆交易仍可保留。
+檔案儲存使用 content-addressed 相對路徑，先寫暫存檔再原子替換。雜湊唯一索引負責資料完整性；新增文件遇到 SHA-256 唯一索引競爭時，使用 savepoint 回復並重用已建立的文件。交易 row hash 含來源文件及列序，因此相同 CSV 重送不重複匯入，同一檔案內內容相同但列序不同的兩筆交易仍可保留。SQLite engine 明確發出 `BEGIN`，確保 savepoint 不會意外提交外層 use case。
 
 ## 下一階段：DocumentSource / DocumentProcessor
 
@@ -85,7 +87,7 @@ DocumentSource ------+---------------- Gmail Attachment
                                Finance
 ```
 
-`DocumentSource` 負責「如何取得 bytes」；`DocumentProcessor` 負責「如何理解 bytes」。兩者必須分離，避免 Finance 或其他 domain 直接依賴 Gmail、filesystem、PDF library 或 OCR provider。
+`DocumentSource` 負責「如何取得 bytes」；`DocumentProcessor` 負責「如何理解 bytes」。目前已實作來源 registry 與本機檔案 adapter，以及 CSV processor；PDF/Image/OCR/password-protected PDF processor 與 Gmail source 尚未實作。兩者必須分離，避免 Finance 或其他 domain 直接依賴 Gmail、filesystem、PDF library 或 OCR provider。
 
 ### Gmail attachment 流程
 
@@ -173,7 +175,7 @@ Insurance、Assets、Warranty、Travel、Vehicle、Subscriptions、Property 等 
 
 ## 一致性原則
 
-跨 Documents、Finance、Jobs 的 use case 應由 application/use-case 層擁有 transaction boundary；較底層的 document/source/processor service 不應自行決定整個 use case 的 commit 時機。這是下一階段調整現有 v0.1 service 的方向。
+跨 Documents、Finance、Jobs 的 use case 由 application/use-case 層擁有 transaction boundary；較底層的 document/source/processor service 不自行決定整個 use case 的 commit 時機。v0.1 文件匯入與 Finance CSV 匯入已依此原則調整。
 
 ## 安全與限制
 

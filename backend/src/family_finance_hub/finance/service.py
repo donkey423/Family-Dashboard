@@ -1,17 +1,17 @@
-import csv
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 import json
-from io import StringIO
 from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..documents.processors.csv import CsvDocumentProcessor, ParsedCsv
+from ..documents.processors.ports import DocumentProcessor
 from ..documents.service import DocumentService
+from ..documents.sources.registry import DocumentSourceRegistry
 from ..models import FinanceTransaction, ImportJob
-from ..storage.ports import StoragePort
 
 
 def _date_value(value: str | None) -> date | None:
@@ -25,30 +25,33 @@ def _date_value(value: str | None) -> date | None:
     return None
 
 
-def _field(row: dict[str, str], *names: str) -> str:
+def _field(row: dict[str | None, str | None], *names: str) -> str:
     normalized = {str(key or "").strip().casefold(): (value or "").strip() for key, value in row.items()}
     return next((normalized[name] for name in names if normalized.get(name)), "")
 
 
 class FinanceCsvImportService:
-    def __init__(self, storage: StoragePort):
-        self.documents = DocumentService(storage)
-        self.storage = storage
+    def __init__(
+        self,
+        documents: DocumentService,
+        document_sources: DocumentSourceRegistry,
+        processor: DocumentProcessor[ParsedCsv] | None = None,
+    ):
+        self.documents = documents
+        self.document_sources = document_sources
+        self.processor = processor or CsvDocumentProcessor()
 
     def import_csv(self, session: Session, filename: str, content: bytes) -> dict[str, int | str | bool]:
         if not filename.lower().endswith(".csv"):
             raise ValueError("財務匯入僅接受 CSV 檔案")
         imported = self.documents.import_bytes(session, filename, content, "finance")
-        text = content.decode("utf-8-sig")
-        reader = csv.DictReader(StringIO(text))
-        if not reader.fieldnames:
-            raise ValueError("CSV 缺少標題列")
-        headers = {header.strip().casefold() for header in reader.fieldnames if header}
+        parsed = self.processor.process(self.document_sources.read(imported.document))
+        headers = {header.strip().casefold() for header in parsed.headers if header}
         if not ({"amount", "transaction amount"} & headers) and not ({"debit", "withdrawal", "credit", "deposit"} & headers):
             raise ValueError("CSV 需要 amount 欄位，或 debit/credit 欄位")
 
         created = 0
-        for row_number, row in enumerate(reader, start=1):
+        for row_number, row in enumerate(parsed.rows, start=1):
             description = _field(row, "description", "memo", "name", "payee", "merchant")
             amount_text = _field(row, "amount", "transaction amount")
             if amount_text:
@@ -94,5 +97,4 @@ class FinanceCsvImportService:
             summary=f"新增 {created} 筆交易" + ("；文件內容已存在" if imported.duplicate else ""),
         )
         session.add(job)
-        session.commit()
         return {"document_id": imported.document.id, "duplicate_document": imported.duplicate, "created_transactions": created}

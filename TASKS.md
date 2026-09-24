@@ -38,11 +38,12 @@
 
 ### M5.1 基礎架構
 
-- [ ] 調整 Documents model，使 logical document identity 不要求每筆都有 local storage key
-- [ ] 定義 `DocumentSource` port，v0.1 local upload 與未來 Gmail attachment 都透過來源邊界取得 bytes
-- [ ] 定義 `DocumentProcessor` port，分離 PDF / CSV / Image / password-protected PDF / OCR 處理
-- [ ] 將 Documents + Finance + Jobs 的 transaction ownership 上移至 application/use-case 層
-- [ ] 補齊 SHA-256 併發重複匯入的 IntegrityError recovery 與測試
+- [x] 調整 Documents model，使 logical document identity 不要求每筆都有 local storage key
+- [x] 定義 `DocumentSource` port 與 registry，v0.1 local source 透過來源邊界讀取 bytes
+- [x] 定義 `DocumentProcessor` port 並將 v0.1 CSV 結構解析移至 CSV processor adapter；PDF / Image / password-protected PDF / OCR 實作仍延後
+- [x] 將 Documents + Finance + Jobs 的 transaction ownership 上移至 application/use-case 層
+- [x] 補齊 SHA-256 併發重複匯入的 IntegrityError recovery 與測試
+- [x] 新增 Alembic migration，保留既有本機文件及其關聯
 
 ### M5.2 Gmail 手動同步先跑通
 

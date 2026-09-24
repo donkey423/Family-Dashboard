@@ -1,19 +1,20 @@
 from contextlib import asynccontextmanager
 from decimal import Decimal
-from hashlib import sha256
 from urllib.parse import quote
-from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import String, cast, or_, select
 from sqlalchemy.orm import Session
 
+from .application.use_cases import ImportDocumentUseCase, ImportFinanceCsvUseCase
 from .config import Settings
 from .database import Base, make_engine, make_session_factory
 from .documents.service import DocumentService
 from .finance.service import FinanceCsvImportService
 from .models import Document, FinanceTransaction, ImportJob
+from .documents.sources import DocumentSourceRegistry, LocalFileDocumentSource
+from .documents.sources.ports import DocumentSourceUnavailable
 from .storage.local_filesystem import LocalFilesystemStorage
 
 
@@ -22,6 +23,10 @@ def create_app(settings: Settings | None = None, *, create_schema: bool = False)
     engine = make_engine(config.database_url)
     session_factory = make_session_factory(engine)
     storage = LocalFilesystemStorage(config.storage_root)
+    documents = DocumentService(storage)
+    document_sources = DocumentSourceRegistry((LocalFileDocumentSource(storage),))
+    document_import = ImportDocumentUseCase(documents)
+    finance_import = ImportFinanceCsvUseCase(FinanceCsvImportService(documents, document_sources))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -58,7 +63,7 @@ def create_app(settings: Settings | None = None, *, create_schema: bool = False)
         if len(content) > config.max_upload_bytes:
             raise HTTPException(status_code=413, detail="文件超過上傳大小限制")
         try:
-            result = DocumentService(storage).import_bytes(session, file.filename or "upload", content, "documents")
+            result = document_import.execute(session, file.filename or "upload", content, "documents")
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return {"id": result.document.id, "filename": result.document.filename, "sha256": result.document.sha256, "duplicate": result.duplicate}
@@ -74,7 +79,9 @@ def create_app(settings: Settings | None = None, *, create_schema: bool = False)
         if document is None:
             raise HTTPException(status_code=404, detail="找不到文件")
         try:
-            content = storage.read(document.storage_key)
+            content = document_sources.read(document)
+        except DocumentSourceUnavailable as error:
+            raise HTTPException(status_code=503, detail="目前無法取得文件來源") from error
         except OSError as error:
             raise HTTPException(status_code=404, detail="文件內容不存在") from error
         return Response(
@@ -92,19 +99,8 @@ def create_app(settings: Settings | None = None, *, create_schema: bool = False)
         if len(content) > config.max_upload_bytes:
             raise HTTPException(status_code=413, detail="文件超過上傳大小限制")
         try:
-            return FinanceCsvImportService(storage).import_csv(session, file.filename or "upload.csv", content)
+            return finance_import.execute(session, file.filename or "upload.csv", content)
         except (ValueError, UnicodeDecodeError) as error:
-            session.rollback()
-            document = session.scalar(select(Document).where(Document.sha256 == sha256(content).hexdigest()))
-            session.add(ImportJob(
-                id=str(uuid4()),
-                document_id=document.id if document else None,
-                source_type="csv",
-                target_module="finance",
-                status="failed",
-                summary=str(error)[:500],
-            ))
-            session.commit()
             raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.get("/api/finance/transactions")

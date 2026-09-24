@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
@@ -9,8 +9,20 @@ class Base(DeclarativeBase):
 
 
 def make_engine(database_url: str):
-    options = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
-    return create_engine(database_url, connect_args=options)
+    if not database_url.startswith("sqlite"):
+        return create_engine(database_url)
+
+    engine = create_engine(database_url, connect_args={"check_same_thread": False})
+
+    @event.listens_for(engine, "connect")
+    def disable_driver_managed_transactions(connection, _record):
+        connection.isolation_level = None
+
+    @event.listens_for(engine, "begin")
+    def begin_sqlite_transaction(connection):
+        connection.exec_driver_sql("BEGIN")
+
+    return engine
 
 
 def make_session_factory(engine):

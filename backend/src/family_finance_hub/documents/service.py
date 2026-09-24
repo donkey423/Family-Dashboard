@@ -4,6 +4,7 @@ from pathlib import PurePath
 from uuid import uuid4
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..models import Document, ImportJob
@@ -48,9 +49,17 @@ class DocumentService:
                 content_type=CONTENT_TYPES[extension],
                 size_bytes=len(content),
                 storage_key=storage_key,
+                source_type="local_file",
             )
-            session.add(document)
-            session.flush()
+            try:
+                with session.begin_nested():
+                    session.add(document)
+                    session.flush()
+            except IntegrityError:
+                document = session.scalar(select(Document).where(Document.sha256 == digest))
+                if document is None:
+                    raise
+                duplicate = True
 
         job = ImportJob(
             id=str(uuid4()),
@@ -61,6 +70,4 @@ class DocumentService:
             summary="內容已存在，沿用既有文件" if duplicate else "文件已匯入",
         )
         session.add(job)
-        session.commit()
-        session.refresh(document)
         return ImportedDocument(document=document, duplicate=duplicate)

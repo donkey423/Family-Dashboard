@@ -8,7 +8,7 @@ Documents 代表「文件的 logical identity 與來源」，不等同於「一�
 
 ## v0.1 目標
 
-- 共用 Documents：匯入及瀏覽 PDF、JPG、PNG、CSV，保存 SHA-256、媒體類型、大小、原始檔案位置與匯入時間。
+- 共用 Documents：匯入及瀏覽 PDF、JPG、PNG、CSV，保存 SHA-256、媒體類型、大小、來源關聯與匯入時間；v0.1 上傳文件持久化於本機檔案系統。
 - 通用 Finance CSV：將 CSV 先匯入 Documents，再解析日期、描述、金額、幣別與原始欄位，並建立交易至來源文件的關聯。
 - Dashboard：顯示交易筆數、收入、支出與淨額。
 - Search：搜尋文件名稱、文件類型、交易描述與金額相關文字。

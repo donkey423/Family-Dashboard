@@ -7,15 +7,15 @@
 - `ARCHITECTURE.md`：模組邊界、資料流、依賴方向與部署設計。
 - `TASKS.md`：目前里程碑與待辦。
 - `HANDOFF.md`：當前可驗證狀態、下一步與風險。
-- `backend/src/family_finance_hub`：FastAPI、domain services、ports 與 adapters。
+- `backend/src/family_finance_hub`：FastAPI、application use cases、domain services、ports 與 adapters。
 - `backend/tests`：後端自動化測試。
 - `frontend/src`：React/TypeScript Web UI。
 
 ## 邊界與限制
 
 - 保持 Modular Monolith；不引入 microservices、Redis、Kafka、Kubernetes 或 PostgreSQL。
-- v0.1 本機匯入仍由 Documents 接收並使用 StoragePort；後續不可再假設所有 Document 都必須有永久 local file。
-- Documents 是 logical document identity + metadata + source relationship。未來 Local File、Gmail Attachment、Drive 等來源應透過 `DocumentSource` port 取得內容。
+- v0.1 本機上傳由 Documents 接收並透過 StoragePort 保存；文件讀取與解析必須透過 `DocumentSource` / `DocumentProcessor` 邊界，不可假設每筆 Document 都有永久 local file。
+- Documents 是 logical document identity + metadata + source relationship。Local File、未來 Gmail Attachment、Drive 等來源應透過 `DocumentSource` port 取得內容。
 - PDF、CSV、Image、password-protected PDF、OCR 等內容理解應透過 `DocumentProcessor` 邊界，不得讓 Finance domain 直接依賴 Gmail SDK、filesystem 或特定 parser/provider SDK。
 - Gmail attachment 預設採 remote-reference 模式：解析可使用 memory/受控 temporary bytes，但除非使用者明確選擇保存，否則不要永久寫入本機 Documents storage。
 - 查看 remote-only 原始文件時，優先由 source adapter 即時取得並 stream；必須處理 provider unavailable、authorization expired、source deleted 等錯誤。
