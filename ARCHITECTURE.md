@@ -35,6 +35,8 @@ Documents 是文件的 logical identity、metadata 與來源關聯，不應等�
 
 Document metadata 以來源類型及 optional provider reference 描述內容來源；`storage_key` 僅供本機持久化來源使用，不假設每筆 Document 都有可直接讀取的 local storage key。
 
+目前 schema 暫時把 `source_type/source_reference/storage_key` 放在 `documents` 上，因此一份 Document 同時只能表示一個主要來源。M5.2 在接 Gmail 前應先評估並優先調整為 **Document 1:N DocumentSourceRecord**，使同一份內容可以同時保留 Gmail remote reference 與使用者後續選擇的 local persisted source，而不需要覆寫來源身分。
+
 ## v0.1 模組
 
 - Documents：共用文件身分、SHA-256、metadata 與來源關聯。v0.1 上傳內容經 StoragePort 本地持久化；`storage_key` 可空，來源由 `source_type` 與 optional source reference 描述。
@@ -163,9 +165,100 @@ Browser requests original document
 
 Gmail 暫時不可用、權限失效或原始信件遭刪除時，remote-only document 可能無法重新取得內容；UI 應清楚顯示 source availability，並允許使用者事前選擇保存本地副本。
 
-### 密碼保護 PDF
+### 密碼保護 PDF 與密碼規則解析
 
-Password-protected PDF processor 可以對 memory/temporary bytes 解密與解析，不要求永久落地。PDF 密碼、OAuth token、refresh token 與其他 secret 不得存入一般 SQLite table、log、repository 或明文設定檔；Windows 整合採 Credential Manager/SecretStore。
+Password-protected PDF processor 可以對 memory/temporary bytes 解密與解析，不要求永久落地。PDF 密碼、OAuth token、refresh token、身分證字號、生日與其他 secret 不得存入一般 SQLite table、log、repository 或明文設定檔；Windows 整合採 Credential Manager/SecretStore。
+
+密碼流程採「**AI 只理解規則，敏感資料只在本機組合**」：
+
+```text
+Gmail subject/body/sender + attachment filename + readable metadata
+                    |
+                    v
+        PasswordInstructionExtractor
+                    |
+                    v
+       known verified PasswordRule?
+             |               |
+            yes             no
+             |               v
+             |      AI PasswordRuleInterpreter
+             |      (only instruction text)
+             |               |
+             +-------+-------+
+                     v
+           validated PasswordRule DSL
+                     |
+                     v
+                 SecretStore
+          +----------+----------+
+          |                     |
+      national_id             birthday
+          |                     |
+          +----------+----------+
+                     v
+             PasswordComposer
+                     |
+                     v
+             1-3 candidates max
+                     |
+                     v
+          PdfDocumentProcessor
+           decrypt in memory
+                     |
+          +----------+----------+
+          |                     |
+       success                 fail
+          |                     |
+          v                     v
+     extract text        explicit error code
+          |
+          v
+   BankStatementParser
+          |
+          v
+       Finance
+```
+
+#### PasswordInstructionExtractor
+
+密碼規則優先從 Gmail subject/body、sender、附件檔名與未加密可讀 metadata 取得。若規則文字只存在於「必須先解密才能看到」的 PDF 頁面，系統無法靠該 PDF 自己推導密碼，必須改用郵件說明、已知 bank profile 或人工補充。
+
+#### PasswordRuleInterpreter
+
+AI 只接收「密碼說明文字」及必要的非敏感 context，例如銀行名稱或文件類型；**不得把真實身分證字號、生日、PDF 密碼或完整帳單內容送給 AI 來算密碼**。AI 輸出受 schema 約束的 `PasswordRule`，不輸出可執行 Python/JavaScript，也不可由系統對 AI 回傳內容使用 `eval`。
+
+PasswordRule DSL 第一版只允許白名單操作，例如：
+
+- source：`national_id`、`birthday`
+- transform：`full`、`prefix`、`suffix`、`substring`、`upper`、`lower`、`date_format`
+- birthday format：`YYYYMMDD`、`YYMMDD`、`MMDD`、`DDMM`，並預留台灣民國年格式
+- separator：空字串或明確允許的少數分隔符
+
+若說明不充分，AI 必須回傳 ambiguous/multiple-candidates，而不是自行大量猜測。系統只允許少量 deterministic candidates，預設最多 3 個；不得把此功能做成 brute-force engine。
+
+成功開啟某銀行/卡別後，應保存「已驗證的 PasswordRule 與 bank/sender/document pattern」，之後優先重用；只有規則不存在、已驗證規則失效或說明文字改變時才再次呼叫 AI。
+
+#### SecretStore / PasswordComposer
+
+`SecretStore` 是獨立 port，Windows adapter 使用 Credential Manager/相容 keyring backend。SQLite 只能保存不具秘密內容的 `secret_profile_id` / `credential_ref`，例如家庭成員 profile 識別碼；不得保存實際身分證字號、生日或組合後密碼。
+
+`PasswordComposer` 是 deterministic 本機程式，只接受已驗證 PasswordRule 與 SecretStore 取出的值，輸出短生命週期 candidate password。candidate 不寫入 DB、log、Job summary 或一般 exception message。
+
+#### PDF processor 邊界
+
+目前 `DocumentProcessor.process(content: bytes)` 對加密 PDF 不足。實作 PDF 前應加入 processing request/context，至少能傳遞 filename、content type、document/bank profile 與 `credential_ref` 等非秘密 reference；不要把 plaintext password 當成通用 processor 參數四處傳遞。
+
+第一版 PDF stack 以 `pypdf[crypto]` 處理 encryption detection、in-memory decrypt 與 text extraction；只有真實銀行 PDF 驗證出現相容性問題時才增加 pikepdf/qpdf fallback。OCR 只在成功解密後且文字抽取不足時啟用，不對所有 PDF 預設執行。
+
+#### 錯誤與 UI 語意
+
+底層例外需轉為明確 domain error/error code，例如：`pdf_password_required`、`pdf_wrong_password`、`pdf_unsupported_encryption`、`pdf_malformed`、`pdf_ocr_required`。Job/UI 不直接顯示或持久化可能含敏感內容的底層 exception。
+
+原始文件與解密預覽需區分語意：
+
+- `/content`：原始 provider bytes；若來源本身是加密 PDF，仍維持加密。
+- `/preview`：必要時由後端 transient decrypt 後回傳供檢視，使用 `Cache-Control: private, no-store`，不永久保存 decrypted copy。
 
 ## 擴充介面
 
@@ -185,4 +278,6 @@ Insurance、Assets、Warranty、Travel、Vehicle、Subscriptions、Property 等 
 - Remote-only document 的可用性依賴外部 provider；metadata 與已解析的 normalized data 可保留，但原始內容不保證永久可重新取得。
 - v0.1 尚無多使用者授權；部署於 Tailscale 私有網路並限可信家庭裝置。
 - 遠端使用的非 loopback 綁定須搭配 Windows 防火牆僅允許 Tailscale 介面/網段。不可公開埠至 Internet。
-- 未來秘密使用 Windows Credential Manager/SecretStore，不存 SQLite 或 repository 設定檔。
+- SecretStore 是 M5.2 的必要基礎，不再視為延後項目；Windows 使用 Credential Manager/相容 keyring backend，不存 SQLite 或 repository 設定檔。
+- AI 不接收真實身分證字號、生日、PDF 密碼或其他可直接組合出秘密的家庭敏感資料；AI 僅解析密碼規則文字並輸出受限 DSL。
+- Password candidate 僅在本機記憶體短暫存在，不寫入 DB、log、Job summary、analytics 或一般 exception。

@@ -22,9 +22,12 @@
 - 跨 Documents、Finance、Jobs 的 use case transaction 由 application/use-case 層擁有；底層 service 不應自行 commit 整個 use case。
 - Domain/Application 不直接依賴 Windows filesystem、FastAPI request objects 或供應商 SDK。
 - SQLAlchemy/Alembic 是 SQLite schema 持久化路徑；migration 不可由生產程式啟動時靜默取代。
-- 不記錄文件內容、PDF 密碼、secret、OAuth token 或完整敏感資料。未來秘密使用 Windows Credential Manager/SecretStore。
+- 不記錄文件內容、PDF 密碼、secret、OAuth token、身分證字號、生日或完整敏感資料。M5.2 必須使用 Windows Credential Manager/SecretStore；AI 只解析密碼規則文字，不得接收真實身分證字號、生日或實際密碼。
 - 新增模組應新增自己的 domain/service/schema migration，避免直接操作其他模組資料。
-- v0.1 已完成；下一階段工作以 TASKS.md 的 M5 為準，不得把尚未實作的 Gmail/remote source 功能寫成已完成。
+- v0.1 已完成；下一階段工作以 TASKS.md 的 M5 為準，不得把尚未實作的 Gmail/remote source/SecretStore/password-rule/PDF 功能寫成已完成。
+- M5.2 密碼流程必須使用 versioned PasswordRule DSL；禁止直接執行/eval LLM 產生的程式碼，禁止以大量排列組合暴力猜密碼。
+- Bank-specific 密碼說明辨識、PasswordComposer、PDF decrypt、BankStatementParser 必須分層；不要把銀行規則硬編碼進通用 PdfDocumentProcessor。
+- 實作 Gmail 前先閱讀 ARCHITECTURE.md 的「密碼保護 PDF 與密碼規則解析」與 HANDOFF.md 的 M5.2 邊界。
 
 ## 驗證
 

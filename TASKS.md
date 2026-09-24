@@ -45,19 +45,54 @@
 - [x] 補齊 SHA-256 併發重複匯入的 IntegrityError recovery 與測試
 - [x] 新增 Alembic migration，保留既有本機文件及其關聯
 
-### M5.2 Gmail 手動同步先跑通
+### M5.2 Gmail 手動同步與加密 PDF 先跑通
 
-- [ ] 實作 Gmail source authentication 與安全的 token/secret storage
+#### M5.2a 文件來源模型補強
+
+- [ ] 在接 Gmail 前評估並優先把 Document source 從目前 1:1 欄位模型調整為 Document 1:N source records，使 Gmail remote source 與 local persisted source 可同時存在
+- [ ] 補 migration 與相容性測試，保留既有 `0002_document_sources` 資料
+- [ ] 定義 source availability / last verified 等必要狀態，避免 provider 消失時誤判為 Document 消失
+
+#### M5.2b SecretStore 與家庭秘密資料
+
+- [ ] 定義 `SecretStore` port，Windows 實作使用 Credential Manager/相容 keyring backend
+- [ ] 身分證字號、生日、PDF 密碼、OAuth token/refresh token 不得存一般 SQLite、log、repo 或 plaintext config
+- [ ] SQLite 僅保存 `secret_profile_id` / `credential_ref` 等非秘密 reference
+- [ ] 建立家庭成員 secret profile，可讓銀行/卡別 profile 指向正確持有人，但不要把秘密資料複製進 document metadata
+
+#### M5.2c Password Rule pipeline
+
+- [ ] 建立 `PasswordInstructionExtractor`，優先從 Gmail subject/body、sender、attachment filename 與 readable metadata 擷取密碼規則說明
+- [ ] 定義 versioned `PasswordRule` schema/DSL；只允許白名單 source/transform/date-format/separator
+- [ ] 建立 `PasswordRuleInterpreter` AI boundary；AI 只接收規則文字與必要非敏感 context，不接收真實身分證字號、生日或實際密碼
+- [ ] AI 回傳 ambiguous/multiple-candidates 時不得自行大量排列組合；預設最多產生 3 個 deterministic candidates
+- [ ] 建立本機 `PasswordComposer`，由 PasswordRule + SecretStore 組合 candidate；candidate 不可進 DB/log/Job summary
+- [ ] 已成功驗證的 bank/sender/document pattern + PasswordRule 可持久化重用；只有規則缺失、改變或失效時才重新呼叫 AI
+- [ ] 支援常見生日格式及台灣民國年格式，但必須由 PasswordRule 明確指定，不以 brute force 猜測
+
+#### M5.2d PDF processor
+
+- [ ] 在實作 PDF 前擴充 `DocumentProcessor` request/context，不再只接受 `bytes`；context 傳遞 filename/content type/profile/`credential_ref` 等非秘密 reference
+- [ ] 第一版採 `pypdf[crypto]`：encryption detection、in-memory decrypt、text extraction
+- [ ] 只有真實帳單相容性失敗時才加入 pikepdf/qpdf fallback，不先增加多套 PDF dependency
+- [ ] OCR 僅在成功解密且 text extraction 不足時啟動
+- [ ] 定義 domain errors：`pdf_password_required`、`pdf_wrong_password`、`pdf_unsupported_encryption`、`pdf_malformed`、`pdf_ocr_required`
+- [ ] `/content` 保持原始 bytes；另提供 transient decrypted `/preview`，回應使用 `Cache-Control: private, no-store`
+
+#### M5.2e Gmail source 與手動同步
+
+- [ ] 實作 Gmail source authentication 與安全 token storage
 - [ ] 建立單一 `GmailSyncUseCase`，讓所有 trigger 共用同一條同步流程
 - [ ] 先提供「立即同步 Gmail」手動 trigger，不先做 scheduler
 - [ ] 以 Gmail message ID + attachment ID 保存 remote source reference，不預設永久下載附件
 - [ ] Gmail attachment 以 memory/受控 temporary buffer 解析，完成後移除 transient bytes
 - [ ] 支援「查看原始帳單」：Backend 即時 fetch Gmail attachment 並 stream 給瀏覽器
-- [ ] 支援「保存到家庭文件匣」：使用者明確選擇後才將 remote attachment 寫入 StoragePort
+- [ ] 支援「保存到家庭文件匣」：使用者明確選擇後新增 local source，不覆寫 Gmail source
 - [ ] 定義 Gmail 原始信件被刪除、授權失效或 attachment 不可取得時的 UI/error handling
-- [ ] 密碼保護 PDF processor：可在 memory/temporary bytes 解密，不在一般 DB/log/plain config 保存密碼
 - [ ] 以真實台灣信用卡帳單驗證第一個 bank/card parser，再決定 bank-specific adapter interface
 - [ ] 驗收：連續按「立即同步 Gmail」不會建立重複 Document、Job 或 Finance transaction
+- [ ] 驗收：AI 流程的 request/log/DB fixture 中不含真實身分證字號、生日或組合後 PDF 密碼
+- [ ] 驗收：同一帳單可同時擁有 Gmail remote source 與使用者保存的 local source
 
 ### M5.3 Incremental Sync
 
@@ -81,8 +116,7 @@
 
 ## 延後項目
 
-- [ ] OCR、AIProvider
+- [ ] 通用 OCR provider 與非密碼規則用途的 AIProvider
 - [ ] Insurance、Assets、Warranty、Travel、Vehicle、Subscriptions、Property
 - [ ] Google Drive 或其他 DocumentSource provider
-- [ ] Windows Credential Manager/SecretStore adapter
 - [ ] Tailscale 家庭裝置部署檢查與備份/還原操作演練
