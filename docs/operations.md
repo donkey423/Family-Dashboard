@@ -2,9 +2,9 @@
 
 ## Windows 本機
 
-請依 README 建立 Python venv、安裝 backend 及 frontend 依賴、執行 Alembic migration，然後啟動 FastAPI 與 Vite。預設資料放在啟動目錄下的 `data/family-finance-hub.db` 與 `data/documents/`；可用 `FAMILY_FINANCE_HUB_DATABASE_URL`、`FAMILY_FINANCE_HUB_STORAGE_ROOT`、`FAMILY_FINANCE_HUB_MAX_UPLOAD_BYTES` 覆寫。上傳大小預設 25 MiB。
+請依 README 建立 Python venv、安裝 backend 及 frontend 依賴、執行 Alembic migration，然後啟動 FastAPI 與 Vite。預設資料放在啟動目錄下的 `data/family-finance-hub.db` 與 `data/documents/`；可用 `FAMILY_FINANCE_HUB_DATABASE_URL`、`FAMILY_FINANCE_HUB_STORAGE_ROOT`、`FAMILY_FINANCE_HUB_MAX_UPLOAD_BYTES` 覆寫。上傳大小預設 25 MiB。設定 `FAMILY_FINANCE_HUB_DATABASE_URL` 後，Alembic 與 API 都會使用同一個資料庫位址。
 
-可選 OCR 依賴以 `python -m pip install -e "backend[ocr]"` 安裝；Tesseract OCR 執行檔及繁體中文/英文語言資料需另外安裝。可用 `FAMILY_FINANCE_HUB_TESSERACT` 指定執行檔，`FAMILY_FINANCE_HUB_OCR_LANG` 指定語言，預設為 `chi_tra+eng`。OCR 僅在 PDF 文字抽取不足時啟動，最多處理 20 頁、每頁限制約 8 百萬像素，總逾時 120 秒；失敗不會阻止 PDF 預覽。PDF 渲染及 OCR 內容只在記憶體處理，不保存辨識文字或臨時頁面影像。未安裝 Tesseract 或語言資料時，UI 仍可檢視 PDF 並顯示辨識狀態。
+可選 OCR 依賴以 `python -m pip install -e "backend[ocr]"` 安裝；Tesseract OCR 執行檔及繁體中文/英文語言資料需另外安裝。可用 `FAMILY_FINANCE_HUB_TESSERACT` 指定執行檔，`FAMILY_FINANCE_HUB_OCR_LANG` 指定語言，預設為 `chi_tra+eng`。OCR 僅在 PDF 文字抽取不足時啟動，先以 `tesseract --list-langs` 確認所需語言資料，再開始渲染；最多處理 20 頁、每頁限制約 8 百萬像素，總逾時 120 秒。缺少引擎或語言資料時，UI 會顯示不同狀態且不阻止 PDF 預覽。PDF 渲染及 OCR 內容只在記憶體處理，不保存辨識文字或臨時頁面影像。
 
 開發時兩個服務預設綁定 `127.0.0.1`。要從家庭其他裝置連線，需在 API 視窗設定 Web UI 的來源與 Tailscale IP：
 

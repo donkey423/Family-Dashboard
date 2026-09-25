@@ -12,3 +12,4 @@ frontend/tsconfig.tsbuildinfo
 frontend/.npm-cache/
 frontend/.env.local
 .env
+backend/.test-tmp/

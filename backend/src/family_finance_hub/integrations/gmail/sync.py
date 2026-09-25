@@ -30,7 +30,7 @@ class GmailSyncUseCase:
     def execute(self, session: Session, client: GmailClient, query: str = DEFAULT_GMAIL_QUERY) -> dict[str, int | str]:
         if not query.strip() or len(query) > 500:
             raise ValueError("Gmail 搜尋條件無效")
-        new_attachments = csv_files = transactions = duplicates = failures = scanned_messages = 0
+        new_attachments = csv_files = transactions = duplicates = failures = retryable_failures = scanned_messages = 0
         truncated = False
         full_sync = False
         mode = "incremental"
@@ -84,16 +84,17 @@ class GmailSyncUseCase:
                     message_ids = [str(item["id"]) for item in page.get("messages", []) if item.get("id")]
                     for message_id in message_ids:
                         scanned_messages += 1
-                        stats, message_failures = self._process_message(session, client, message_id)
+                        stats, message_failures, message_retryable_failures = self._process_message(session, client, message_id)
                         failures += message_failures
+                        retryable_failures += message_retryable_failures
                         new_attachments += stats["new"]
                         csv_files += stats["csv"]
                         transactions += stats["transactions"]
                         duplicates += stats["duplicates"]
                     next_page_token = page.get("nextPageToken")
-                    if failures or not next_page_token:
-                        current_page_token = current_page_token if failures else None
-                        truncated = bool(next_page_token and not failures)
+                    if retryable_failures or not next_page_token:
+                        current_page_token = current_page_token if retryable_failures else None
+                        truncated = bool(next_page_token and not retryable_failures)
                         if truncated:
                             current_page_token = next_page_token
                         break
@@ -102,7 +103,7 @@ class GmailSyncUseCase:
                         truncated = True
                         break
 
-                state.full_sync_in_progress = truncated or failures > 0
+                state.full_sync_in_progress = truncated or retryable_failures > 0
                 state.full_sync_query = query if state.full_sync_in_progress else None
                 state.full_sync_page_token = current_page_token if state.full_sync_in_progress else None
                 state.full_sync_baseline_history_id = baseline_history_id if state.full_sync_in_progress else None
@@ -112,14 +113,15 @@ class GmailSyncUseCase:
             else:
                 for message_id in dict.fromkeys(changed_message_ids):
                     scanned_messages += 1
-                    stats, message_failures = self._process_message(session, client, message_id)
+                    stats, message_failures, message_retryable_failures = self._process_message(session, client, message_id)
                     failures += message_failures
+                    retryable_failures += message_retryable_failures
                     new_attachments += stats["new"]
                     csv_files += stats["csv"]
                     transactions += stats["transactions"]
                     duplicates += stats["duplicates"]
                 truncated = False
-                if failures == 0:
+                if retryable_failures == 0:
                     state.history_id = next_history_id or state.history_id
                     state.last_successful_at = utc_now()
 
@@ -146,14 +148,14 @@ class GmailSyncUseCase:
             "sync_mode": mode,
         }
 
-    def _process_message(self, session: Session, client: GmailClient, message_id: str) -> tuple[dict[str, int], int]:
-        failures = 0
+    def _process_message(self, session: Session, client: GmailClient, message_id: str) -> tuple[dict[str, int], int, int]:
+        failures = retryable_failures = 0
         stats = _attachment_counts()
         try:
             message = client.get_message(message_id)
             parts = list(_attachment_parts(message.get("payload", {})))
         except Exception:
-            return stats, 1
+            return stats, 1, 1
 
         for part in parts:
             filename = str(part.get("filename", ""))[:255]
@@ -178,6 +180,14 @@ class GmailSyncUseCase:
                 )
                 if len(content) > self.max_attachment_bytes:
                     failures += 1
+                    session.add(ImportJob(
+                        id=str(uuid4()),
+                        document_id=None,
+                        source_type="gmail_attachment",
+                        target_module="documents",
+                        status="failed",
+                        summary="Gmail 附件超過上傳大小限制",
+                    ))
                     continue
                 content_type = str(part.get("mimeType") or (
                     "text/csv" if filename.lower().endswith(".csv") else "application/pdf"
@@ -190,26 +200,32 @@ class GmailSyncUseCase:
                 }
                 if attachment_id:
                     reference["attachment_id"] = str(attachment_id)
-                with session.begin_nested():
-                    if filename.lower().endswith(".csv"):
+                if filename.lower().endswith(".csv"):
+                    try:
                         imported = self.finance_import.import_remote_csv(session, filename, content, source_key, reference)
-                        if imported.get("duplicate_source"):
-                            stats["duplicates"] += 1
-                            continue
+                    except (ValueError, UnicodeDecodeError):
+                        stats["new"] += 1
                         stats["csv"] += 1
-                        stats["transactions"] += int(imported["created_transactions"])
-                    else:
-                        imported = self.documents.import_remote_bytes(
-                            session, filename, content, "gmail_attachment", source_key, reference
-                        )
-                        if imported.duplicate_source:
-                            stats["duplicates"] += 1
-                            continue
-                    stats["new"] += 1
+                        failures += 1
+                        continue
+                    if imported.get("duplicate_source"):
+                        stats["duplicates"] += 1
+                        continue
+                    stats["csv"] += 1
+                    stats["transactions"] += int(imported["created_transactions"])
+                else:
+                    imported = self.documents.import_remote_bytes(
+                        session, filename, content, "gmail_attachment", source_key, reference
+                    )
+                    if imported.duplicate_source:
+                        stats["duplicates"] += 1
+                        continue
+                stats["new"] += 1
                 del content
             except Exception:
                 failures += 1
-        return stats, failures
+                retryable_failures += 1
+        return stats, failures, retryable_failures
 
 
 def _attachment_counts() -> dict[str, int]:

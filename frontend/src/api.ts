@@ -3,6 +3,7 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 export type DocumentSource = { type: string; availability: string };
 export type DocumentRow = { id: string; filename: string; content_type: string; size_bytes: number; created_at: string; sources?: DocumentSource[] };
 export type Transaction = { id: string; source_document_id: string; date: string | null; description: string; amount: string; currency: string };
+export type TransactionPage = { items: Transaction[]; total: number; limit: number; offset: number };
 export type Job = { id: string; source_type: string; target_module: string; status: string; summary: string; created_at: string };
 export type CurrencyTotal = { currency: string; income: string; expenses: string; net: string };
 export type Dashboard = { transaction_count: number; currency_totals: CurrencyTotal[] };
@@ -44,7 +45,13 @@ export const api = {
   documentUrl: (id: string) => `${API_BASE}/api/documents/${encodeURIComponent(id)}/content`,
   dashboard: () => request<Dashboard>("/api/dashboard"),
   documents: () => request<DocumentRow[]>("/api/documents"),
-  transactions: () => request<Transaction[]>("/api/finance/transactions"),
+  transactions: (options: { limit?: number; offset?: number; month?: string } = {}) => {
+    const params = new URLSearchParams();
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    if (options.month) params.set("month", options.month);
+    return request<TransactionPage>(`/api/finance/transactions?${params.toString()}`);
+  },
   jobs: () => request<Job[]>("/api/jobs"),
   search: (q: string) => request<{ documents: DocumentRow[]; transactions: Transaction[] }>(`/api/search?q=${encodeURIComponent(q)}`),
   upload: (file: File, finance: boolean) => {

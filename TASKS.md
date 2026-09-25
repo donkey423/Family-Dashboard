@@ -25,11 +25,13 @@
 - [x] 通用 CSV 欄位辨識與原始欄位保留
 - [x] 交易與來源 Document 關聯及 row-level 冪等匯入
 - [x] Dashboard 與跨 Documents/Finance 搜尋 API
+- [x] 交易明細 API 支援月份篩選、分頁；總覽金額由 SQLite 聚合
 - [x] 匯入解析、重複列與 API 測試
 
 ## M4：Web UI 與端到端檢查
 
 - [x] React/TypeScript 操作介面：Dashboard、Documents、匯入、搜尋、Jobs
+- [x] 增加完整交易清單、月份篩選與分頁；首頁只載入最近交易
 - [x] API 連線錯誤與空狀態
 - [x] frontend production build
 - [x] 本機啟動及核心流程檢查
@@ -76,6 +78,7 @@
 - [x] 採 `pypdf[crypto]`：encryption detection、in-memory decrypt、text extraction
 - [x] 僅使用一套 PDF dependency；尚無真實帳單相容性證據要求 fallback
 - [x] OCR 僅在成功解密且 text extraction 不足時啟動；以 optional PDFium + Tesseract adapter，假 provider 測試觸發條件及記憶體資料流
+- [x] OCR 啟動前檢查設定所需 traineddata；缺少語言時提早回報，保留 PDF 預覽並以合成測試驗證
 - [x] 定義 domain errors：`pdf_password_required`、`pdf_wrong_password`、`pdf_unsupported_encryption`、`pdf_malformed`、`pdf_processing_limit`；抽取狀態以 response header 回報，不回傳文件文字
 - [x] `/content` 保持原始 bytes；另提供 transient decrypted `/preview`，回應使用 `Cache-Control: private, no-store`
 
@@ -116,7 +119,7 @@
 
 ## 延後項目
 
-- [x] 通用 OCR provider port 與本機 Tesseract adapter（真實 Windows OCR runtime 仍待安裝/驗收）
+- [x] 通用 OCR provider port、本機 Tesseract adapter 與語言資料預檢（真實 Windows OCR runtime 仍待安裝/驗收）
 - [ ] 非密碼規則用途的通用 AIProvider
 - [ ] Insurance、Assets、Warranty、Travel、Vehicle、Subscriptions、Property
 - [ ] Google Drive 或其他 DocumentSource provider

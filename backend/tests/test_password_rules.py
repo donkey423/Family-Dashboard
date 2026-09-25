@@ -88,6 +88,16 @@ def test_extractor_can_use_password_metadata_without_sending_email_or_account_nu
     assert "A123456789" not in extracted
 
 
+def test_extractor_masks_compact_dates_inside_chinese_and_assigned_password_literals():
+    extracted = PasswordInstructionExtractor().extract(PasswordInstructionContext(
+        body="密碼為生日19840302加證號末四碼。Password is validABC9!"
+    ))
+
+    assert "19840302" not in extracted
+    assert "validABC9!" not in extracted
+    assert "證號末四碼" in extracted
+
+
 def test_password_composer_uses_explicit_roc_date_format_and_never_expands_candidates():
     rule = PasswordRule.model_validate({
         "version": 1,

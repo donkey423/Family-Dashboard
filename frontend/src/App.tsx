@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type Dashboard, type DocumentRow, type Job, type Transaction, type SecretProfile, type DocumentSecurityProfile, type GmailStatus } from "./api";
+import { api, type Dashboard, type DocumentRow, type Job, type Transaction, type SecretProfile, type DocumentSecurityProfile, type GmailStatus, type TransactionPage } from "./api";
 
-type View = "overview" | "documents" | "activity" | "settings";
-const money = (value: string, currency: string) => new Intl.NumberFormat("zh-TW", { style: "currency", currency }).format(Number(value));
+type View = "overview" | "documents" | "transactions" | "activity" | "settings";
+const money = (value: string, currency: string) => {
+  try { return new Intl.NumberFormat("zh-TW", { style: "currency", currency }).format(Number(value)); }
+  catch { return `${currency} ${value}`; }
+};
 const groupedMoney = (dashboard: Dashboard, field: "income" | "expenses" | "net") => dashboard.currency_totals.length
   ? dashboard.currency_totals.map((total) => dashboard.currency_totals.length > 1 ? `${total.currency} ${money(total[field], total.currency)}` : money(total[field], total.currency)).join(" · ")
   : money("0", "TWD");
@@ -19,11 +22,13 @@ export default function App() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<DocumentRow | null>(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
-      const [d, docs, tx, j] = await Promise.all([api.dashboard(), api.documents(), api.transactions(), api.jobs()]);
-      setDashboard(d); setDocuments(docs); setTransactions(tx); setJobs(j); setError("");
+      const [d, docs, tx, j] = await Promise.all([api.dashboard(), api.documents(), api.transactions({ limit: 8 }), api.jobs()]);
+      setDashboard(d); setDocuments(docs); setTransactions(tx.items); setJobs(j); setError("");
+      setRefreshVersion((version) => version + 1);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "無法連線至家庭收支記錄服務");
     }
@@ -75,6 +80,7 @@ export default function App() {
       <nav aria-label="主要導覽">
         <button className={view === "overview" ? "nav-item active" : "nav-item"} onClick={() => setView("overview")}><span className="nav-icon">▦</span>總覽</button>
         <button className={view === "documents" ? "nav-item active" : "nav-item"} onClick={() => setView("documents")}><span className="nav-icon">▤</span>文件</button>
+        <button className={view === "transactions" ? "nav-item active" : "nav-item"} onClick={() => { setView("transactions"); setSearchResult(null); }}><span className="nav-icon">↕</span>交易</button>
         <button className={view === "activity" ? "nav-item active" : "nav-item"} onClick={() => setView("activity")}><span className="nav-icon">◷</span>匯入紀錄</button>
         <button className={view === "settings" ? "nav-item active" : "nav-item"} onClick={() => setView("settings")}><span className="nav-icon">⚙</span>設定</button>
       </nav>
@@ -83,12 +89,12 @@ export default function App() {
 
     <main className="main-content">
       <header className="topbar">
-        <div className="breadcrumb">家庭資料 <span>/</span> {view === "overview" ? "總覽" : view === "documents" ? "文件" : view === "activity" ? "匯入紀錄" : "設定"}</div>
+        <div className="breadcrumb">家庭資料 <span>/</span> {view === "overview" ? "總覽" : view === "documents" ? "文件" : view === "transactions" ? "交易" : view === "activity" ? "匯入紀錄" : "設定"}</div>
         <form className="search-form" onSubmit={search} role="search"><span aria-hidden="true">⌕</span><input aria-label="搜尋文件與交易" placeholder="搜尋文件與交易" value={query} onChange={(event) => setQuery(event.target.value)} /><button type="submit" title="搜尋" aria-label="搜尋">↵</button></form>
       </header>
 
       <section className="page-heading">
-        <div><p className="eyebrow">家庭資料中心</p><h1>{view === "overview" ? "收支總覽" : view === "documents" ? "文件" : view === "activity" ? "匯入紀錄" : "設定"}</h1><p className="subheading">{view === "overview" ? "掌握已匯入資料與家庭收支。" : view === "documents" ? "所有家庭文件的共用資料來源。" : view === "activity" ? "查看文件與財務資料的匯入結果。" : "安全資料、文件規則與 Gmail 連線。"}</p></div>
+        <div><p className="eyebrow">家庭資料中心</p><h1>{view === "overview" ? "收支總覽" : view === "documents" ? "文件" : view === "transactions" ? "交易" : view === "activity" ? "匯入紀錄" : "設定"}</h1><p className="subheading">{view === "overview" ? "掌握已匯入資料與家庭收支。" : view === "documents" ? "所有家庭文件的共用資料來源。" : view === "transactions" ? "按月份檢視已匯入的收支明細。" : view === "activity" ? "查看文件與財務資料的匯入結果。" : "安全資料、文件規則與 Gmail 連線。"}</p></div>
         {view !== "settings" && <div className="actions"><label className="button secondary">加入文件<input type="file" accept=".pdf,.jpg,.jpeg,.png,.csv" disabled={busy} onChange={(event) => { void upload(event.target.files?.[0], false); event.currentTarget.value = ""; }} /></label><label className="button primary">匯入財務 CSV<input type="file" accept=".csv,text/csv" disabled={busy} onChange={(event) => { void upload(event.target.files?.[0], true); event.currentTarget.value = ""; }} /></label></div>}
       </section>
 
@@ -104,7 +110,7 @@ export default function App() {
         </section>
         <section className="content-grid">
           <div className="panel transactions-panel">
-            <div className="panel-heading"><div><h2>{searchResult ? "交易搜尋結果" : "最近交易"}</h2><p>由已匯入的 CSV 建立</p></div><button className="text-button" onClick={() => { setView("activity"); setSearchResult(null); }}>查看匯入紀錄 <span>→</span></button></div>
+            <div className="panel-heading"><div><h2>{searchResult ? "交易搜尋結果" : "最近交易"}</h2><p>由已匯入的 CSV 建立</p></div><button className="text-button" onClick={() => { setView("transactions"); setSearchResult(null); }}>查看全部交易 <span>→</span></button></div>
             <TransactionTable rows={visibleTransactions.slice(0, 8)} />
           </div>
           <div className="panel documents-panel">
@@ -116,12 +122,47 @@ export default function App() {
       </>}
 
       {view === "documents" && !searchResult && <section className="panel page-panel"><div className="panel-heading"><div><h2>文件匣</h2><p>PDF、圖片及 CSV 都先進入共用文件資料層</p></div></div><DocumentList rows={documents} expanded onPreview={setPreviewDocument} onSaveLocal={saveLocally} busy={busy} /></section>}
+      {view === "transactions" && !searchResult && <TransactionsView refreshVersion={refreshVersion} />}
       {view === "activity" && <section className="panel page-panel"><div className="panel-heading"><div><h2>工作與匯入歷史</h2><p>最新 100 筆處理紀錄</p></div></div><JobList rows={jobs} expanded /></section>}
       {view === "settings" && <SettingsView report={report} onRefresh={refresh} />}
       <footer className="page-footer"><span>家庭收支記錄 v0.1</span><span>資料保存在此 Windows 主機</span></footer>
     </main>
     {previewDocument && <PdfPreviewDialog document={previewDocument} onClose={() => setPreviewDocument(null)} />}
   </div>;
+}
+
+function TransactionsView({ refreshVersion }: { refreshVersion: number }) {
+  const [month, setMonth] = useState("");
+  const [page, setPage] = useState(0);
+  const [result, setResult] = useState<TransactionPage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const pageSize = 50;
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    api.transactions({ limit: pageSize, offset: page * pageSize, month: month || undefined })
+      .then((response) => { if (active) { setResult(response); setError(""); } })
+      .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "無法載入交易"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [month, page, refreshVersion]);
+
+  const pageCount = Math.max(1, Math.ceil((result?.total ?? 0) / pageSize));
+  return <section className="panel page-panel transactions-page">
+    <div className="panel-heading"><div><h2>收支明細</h2><p>共 {result?.total ?? "—"} 筆交易</p></div>
+      <label className="month-filter">月份<input aria-label="依月份篩選交易" type="month" value={month} onChange={(event) => { setPage(0); setMonth(event.target.value); }} /></label>
+      {month && <button className="text-button" onClick={() => { setPage(0); setMonth(""); }}>清除篩選</button>}
+    </div>
+    {error && <div className="notice error" role="alert">{error}</div>}
+    {loading && <p className="transaction-loading" role="status">正在載入交易…</p>}
+    {!loading && !error && <TransactionTable rows={result?.items ?? []} />}
+    <div className="pagination" aria-label="交易分頁">
+      <span>{result?.total ? `${page + 1} / ${pageCount} 頁` : "0 筆交易"}</span>
+      <div><button className="small-action" disabled={page === 0 || loading} onClick={() => setPage((current) => Math.max(0, current - 1))}>上一頁</button><button className="small-action" disabled={(page + 1) * pageSize >= (result?.total ?? 0) || loading} onClick={() => setPage((current) => current + 1)}>下一頁</button></div>
+    </div>
+  </section>;
 }
 
 function TransactionTable({ rows }: { rows: Transaction[] }) {
@@ -331,7 +372,8 @@ function PdfPreviewDialog({ document, onClose }: { document: DocumentRow; onClos
           <button className="button primary" disabled={busy}>{busy ? "正在處理…" : "產生預覽"}</button>
           <p className="settings-note">解密只在本機暫存處理；原始 PDF 不變。未勾選時只使用已驗證的規則，不會呼叫 AI。</p>
           {error && <div className="notice error" role="alert">{error}</div>}
-          {extractionStatus === "unavailable" && <div className="notice info" role="status">此 PDF 需要本機 OCR，但目前尚未就緒；仍可檢視頁面。</div>}
+          {extractionStatus === "unavailable" && <div className="notice info" role="status">此 PDF 需要本機 OCR，但引擎尚未就緒；請確認 Tesseract 與 PDFium 依賴，仍可檢視頁面。</div>}
+          {extractionStatus === "language_unavailable" && <div className="notice info" role="status">Tesseract 找不到設定所需的語言資料；請檢查 FAMILY_FINANCE_HUB_OCR_LANG 與語言資料安裝，仍可檢視頁面。</div>}
           {extractionStatus === "failed" && <div className="notice info" role="status">OCR 處理未完成，仍可檢視頁面。</div>}
           {extractionStatus === "partial" && <div className="notice info" role="status">OCR 只完成部分頁面，仍可檢視完整 PDF。</div>}
           {extractionStatus === "insufficient" && <div className="notice info" role="status">OCR 已執行，但未取得足夠文字；仍可檢視頁面。</div>}

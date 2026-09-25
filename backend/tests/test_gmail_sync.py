@@ -86,10 +86,11 @@ class FakeInterpreter:
         return self.rule
 
 
-def make_app(tmp_path, secret_store, gmail, password_interpreter=None):
+def make_app(tmp_path, secret_store, gmail, password_interpreter=None, max_upload_bytes=25 * 1024 * 1024):
     settings = Settings(
         database_url=f"sqlite:///{(tmp_path / 'gmail-test.db').as_posix()}",
         storage_root=tmp_path / "documents",
+        max_upload_bytes=max_upload_bytes,
     )
     app = create_app(
         settings,
@@ -282,7 +283,7 @@ def test_full_gmail_sync_resumes_from_saved_page_token(tmp_path, monkeypatch):
     engine.dispose()
 
 
-def test_failed_remote_csv_can_be_retried_without_stale_source_record(tmp_path):
+def test_gmail_preserves_unparseable_csv_and_records_failed_finance_job(tmp_path):
     gmail = FakeGmail()
     gmail.attachments["att-csv"] = b"not,a,finance,csv\n1,2,3,4\n"
     client, settings = make_app(tmp_path, MemorySecretStore(), gmail)
@@ -291,21 +292,115 @@ def test_failed_remote_csv_can_be_retried_without_stale_source_record(tmp_path):
         first = client.post("/api/gmail/sync", json={})
         assert first.status_code == 200, first.text
         assert first.json()["failures"] == 1
-        gmail.attachments["att-csv"] = FakeGmail().csv
+        assert first.json()["new_attachments"] == 2
+        archived = next(row for row in client.get("/api/documents").json() if row["filename"] == "activity.csv")
+        assert client.get(f"/api/documents/{archived['id']}/content").content == gmail.attachments["att-csv"]
+
         second = client.post("/api/gmail/sync", json={})
         assert second.status_code == 200, second.text
         assert second.json()["failures"] == 0
-        assert second.json()["created_transactions"] == 1
+        assert second.json()["created_transactions"] == 0
+        assert second.json()["duplicates"] == 2
+        local_retry = client.post("/api/finance/import-csv", files={
+            "file": ("activity.csv", FakeGmail().csv, "text/csv"),
+        })
+        assert local_retry.status_code == 200, local_retry.text
+        assert local_retry.json()["created_transactions"] == 1
 
     engine = make_engine(settings.database_url)
     factory = make_session_factory(engine)
     with factory() as session:
-        csv_document = session.scalar(select(Document).where(Document.filename == "activity.csv"))
-        assert csv_document is not None
+        csv_documents = session.scalars(select(Document).where(Document.filename == "activity.csv")).all()
+        assert len(csv_documents) == 2
         assert session.scalar(select(func.count()).select_from(FinanceTransaction)) == 1
         assert session.scalar(select(func.count()).select_from(DocumentSourceRecord).where(
             DocumentSourceRecord.source_key == "message-1:csv-1"
         )) == 1
+    engine.dispose()
+
+
+def test_unparseable_csv_does_not_block_later_gmail_pages(tmp_path):
+    class MultiPageGmail(FakeGmail):
+        def __init__(self):
+            super().__init__()
+            self.page_tokens = []
+            self.attachments = {
+                "bad": b"not,a,finance,csv\n1,2,3,4\n",
+                "good": FakeGmail().csv,
+            }
+
+        def list_messages(self, query, page_token=None):
+            self.page_tokens.append(page_token)
+            message_id = "bad-message" if page_token is None else "good-message"
+            page = {"messages": [{"id": message_id}]}
+            if page_token is None:
+                page["nextPageToken"] = "page-2"
+            return page
+
+        def get_message(self, message_id):
+            attachment_id = "bad" if message_id == "bad-message" else "good"
+            return {"payload": {"parts": [{
+                "partId": "csv-1",
+                "filename": f"{message_id}.csv",
+                "mimeType": "text/csv",
+                "body": {"attachmentId": attachment_id},
+            }]}}
+
+    gmail = MultiPageGmail()
+    client, settings = make_app(tmp_path, MemorySecretStore(), gmail)
+    with client:
+        response = client.post("/api/gmail/sync", json={})
+        assert response.status_code == 200, response.text
+        assert response.json()["scanned_messages"] == 2
+        assert response.json()["new_attachments"] == 2
+        assert response.json()["created_transactions"] == 1
+        assert response.json()["failures"] == 1
+        assert response.json()["truncated"] == 0
+        assert gmail.page_tokens == [None, "page-2"]
+
+    engine = make_engine(settings.database_url)
+    factory = make_session_factory(engine)
+    with factory() as session:
+        assert session.scalar(select(func.count()).select_from(Document)) == 2
+        assert session.scalar(select(func.count()).select_from(FinanceTransaction)) == 1
+        failed_finance_jobs = session.scalars(select(ImportJob).where(
+            ImportJob.target_module == "finance", ImportJob.status == "failed"
+        )).all()
+        assert len(failed_finance_jobs) == 1
+        assert failed_finance_jobs[0].document_id is not None
+    engine.dispose()
+
+
+def test_oversized_gmail_attachment_is_recorded_without_blocking_sync(tmp_path):
+    class OversizeGmail(FakeGmail):
+        def __init__(self):
+            super().__init__()
+            self.attachments = {"large": b"oversized"}
+
+        def get_message(self, message_id):
+            return {"payload": {"parts": [{
+                "partId": "pdf-1",
+                "filename": "large.pdf",
+                "mimeType": "application/pdf",
+                "body": {"attachmentId": "large"},
+            }]}}
+
+    gmail = OversizeGmail()
+    client, settings = make_app(tmp_path, MemorySecretStore(), gmail, max_upload_bytes=4)
+    with client:
+        response = client.post("/api/gmail/sync", json={})
+        assert response.status_code == 200, response.text
+        assert response.json()["failures"] == 1
+        assert response.json()["truncated"] == 0
+        jobs = client.get("/api/jobs").json()
+        assert any(job["status"] == "failed" and job["summary"] == "Gmail 附件超過上傳大小限制" for job in jobs)
+
+    engine = make_engine(settings.database_url)
+    factory = make_session_factory(engine)
+    with factory() as session:
+        state = session.get(GmailSyncState, "gmail")
+        assert state.history_id == "100"
+        assert state.full_sync_in_progress is False
     engine.dispose()
 
 

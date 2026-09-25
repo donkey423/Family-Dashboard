@@ -1,4 +1,5 @@
 from logging.config import fileConfig
+import os
 from pathlib import Path
 
 from alembic import context
@@ -12,6 +13,16 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 target_metadata = Base.metadata
 
+database_url = os.environ.get("FAMILY_FINANCE_HUB_DATABASE_URL")
+if database_url:
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+else:
+    database_url = config.get_main_option("sqlalchemy.url")
+    if database_url.startswith("sqlite:///../"):
+        db_path = (Path(config.config_file_name).parent.parent / database_url.removeprefix("sqlite:///../")).resolve()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path.as_posix()}")
+
 
 def run_migrations_offline() -> None:
     context.configure(url=config.get_main_option("sqlalchemy.url"), target_metadata=target_metadata, literal_binds=True, dialect_opts={"paramstyle": "named"})
@@ -20,11 +31,6 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    database_url = config.get_main_option("sqlalchemy.url")
-    if database_url.startswith("sqlite:///../"):
-        db_path = (Path(config.config_file_name).parent.parent / database_url.removeprefix("sqlite:///../")).resolve()
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path.as_posix()}")
     connectable = engine_from_config(config.get_section(config.config_ini_section, {}), prefix="sqlalchemy.", poolclass=pool.NullPool)
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)

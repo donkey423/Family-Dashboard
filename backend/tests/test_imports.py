@@ -3,6 +3,7 @@ from datetime import date
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+import pytest
 
 from family_finance_hub.config import Settings
 from family_finance_hub.database import Base, make_engine, make_session_factory
@@ -336,18 +337,19 @@ def test_content_endpoint_persists_source_availability_without_removing_document
 
 def test_finance_csv_import_is_idempotent_and_linked_to_document(tmp_path):
     client, settings = make_client(tmp_path)
-    csv_bytes = b"date,description,amount,currency\n2026-09-01,Groceries,-42.50,TWD\n2026-09-02,Salary,1000,TWD\n2026-09-03,Train,50,USD\n"
+    csv_bytes = b"date,description,amount,currency\n2026-09-01,Groceries,-42.50,TWD\n2026-09-02,Salary,1000,TWD\n2026-09-03,Train,50,USD\n2026-09-04,Transit,-7,CAD\n"
     with client:
         first = client.post("/api/finance/import-csv", files={"file": ("ledger.csv", csv_bytes, "text/csv")})
         second = client.post("/api/finance/import-csv", files={"file": ("ledger.csv", csv_bytes, "text/csv")})
         assert first.status_code == 200
         assert second.status_code == 200
-        assert first.json()["created_transactions"] == 3
+        assert first.json()["created_transactions"] == 4
         assert second.json()["created_transactions"] == 0
         assert first.json()["document_id"] == second.json()["document_id"]
         dashboard = client.get("/api/dashboard").json()
-        assert dashboard["transaction_count"] == 3
+        assert dashboard["transaction_count"] == 4
         assert dashboard["currency_totals"] == [
+            {"currency": "CAD", "income": "0.00", "expenses": "7.00", "net": "-7.00"},
             {"currency": "TWD", "income": "1000.00", "expenses": "42.50", "net": "957.50"},
             {"currency": "USD", "income": "50.00", "expenses": "0.00", "net": "50.00"},
         ]
@@ -357,9 +359,32 @@ def test_finance_csv_import_is_idempotent_and_linked_to_document(tmp_path):
     factory = make_session_factory(engine)
     with factory() as session:
         rows = session.scalars(select(FinanceTransaction)).all()
-        assert len(rows) == 3
+        assert len(rows) == 4
         assert all(row.source_document_id == first.json()["document_id"] for row in rows)
     engine.dispose()
+
+
+def test_transaction_list_supports_month_filter_and_pagination(tmp_path):
+    client, _ = make_client(tmp_path)
+    csv_bytes = (
+        b"date,description,amount\n"
+        b"2026-09-01,First,10\n"
+        b"2026-09-02,Second,-20\n"
+        b"2026-08-31,Previous month,30\n"
+    )
+    with client:
+        imported = client.post("/api/finance/import-csv", files={"file": ("ledger.csv", csv_bytes, "text/csv")})
+        assert imported.status_code == 200
+        first_page = client.get("/api/finance/transactions", params={"limit": 2, "offset": 0}).json()
+        second_page = client.get("/api/finance/transactions", params={"limit": 2, "offset": 2}).json()
+        september = client.get("/api/finance/transactions", params={"month": "2026-09"}).json()
+        assert first_page["total"] == 3
+        assert [row["date"] for row in first_page["items"]] == ["2026-09-02", "2026-09-01"]
+        assert second_page["total"] == 3
+        assert [row["description"] for row in second_page["items"]] == ["Previous month"]
+        assert september["total"] == 2
+        assert all(row["date"].startswith("2026-09") for row in september["items"])
+        assert client.get("/api/finance/transactions", params={"month": "2026-13"}).status_code == 422
 
 
 def test_upload_rejects_unsupported_file(tmp_path):
@@ -387,3 +412,19 @@ def test_failed_csv_import_rolls_back_partial_finance_rows(tmp_path):
         assert client.get("/api/dashboard").json()["transaction_count"] == 0
         jobs = client.get("/api/jobs").json()
         assert any(job["status"] == "failed" and "金額格式無效" in job["summary"] for job in jobs)
+
+
+@pytest.mark.parametrize("csv_bytes", [
+    b"date,description,amount\n2026-09-01,Infinite,Infinity\n",
+    b"date,description,amount,currency\n2026-09-01,Invalid currency,10,NT$\n",
+    b"date,description,amount\n2026-02-31,Invalid date,10\n",
+    b"date,description,amount\n2026-09-01,Extra field,10,unexpected\n",
+    b"date,description,amount\n2026-09-01,Excess precision,1.234\n",
+])
+def test_csv_import_rejects_invalid_financial_rows_atomically(tmp_path, csv_bytes):
+    client, _ = make_client(tmp_path)
+    with client:
+        response = client.post("/api/finance/import-csv", files={"file": ("ledger.csv", csv_bytes, "text/csv")})
+        assert response.status_code == 400
+        assert client.get("/api/dashboard").json()["transaction_count"] == 0
+        assert any(job["status"] == "failed" for job in client.get("/api/jobs").json())

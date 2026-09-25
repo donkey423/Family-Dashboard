@@ -1,7 +1,8 @@
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, DecimalException
 from hashlib import sha256
 import json
+import re
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -22,7 +23,19 @@ def _date_value(value: str | None) -> date | None:
             return datetime.strptime(value.strip(), pattern).date()
         except ValueError:
             continue
-    return None
+    raise ValueError("日期格式無效")
+
+
+def _amount_value(value: str, row_number: int) -> Decimal:
+    try:
+        amount = Decimal(value)
+        if not amount.is_finite() or abs(amount) >= Decimal("1e16"):
+            raise ValueError
+        if amount.quantize(Decimal("0.01")) != amount:
+            raise ValueError
+        return amount
+    except (DecimalException, ValueError) as error:
+        raise ValueError(f"第 {row_number} 筆金額格式無效") from error
 
 
 def _field(row: dict[str | None, str | None], *names: str) -> str:
@@ -61,10 +74,6 @@ class FinanceCsvImportService:
     ) -> dict[str, int | str | bool]:
         if not filename.lower().endswith(".csv"):
             raise ValueError("財務匯入僅接受 CSV 檔案")
-        parsed = self.processor.process(ProcessingRequest(
-            content=content,
-            context=ProcessingContext(filename=filename, content_type="text/csv"),
-        ))
         imported = self.documents.import_remote_bytes(
             session,
             filename,
@@ -80,7 +89,23 @@ class FinanceCsvImportService:
                 "duplicate_source": True,
                 "created_transactions": 0,
             }
-        return self._import_parsed(session, imported.document.id, parsed, imported.duplicate, "gmail_attachment")
+        try:
+            parsed = self.processor.process(ProcessingRequest(
+                content=content,
+                context=ProcessingContext(filename=filename, content_type="text/csv"),
+            ))
+            with session.begin_nested():
+                return self._import_parsed(session, imported.document.id, parsed, imported.duplicate, "gmail_attachment")
+        except (ValueError, UnicodeDecodeError) as error:
+            session.add(ImportJob(
+                id=str(uuid4()),
+                document_id=imported.document.id,
+                source_type="gmail_attachment",
+                target_module="finance",
+                status="failed",
+                summary=str(error)[:500],
+            ))
+            raise
 
     def _import_parsed(
         self,
@@ -90,30 +115,40 @@ class FinanceCsvImportService:
         duplicate_document: bool,
         source_type: str,
     ) -> dict[str, int | str | bool]:
-        headers = {header.strip().casefold() for header in parsed.headers if header}
+        normalized_headers = [header.strip().casefold() for header in parsed.headers]
+        if any(not header for header in normalized_headers) or len(set(normalized_headers)) != len(normalized_headers):
+            raise ValueError("CSV 標題列包含空白或重複欄位")
+        headers = set(normalized_headers)
         if not ({"amount", "transaction amount"} & headers) and not ({"debit", "withdrawal", "credit", "deposit"} & headers):
             raise ValueError("CSV 需要 amount 欄位，或 debit/credit 欄位")
 
         created = 0
         for row_number, row in enumerate(parsed.rows, start=1):
+            if None in row or any(value is None for value in row.values()):
+                raise ValueError(f"第 {row_number} 筆欄位數與標題列不符")
             description = _field(row, "description", "memo", "name", "payee", "merchant")
             amount_text = _field(row, "amount", "transaction amount")
             if amount_text:
                 amount_text = amount_text.replace(",", "").replace("$", "")
-                try:
-                    amount = Decimal(amount_text)
-                except InvalidOperation as error:
-                    raise ValueError(f"第 {row_number} 筆金額格式無效") from error
+                amount = _amount_value(amount_text, row_number)
             else:
                 debit = _field(row, "debit", "withdrawal")
                 credit = _field(row, "credit", "deposit")
                 if not debit and not credit:
                     raise ValueError("CSV 需要 amount 欄位，或 debit/credit 欄位")
-                try:
-                    amount = -Decimal(debit.replace(",", "").replace("$", "") or "0")
-                    amount += Decimal(credit.replace(",", "").replace("$", "") or "0")
-                except InvalidOperation as error:
-                    raise ValueError(f"第 {row_number} 筆金額格式無效") from error
+                debit_value = _amount_value(debit.replace(",", "").replace("$", "") or "0", row_number)
+                credit_value = _amount_value(credit.replace(",", "").replace("$", "") or "0", row_number)
+                if debit_value < 0 or credit_value < 0:
+                    raise ValueError(f"第 {row_number} 筆借貸金額不可為負數")
+                amount = _amount_value(str(credit_value - debit_value), row_number)
+
+            try:
+                transaction_date = _date_value(_field(row, "date", "posted_at", "transaction_date"))
+            except ValueError as error:
+                raise ValueError(f"第 {row_number} 筆日期格式無效") from error
+            currency = (_field(row, "currency") or "TWD").upper()
+            if not re.fullmatch(r"[A-Z]{3}", currency):
+                raise ValueError(f"第 {row_number} 筆幣別格式無效，請使用三個英文字母")
 
             normalized_row = json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             row_hash = sha256(f"{document_id}:{row_number}:{normalized_row}".encode("utf-8")).hexdigest()
@@ -123,10 +158,10 @@ class FinanceCsvImportService:
                 id=str(uuid4()),
                 source_document_id=document_id,
                 row_hash=row_hash,
-                transaction_date=_date_value(_field(row, "date", "posted_at", "transaction_date")),
+                transaction_date=transaction_date,
                 description=description or f"CSV 第 {row_number} 筆",
                 amount=amount,
-                currency=(_field(row, "currency") or "TWD").upper()[:8],
+                currency=currency,
                 raw_json=normalized_row,
             )
             session.add(transaction)

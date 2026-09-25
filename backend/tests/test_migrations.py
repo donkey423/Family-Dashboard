@@ -175,6 +175,19 @@ def test_source_migration_downgrade_restores_a_single_legacy_source(tmp_path):
     engine.dispose()
 
 
+def test_alembic_uses_the_application_database_url_environment_override(tmp_path, monkeypatch):
+    database_file = tmp_path / "configured-db.db"
+    monkeypatch.setenv("FAMILY_FINANCE_HUB_DATABASE_URL", f"sqlite:///{database_file.as_posix()}")
+    config = Config("backend/alembic.ini")
+
+    command.upgrade(config, "head")
+
+    assert database_file.exists()
+    engine = create_engine(f"sqlite:///{database_file.as_posix()}")
+    assert "finance_transactions" in inspect(engine).get_table_names()
+    engine.dispose()
+
+
 def test_secret_profiles_migration_stores_credential_references_only(tmp_path):
     database_file = tmp_path / "secret-profiles.db"
     config = Config("backend/alembic.ini")

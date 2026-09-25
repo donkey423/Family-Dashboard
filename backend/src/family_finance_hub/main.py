@@ -10,7 +10,7 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import String, cast, or_, select
+from sqlalchemy import String, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from .application.use_cases import ImportDocumentUseCase, ImportFinanceCsvUseCase
@@ -610,30 +610,61 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.get("/api/finance/transactions")
-    def list_transactions(session: Session = Depends(get_session)):
-        rows = session.scalars(select(FinanceTransaction).order_by(FinanceTransaction.transaction_date.desc(), FinanceTransaction.created_at.desc())).all()
-        return [{"id": row.id, "source_document_id": row.source_document_id, "date": row.transaction_date, "description": row.description, "amount": str(row.amount), "currency": row.currency} for row in rows]
+    def list_transactions(
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+        month: str | None = Query(default=None, max_length=7),
+        session: Session = Depends(get_session),
+    ):
+        statement = select(FinanceTransaction)
+        filters = []
+        if month:
+            try:
+                if len(month) != 7 or month[4] != "-" or not month[:4].isdigit() or not month[5:].isdigit():
+                    raise ValueError
+                year, month_number = int(month[:4]), int(month[5:])
+                start = date(year, month_number, 1)
+                end = date(year + 1, 1, 1) if month_number == 12 else date(year, month_number + 1, 1)
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail="月份格式無效，請使用 YYYY-MM") from error
+            filters = [
+                FinanceTransaction.transaction_date >= start,
+                FinanceTransaction.transaction_date < end,
+            ]
+            statement = statement.where(*filters)
+        total = session.scalar(select(func.count(FinanceTransaction.id)).where(*filters)) or 0
+        rows = session.scalars(
+            statement.order_by(
+                case((FinanceTransaction.transaction_date.is_(None), 1), else_=0),
+                FinanceTransaction.transaction_date.desc(),
+                FinanceTransaction.created_at.desc(),
+            ).offset(offset).limit(limit)
+        ).all()
+        return {
+            "items": [{"id": row.id, "source_document_id": row.source_document_id, "date": row.transaction_date, "description": row.description, "amount": str(row.amount), "currency": row.currency} for row in rows],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
 
     @app.get("/api/dashboard")
     def dashboard(session: Session = Depends(get_session)):
-        rows = session.scalars(select(FinanceTransaction)).all()
-        totals: dict[str, dict[str, Decimal]] = {}
-        for row in rows:
-            bucket = totals.setdefault(row.currency, {"income": Decimal("0"), "expenses": Decimal("0")})
-            if row.amount >= 0:
-                bucket["income"] += row.amount
-            else:
-                bucket["expenses"] -= row.amount
+        totals = session.execute(select(
+            FinanceTransaction.currency,
+            func.count(FinanceTransaction.id),
+            func.coalesce(func.sum(case((FinanceTransaction.amount >= 0, FinanceTransaction.amount), else_=0)), 0),
+            func.coalesce(func.sum(case((FinanceTransaction.amount < 0, -FinanceTransaction.amount), else_=0)), 0),
+        ).group_by(FinanceTransaction.currency).order_by(FinanceTransaction.currency)).all()
         return {
-            "transaction_count": len(rows),
+            "transaction_count": sum(count for _, count, _, _ in totals),
             "currency_totals": [
                 {
                     "currency": currency,
-                    "income": str(values["income"].quantize(Decimal("0.01"))),
-                    "expenses": str(values["expenses"].quantize(Decimal("0.01"))),
-                    "net": str((values["income"] - values["expenses"]).quantize(Decimal("0.01"))),
+                    "income": str(income.quantize(Decimal("0.01"))),
+                    "expenses": str(expenses.quantize(Decimal("0.01"))),
+                    "net": str((income - expenses).quantize(Decimal("0.01"))),
                 }
-                for currency, values in sorted(totals.items())
+                for currency, _count, income, expenses in totals
             ],
         }
 

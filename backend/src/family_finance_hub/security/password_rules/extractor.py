@@ -25,16 +25,12 @@ class PasswordInstructionContext:
 class PasswordInstructionExtractor:
     _instruction = re.compile(r"密碼|密码|password|パスワード|開啟碼|開啟密碼", re.IGNORECASE)
     _sensitive = re.compile(
-        r"(?i)(?:\b[A-Z][12]\d{8}\b|\b(?:19|20)\d{6}\b|\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b|\b\d{3,}\b)"
+        r"(?i)(?<![A-Z0-9])(?:[A-Z][12]\d{8}|(?:19|20)\d{6}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{3,}[-/.]\d{1,2}[-/.]\d{1,2}|\d{3,})(?![A-Z0-9])"
     )
     _email = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
     _assigned_literal = re.compile(
-        r"(?i)(?:密碼|密码|password)\s*(?:是|為|为|is|[:：=])\s*([A-Za-z0-9!@#$%^&*._-]{6,})"
+        r"(?i)(?:密碼|密码|password)\s*(?:是|為|为|is|[:：=])\s*([A-Za-z0-9!@#$%^&*._-]{4,})"
     )
-    _assignment_explanation = re.compile(
-        r"(?i)身分|身份|生日|出生|年月日|前|後|后|末|first|last|birthday|identity|id|format|格式"
-    )
-
     def extract(
         self,
         context: PasswordInstructionContext,
@@ -55,10 +51,7 @@ class PasswordInstructionExtractor:
         for value in sensitive_values:
             if value and len(value) >= 4:
                 text = text.replace(value, "[遮罩]")
-        text = self._assigned_literal.sub(
-            lambda match: match.group(0) if self._assignment_explanation.search(match.group(1)) else "密碼說明：[遮罩]",
-            text,
-        )
+        text = self._assigned_literal.sub("密碼說明：[遮罩]", text)
         text = self._email.sub("[寄件地址遮罩]", text)
         return self._sensitive.sub("[遮罩]", text)[:1200]
 

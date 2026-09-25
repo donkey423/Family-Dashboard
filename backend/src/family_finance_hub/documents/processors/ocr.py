@@ -12,6 +12,7 @@ MAX_OCR_SIDE = 4_000
 MAX_OCR_TEXT_CHARS = 1_000_000
 OCR_TIMEOUT_SECONDS = 120
 OCR_PAGE_TIMEOUT_SECONDS = 20
+OCR_LANGUAGE_PROBE_TIMEOUT_SECONDS = 10
 
 
 class TesseractOcrProvider:
@@ -27,6 +28,29 @@ class TesseractOcrProvider:
             import pypdfium2 as pdfium
         except (ImportError, OSError):
             return OcrResult("", "unavailable")
+
+        try:
+            language_result = subprocess.run(
+                [executable, "--list-langs"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=OCR_LANGUAGE_PROBE_TIMEOUT_SECONDS,
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return OcrResult("", "unavailable")
+        if language_result.returncode != 0:
+            return OcrResult("", "unavailable")
+
+        available_languages = {
+            line.strip()
+            for line in language_result.stdout.decode("utf-8", errors="replace").splitlines()
+            if line.strip()
+        }
+        required_languages = {language.strip() for language in self.languages.split("+") if language.strip()}
+        if not required_languages or not required_languages.issubset(available_languages):
+            return OcrResult("", "language_unavailable")
 
         try:
             pdf = pdfium.PdfDocument(content)
