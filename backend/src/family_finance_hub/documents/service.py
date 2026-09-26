@@ -3,7 +3,7 @@ from hashlib import sha256
 from pathlib import PurePath
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -30,6 +30,18 @@ class ImportedDocument:
 class DocumentService:
     def __init__(self, storage: StoragePort):
         self.storage = storage
+
+    @staticmethod
+    def set_revoked(session: Session, document: Document, revoked: bool, reason: str) -> bool:
+        result = session.execute(update(Document).where(
+            Document.id == document.id,
+            Document.lifecycle_version == document.lifecycle_version,
+        ).values(
+            revoked_at=utc_now() if revoked else None,
+            revocation_reason=reason if revoked else None,
+            lifecycle_version=Document.lifecycle_version + 1,
+        ))
+        return result.rowcount == 1
 
     def import_bytes(self, session: Session, filename: str, content: bytes, target_module: str) -> ImportedDocument:
         safe_name = PurePath(filename.replace("\\", "/")).name[:255]
@@ -71,8 +83,8 @@ class DocumentService:
             document_id=document.id,
             source_type="upload",
             target_module=target_module,
-            status="duplicate" if duplicate else "completed",
-            summary="內容已存在，沿用既有文件" if duplicate else "文件已匯入",
+            status="skipped_revoked" if document.revoked_at else "duplicate" if duplicate else "completed",
+            summary="文件已撤銷，未恢復匯入" if document.revoked_at else "內容已存在，沿用既有文件" if duplicate else "文件已匯入",
         )
         session.add(job)
         return ImportedDocument(document=document, duplicate=duplicate)

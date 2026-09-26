@@ -37,6 +37,17 @@ Documents 是文件的 logical identity、metadata 與來源關聯，不應等�
 
 來源狀態為 `unknown`、`available` 或 `unavailable`。既有資料經 migration 回填為 `unknown`；讀取成功會更新為 `available` 並記錄 `last_verified_at`，已設定的 adapter 讀取失敗則更新為 `unavailable`。來源暫時不可讀不等於 Document 消失；API 回傳來源不可用，而保留 Document 與其 metadata。未設定 adapter 的來源維持原狀，不可據此判定來源已失效。
 
+### 文件匯入生命週期
+
+- `Document.revoked_at` 為撤銷狀態的單一來源，`revocation_reason` 保存原因；`lifecycle_version` 用於避免預覽後的過期操作。既有文件升級後均為有效狀態。
+- 撤銷以 logical `document_id` 為範圍，涵蓋其全部來源與 `source_document_id` 關聯交易，不依檔名、日期或金額猜測。不同文件即使同名也不受影響。
+- `DocumentLifecycleUseCase` 協調 Documents 狀態與 Jobs 稽核，擁有同一筆 DB transaction。Finance 提供影響查詢；交易本身不刪除或複製，Dashboard、交易列表及 Search 共用 `active_transaction_filter` 排除已撤銷來源。
+- `GET /api/documents/{id}/import-impact` 回傳筆數、各幣別金額與包含版本／影響摘要的 `impact_token`。`POST .../revoke` 和 `POST .../restore` 需附 token；影響已變更回應 409，要求重新預覽。同狀態重複操作回應 `changed=false`，不新增稽核紀錄。
+- `GET /api/documents` 預設只列有效文件，`state=revoked` 或 `state=all` 用於恢復清單。原始文件讀取、PDF 預覽和保存副本仍可使用；不改變來源本身的可用性。
+- 手動 CSV 匯入及 Gmail 在解析前檢查撤銷狀態。保留 SHA-256 和 source records 作為防重匯依據，新 source 若同 hash 仍略過交易匯入；不默默恢復。Gmail 回報 `skipped_revoked`，不把這種情況當失敗或新匯入。
+- 恢復只啟用既有交易，不重新解析。未來新增 domain 時，需在自己的查詢中遵守文件有效狀態，並於 lifecycle use case 中整合本模組的影響預覽；不可跨模組直接刪表或資料列。
+- 永久清除文件及移除本機副本是不同操作，目前尚未提供。不同 bytes 的語意重複帳單、單筆交易撤銷和跨文件合併亦不在本次範圍。
+
 ## v0.1 模組
 
 - Documents：共用文件身分、SHA-256、metadata 與 1:N `DocumentSourceRecord` 關聯。v0.1 上傳內容經 StoragePort 本地持久化並建立可用的本機來源記錄；未來 remote source 可與本機副本並存。

@@ -24,7 +24,13 @@ npm run dev -- --host <Windows-Tailscale-IP>
 
 不得設定路由器埠轉送或將 API 綁定到公開網路介面。v0.1 沒有登入/權限系統，存取控制依賴 Windows 主機防火牆與 Tailscale 裝置授權。
 
-## 備份
+## 帳單撤銷版本升級
+
+本版本 Alembic head 為 `0009_document_revocation`。停止 API 並成對備份 DB 與文件後，在確認 `FAMILY_FINANCE_HUB_DATABASE_URL` 指向正確資料庫的環境執行 `python -m alembic -c backend/alembic.ini upgrade head`，再啟動新版 API 與前端。升級只增加撤銷狀態／原因／版本欄位，不刪除文件或交易。
+
+回退時不要讓舊版 API 讀取仍有已撤銷文件的資料庫，否則舊查詢會重新把交易算入。migration downgrade 因此在還有撤銷文件時拒絕執行；需先透過正常恢復流程處理，或成對還原升級前備份並回到相符版本。不可直接清空撤銷欄位規避檢查。
+
+## 資料備份
 
 停止 API 後，一併備份 SQLite database 和完整 `data/documents/` 目錄。還原時保持兩者來自同一時間點，再執行應用程式。v0.1 尚未提供自動備份、加密備份或還原檢查工具。
 

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ...documents.service import DocumentService
 from ...finance.service import FinanceCsvImportService
-from ...models import DocumentSourceRecord, GmailSyncState, ImportJob, utc_now
+from ...models import Document, DocumentSourceRecord, GmailSyncState, ImportJob, utc_now
 from .client import GmailClient, GmailHistoryExpired
 
 DEFAULT_GMAIL_QUERY = "in:anywhere has:attachment {filename:pdf filename:csv}"
@@ -31,6 +31,7 @@ class GmailSyncUseCase:
         if not query.strip() or len(query) > 500:
             raise ValueError("Gmail 搜尋條件無效")
         new_attachments = csv_files = transactions = duplicates = failures = retryable_failures = scanned_messages = 0
+        skipped_revoked = 0
         truncated = False
         full_sync = False
         mode = "incremental"
@@ -91,6 +92,7 @@ class GmailSyncUseCase:
                         csv_files += stats["csv"]
                         transactions += stats["transactions"]
                         duplicates += stats["duplicates"]
+                        skipped_revoked += stats["revoked"]
                     next_page_token = page.get("nextPageToken")
                     if retryable_failures or not next_page_token:
                         current_page_token = current_page_token if retryable_failures else None
@@ -120,19 +122,20 @@ class GmailSyncUseCase:
                     csv_files += stats["csv"]
                     transactions += stats["transactions"]
                     duplicates += stats["duplicates"]
+                    skipped_revoked += stats["revoked"]
                 truncated = False
                 if retryable_failures == 0:
                     state.history_id = next_history_id or state.history_id
                     state.last_successful_at = utc_now()
 
-            if new_attachments or failures:
+            if new_attachments or failures or skipped_revoked:
                 session.add(ImportJob(
                     id=str(uuid4()),
                     document_id=None,
                     source_type="gmail_sync",
                     target_module="documents",
                     status="partial" if failures else "completed",
-                    summary=f"新增附件 {new_attachments} 份、CSV {csv_files} 份、新增交易 {transactions} 筆、略過重複 {duplicates} 份、失敗 {failures} 件",
+                    summary=f"新增附件 {new_attachments} 份、CSV {csv_files} 份、新增交易 {transactions} 筆、略過重複 {duplicates} 份、略過已撤銷 {skipped_revoked} 份、失敗 {failures} 件",
                 ))
             state.status = "partial" if failures or truncated else "completed"
             state.last_error_summary = "部分郵件或附件無法處理" if failures else "完整同步分批進行中" if truncated else None
@@ -143,6 +146,7 @@ class GmailSyncUseCase:
             "csv_files": csv_files,
             "created_transactions": transactions,
             "duplicates": duplicates,
+            "skipped_revoked": skipped_revoked,
             "failures": failures,
             "truncated": int(truncated),
             "sync_mode": mode,
@@ -166,12 +170,12 @@ class GmailSyncUseCase:
                 attachment_id = body.get("attachmentId")
                 part_id = str(part.get("partId", ""))
                 source_key = f"{message_id}:{part_id or attachment_id}"
-                existing = session.scalar(select(DocumentSourceRecord.id).where(
+                existing = session.scalar(select(Document).join(DocumentSourceRecord).where(
                     DocumentSourceRecord.source_type == "gmail_attachment",
                     DocumentSourceRecord.source_key == source_key,
                 ))
                 if existing:
-                    stats["duplicates"] += 1
+                    stats["revoked" if existing.revoked_at is not None else "duplicates"] += 1
                     continue
                 content = (
                     client.get_attachment(message_id, attachment_id)
@@ -208,6 +212,9 @@ class GmailSyncUseCase:
                         stats["csv"] += 1
                         failures += 1
                         continue
+                    if imported.get("skipped_revoked"):
+                        stats["revoked"] += 1
+                        continue
                     if imported.get("duplicate_source"):
                         stats["duplicates"] += 1
                         continue
@@ -217,6 +224,9 @@ class GmailSyncUseCase:
                     imported = self.documents.import_remote_bytes(
                         session, filename, content, "gmail_attachment", source_key, reference
                     )
+                    if imported.document.revoked_at is not None:
+                        stats["revoked"] += 1
+                        continue
                     if imported.duplicate_source:
                         stats["duplicates"] += 1
                         continue
@@ -229,7 +239,7 @@ class GmailSyncUseCase:
 
 
 def _attachment_counts() -> dict[str, int]:
-    return {"new": 0, "csv": 0, "transactions": 0, "duplicates": 0}
+    return {"new": 0, "csv": 0, "transactions": 0, "duplicates": 0, "revoked": 0}
 
 def _profile_history_id(profile: dict[str, Any]) -> str:
     history_id = profile.get("historyId")

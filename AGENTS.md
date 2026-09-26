@@ -20,6 +20,7 @@
 - Gmail attachment 預設採 remote-reference 模式：解析可使用 memory/受控 temporary bytes，但除非使用者明確選擇保存，否則不要永久寫入本機 Documents storage。
 - 查看 remote-only 原始文件時，優先由 source adapter 即時取得並 stream；必須處理 provider unavailable、authorization expired、source deleted 等錯誤。
 - 跨 Documents、Finance、Jobs 的 use case transaction 由 application/use-case 層擁有；底層 service 不應自行 commit 整個 use case。
+- 文件撤銷／恢復由 `DocumentLifecycleUseCase` 原子更新並留下工作紀錄。Finance 列表、搜尋、統計需共用有效文件條件；任何匯入來源不得自動恢復已撤銷的相同 SHA-256 文件。新增模組需遵守文件有效狀態並提供本模組的影響預覽。
 - Domain/Application 不直接依賴 Windows filesystem、FastAPI request objects 或供應商 SDK。
 - SQLAlchemy/Alembic 是 SQLite schema 持久化路徑；migration 不可由生產程式啟動時靜默取代。
 - 不記錄文件內容、PDF 密碼、secret、OAuth token、身分證字號、生日或完整敏感資料。M5.2 必須使用 Windows Credential Manager/SecretStore；AI 只解析密碼規則文字，不得接收真實身分證字號、生日或實際密碼。

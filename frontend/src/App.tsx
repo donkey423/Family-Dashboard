@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type Dashboard, type DocumentRow, type Job, type Transaction, type SecretProfile, type DocumentSecurityProfile, type GmailStatus, type TransactionPage } from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, type Dashboard, type DocumentRow, type Job, type Transaction, type SecretProfile, type DocumentSecurityProfile, type GmailStatus, type TransactionPage, type ImportImpact } from "./api";
+import { ImportLifecycleDialog } from "./ImportLifecycleDialog";
 
 type View = "overview" | "documents" | "transactions" | "activity" | "settings";
 const money = (value: string, currency: string) => {
@@ -13,7 +14,13 @@ const groupedMoney = (dashboard: Dashboard, field: "income" | "expenses" | "net"
 export default function App() {
   const [view, setView] = useState<View>("overview");
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
-  const [documents, setDocuments] = useState<DocumentRow[]>([]);
+  const [allDocuments, setDocuments] = useState<DocumentRow[]>([]);
+  const documents = useMemo(() => allDocuments.filter((row) => !row.revoked_at), [allDocuments]);
+  const revokedDocuments = useMemo(() => allDocuments.filter((row) => row.revoked_at), [allDocuments]);
+  const [documentState, setDocumentState] = useState<"active" | "revoked">("active");
+  const [lifecycleDocument, setLifecycleDocument] = useState<DocumentRow | null>(null);
+  const searchVersion = useRef(0);
+  const refreshRequest = useRef(0);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [query, setQuery] = useState("");
@@ -25,12 +32,14 @@ export default function App() {
   const [refreshVersion, setRefreshVersion] = useState(0);
 
   const refresh = useCallback(async () => {
+    const version = ++refreshRequest.current;
     try {
-      const [d, docs, tx, j] = await Promise.all([api.dashboard(), api.documents(), api.transactions({ limit: 8 }), api.jobs()]);
+      const [d, docs, tx, j] = await Promise.all([api.dashboard(), api.documents("all"), api.transactions({ limit: 8 }), api.jobs()]);
+      if (version !== refreshRequest.current) return;
       setDashboard(d); setDocuments(docs); setTransactions(tx.items); setJobs(j); setError("");
       setRefreshVersion((version) => version + 1);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "無法連線至家庭收支記錄服務");
+      if (version === refreshRequest.current) setError(reason instanceof Error ? reason.message : "無法連線至家庭收支記錄服務");
     }
   }, []);
 
@@ -41,7 +50,7 @@ export default function App() {
     setBusy(true); setMessage(""); setError("");
     try {
       const result = await api.upload(file, finance);
-      setMessage(finance ? `CSV 匯入完成，新增 ${result.created_transactions ?? 0} 筆交易` : result.duplicate ? "相同內容已存在，沿用既有文件" : "文件已加入文件匣");
+      setMessage(result.skipped_revoked ? "這份文件已撤銷，未新增交易；可到「文件 → 已撤銷」恢復。" : finance ? `CSV 匯入完成，新增 ${result.created_transactions ?? 0} 筆交易` : result.duplicate ? "相同內容已存在，沿用既有文件" : "文件已加入文件匣");
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "匯入失敗");
@@ -50,9 +59,20 @@ export default function App() {
 
   async function search(event: React.FormEvent) {
     event.preventDefault();
+    const version = ++searchVersion.current;
     if (!query.trim()) { setSearchResult(null); return; }
-    try { setSearchResult(await api.search(query.trim())); setError(""); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "搜尋失敗"); }
+    try { const result = await api.search(query.trim()); if (version === searchVersion.current) { setSearchResult(result); setError(""); } }
+    catch (reason) { if (version === searchVersion.current) setError(reason instanceof Error ? reason.message : "搜尋失敗"); }
+  }
+
+  async function importStateChanged(result: ImportImpact & { changed: boolean }) {
+    searchVersion.current += 1;
+    setSearchResult(null); setQuery(""); setLifecycleDocument(null);
+    setDocuments((rows) => rows.map((row) => row.id === result.document_id ? { ...row, revoked_at: result.revoked_at, revocation_reason: result.revocation_reason } : row));
+    setDashboard(null); setTransactions([]);
+    setRefreshVersion((version) => version + 1);
+    setMessage(`${result.revoked_at ? "已撤銷" : "已恢復"} ${result.filename}，關聯 ${result.transaction_count} 筆交易`);
+    await refresh();
   }
 
   async function saveLocally(document: DocumentRow) {
@@ -115,19 +135,23 @@ export default function App() {
           </div>
           <div className="panel documents-panel">
             <div className="panel-heading"><div><h2>{searchResult ? "文件搜尋結果" : "最近文件"}</h2><p>共 {documents.length} 份文件</p></div><button className="icon-button" title="查看所有文件" aria-label="查看所有文件" onClick={() => { setView("documents"); setSearchResult(null); }}>→</button></div>
-          <DocumentList rows={visibleDocuments.slice(0, 5)} onPreview={setPreviewDocument} onSaveLocal={saveLocally} busy={busy} />
+          <DocumentList rows={visibleDocuments.slice(0, 5)} onPreview={setPreviewDocument} onSaveLocal={saveLocally} onChangeImport={setLifecycleDocument} busy={busy} />
           </div>
         </section>
         <section className="panel jobs-panel"><div className="panel-heading"><div><h2>最近匯入</h2><p>文件與財務匯入處理狀態</p></div><button className="text-button" onClick={() => setView("activity")}>全部紀錄 <span>→</span></button></div><JobList rows={jobs.slice(0, 4)} /></section>
       </>}
 
-      {view === "documents" && !searchResult && <section className="panel page-panel"><div className="panel-heading"><div><h2>文件匣</h2><p>PDF、圖片及 CSV 都先進入共用文件資料層</p></div></div><DocumentList rows={documents} expanded onPreview={setPreviewDocument} onSaveLocal={saveLocally} busy={busy} /></section>}
+      {view === "documents" && !searchResult && <section className="panel page-panel"><div className="panel-heading document-heading"><h2>文件匣</h2><div className="document-state-filter" role="group" aria-label="文件狀態">
+        <button aria-pressed={documentState === "active"} onClick={() => setDocumentState("active")}>有效 <span>{documents.length}</span></button>
+        <button aria-pressed={documentState === "revoked"} onClick={() => setDocumentState("revoked")}>已撤銷 <span>{revokedDocuments.length}</span></button>
+      </div></div><DocumentList rows={documentState === "active" ? documents : revokedDocuments} expanded revoked={documentState === "revoked"} onPreview={setPreviewDocument} onSaveLocal={saveLocally} onChangeImport={setLifecycleDocument} busy={busy} /></section>}
       {view === "transactions" && !searchResult && <TransactionsView refreshVersion={refreshVersion} />}
       {view === "activity" && <section className="panel page-panel"><div className="panel-heading"><div><h2>工作與匯入歷史</h2><p>最新 100 筆處理紀錄</p></div></div><JobList rows={jobs} expanded /></section>}
       {view === "settings" && <SettingsView report={report} onRefresh={refresh} />}
       <footer className="page-footer"><span>家庭收支記錄 v0.1</span><span>資料保存在此 Windows 主機</span></footer>
     </main>
     {previewDocument && <PdfPreviewDialog document={previewDocument} onClose={() => setPreviewDocument(null)} />}
+    {lifecycleDocument && <ImportLifecycleDialog document={lifecycleDocument} onClose={() => { setLifecycleDocument(null); void refresh(); }} onChanged={importStateChanged} />}
   </div>;
 }
 
@@ -170,19 +194,20 @@ function TransactionTable({ rows }: { rows: Transaction[] }) {
   return <div className="table-wrap"><table><thead><tr><th>日期</th><th>項目</th><th>金額</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td className="date-cell">{row.date ?? "未提供"}</td><td><span className="transaction-name">{row.description}</span></td><td className={Number(row.amount) < 0 ? "amount expense" : "amount income"}>{money(row.amount, row.currency)}</td></tr>)}</tbody></table></div>;
 }
 
-function DocumentList({ rows, expanded = false, onPreview, onSaveLocal, busy = false }: { rows: DocumentRow[]; expanded?: boolean; onPreview?: (document: DocumentRow) => void; onSaveLocal?: (document: DocumentRow) => void; busy?: boolean }) {
-  if (!rows.length) return <EmptyState title="文件匣目前是空的" detail="加入 PDF、JPG、PNG 或 CSV 文件開始整理。" />;
+function DocumentList({ rows, expanded = false, revoked = false, onPreview, onSaveLocal, onChangeImport, busy = false }: { rows: DocumentRow[]; expanded?: boolean; revoked?: boolean; onPreview?: (document: DocumentRow) => void; onSaveLocal?: (document: DocumentRow) => void; onChangeImport?: (document: DocumentRow) => void; busy?: boolean }) {
+  if (!rows.length) return <EmptyState title={revoked ? "沒有已撤銷的文件" : "文件匣目前是空的"} detail={revoked ? "" : "加入 PDF、JPG、PNG 或 CSV 文件開始整理。"} />;
   return <ul className={expanded ? "document-list expanded" : "document-list"}>{rows.map((row) => {
     const isPdf = row.content_type.includes("pdf") || row.filename.toLowerCase().endsWith(".pdf");
     const hasLocal = row.sources?.some((source) => source.type === "local_file");
     const hasRemote = row.sources?.some((source) => source.type === "gmail_attachment");
-    return <li key={row.id}><span className={`file-icon ${isPdf ? "pdf" : row.content_type.includes("image") ? "image" : "csv"}`}>{isPdf ? "PDF" : row.content_type.includes("image") ? "IMG" : "CSV"}</span><span className="file-info"><a href={api.documentUrl(row.id)} target="_blank" rel="noreferrer"><strong>{row.filename}</strong></a><small>{formatBytes(row.size_bytes)} · {new Date(row.created_at).toLocaleDateString("zh-TW")}{hasRemote ? " · Gmail" : ""}</small></span><span className="document-actions">{isPdf && onPreview && <button className="small-action" title="開啟 PDF 預覽" aria-label={`預覽 ${row.filename}`} onClick={() => onPreview(row)}>預覽</button>}{hasRemote && !hasLocal && onSaveLocal && <button className="small-action" title="將附件保存到本機文件匣" aria-label={`保存 ${row.filename} 到本機`} disabled={busy} onClick={() => onSaveLocal(row)}>保存</button>}</span><span className="file-state" title={hasLocal ? "本機已有副本" : "來自遠端文件來源"}>{hasLocal ? "✓" : hasRemote ? "↗" : "✓"}</span></li>;
+    return <li key={row.id}><span className={`file-icon ${isPdf ? "pdf" : row.content_type.includes("image") ? "image" : "csv"}`}>{isPdf ? "PDF" : row.content_type.includes("image") ? "IMG" : "CSV"}</span><span className="file-info"><a href={api.documentUrl(row.id)} target="_blank" rel="noreferrer"><strong>{row.filename}</strong></a><small>{formatBytes(row.size_bytes)} · {new Date(row.created_at).toLocaleDateString("zh-TW")}{hasRemote ? " · Gmail" : ""}</small>{row.revoked_at && <small className="revocation-detail">已撤銷 · {new Date(row.revoked_at).toLocaleDateString("zh-TW")}{row.revocation_reason ? ` · ${row.revocation_reason}` : ""}</small>}</span><span className="document-actions">{isPdf && onPreview && <button className="small-action" title="開啟 PDF 預覽" aria-label={`預覽 ${row.filename}`} onClick={() => onPreview(row)}>預覽</button>}{hasRemote && !hasLocal && onSaveLocal && <button className="small-action" title="將附件保存到本機文件匣" aria-label={`保存 ${row.filename} 到本機`} disabled={busy} onClick={() => onSaveLocal(row)}>保存</button>}{onChangeImport && <button className={`small-action ${row.revoked_at ? "" : "revoke-action"}`} aria-label={`${row.revoked_at ? "恢復" : "撤銷匯入"} ${row.filename}`} disabled={busy} onClick={() => onChangeImport(row)}>{row.revoked_at ? "恢復" : "撤銷匯入"}</button>}</span><span className="file-state" title={hasLocal ? "本機已有副本" : "來自遠端文件來源"}>{hasLocal ? "✓" : hasRemote ? "↗" : "✓"}</span></li>;
   })}</ul>;
 }
 
 function JobList({ rows, expanded = false }: { rows: Job[]; expanded?: boolean }) {
   if (!rows.length) return <EmptyState title="還沒有匯入紀錄" detail="上傳文件或匯入 CSV 後，這裡會列出處理狀態。" />;
-    return <div className={expanded ? "job-list expanded" : "job-list"}>{rows.map((job) => <div className="job-row" key={job.id}><span className="job-type">{job.source_type === "gmail_sync" ? "GMAIL" : job.source_type === "csv" ? "CSV" : "DOC"}</span><span className="job-info"><strong>{job.source_type === "gmail_sync" ? "Gmail 同步" : job.target_module === "finance" ? "財務資料匯入" : "文件匯入"}</strong><small>{job.summary} · {new Date(job.created_at).toLocaleString("zh-TW")}</small></span><span className={`job-status ${job.status}`}>{job.status === "completed" ? "完成" : job.status === "duplicate" ? "內容重複" : job.status === "partial" ? "部分完成" : job.status}</span></div>)}</div>;
+  const statusLabels: Record<string, string> = { completed: "完成", duplicate: "內容重複", partial: "部分完成", revoked: "已撤銷", restored: "已恢復", skipped_revoked: "略過已撤銷", failed: "失敗" };
+  return <div className={expanded ? "job-list expanded" : "job-list"}>{rows.map((job) => <div className="job-row" key={job.id}><span className="job-type">{job.source_type === "gmail_sync" ? "GMAIL" : job.source_type === "csv" ? "CSV" : "DOC"}</span><span className="job-info"><strong>{job.source_type === "document_lifecycle" ? "文件匯入狀態" : job.source_type === "gmail_sync" ? "Gmail 同步" : job.target_module === "finance" ? "財務資料匯入" : "文件匯入"}</strong><small title={job.summary}>{job.summary} · {new Date(job.created_at).toLocaleString("zh-TW")}</small></span><span className={`job-status ${job.status}`}>{statusLabels[job.status] ?? job.status}</span></div>)}</div>;
 }
 
 function EmptyState({ title, detail }: { title: string; detail: string }) { return <div className="empty-state"><span className="empty-mark">⌁</span><strong>{title}</strong><p>{detail}</p></div>; }
@@ -269,7 +294,7 @@ function SettingsView({ report, onRefresh }: { report: (message: string, error?:
     try {
       const result = await api.syncGmail();
       const suffix = result.truncated ? "；已達單次安全上限，請再次同步接續處理" : "";
-      report(`Gmail 同步完成：新增附件 ${result.new_attachments} 份、交易 ${result.created_transactions} 筆、失敗 ${result.failures} 件${suffix}`);
+      report(`Gmail 同步完成：新增附件 ${result.new_attachments} 份、交易 ${result.created_transactions} 筆、略過已撤銷 ${result.skipped_revoked} 份、失敗 ${result.failures} 件${suffix}`);
       await Promise.all([load(), onRefresh()]);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Gmail 同步失敗"); }
     finally { setBusy(false); }

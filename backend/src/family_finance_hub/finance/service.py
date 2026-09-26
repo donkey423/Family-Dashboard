@@ -58,6 +58,8 @@ class FinanceCsvImportService:
         if not filename.lower().endswith(".csv"):
             raise ValueError("財務匯入僅接受 CSV 檔案")
         imported = self.documents.import_bytes(session, filename, content, "finance")
+        if imported.document.revoked_at is not None:
+            return {"document_id": imported.document.id, "duplicate_document": True, "created_transactions": 0, "skipped_revoked": True}
         parsed = self.processor.process(ProcessingRequest(
             content=self.document_sources.read(imported.document),
             context=ProcessingContext(filename=filename, content_type=imported.document.content_type),
@@ -82,6 +84,14 @@ class FinanceCsvImportService:
             source_key,
             source_reference,
         )
+        if imported.document.revoked_at is not None:
+            if not imported.duplicate_source:
+                session.add(ImportJob(
+                    id=str(uuid4()), document_id=imported.document.id,
+                    source_type="gmail_attachment", target_module="finance",
+                    status="skipped_revoked", summary="文件已撤銷，略過財務匯入",
+                ))
+            return {"document_id": imported.document.id, "duplicate_document": True, "duplicate_source": imported.duplicate_source, "created_transactions": 0, "skipped_revoked": True}
         if imported.duplicate_source:
             return {
                 "document_id": imported.document.id,

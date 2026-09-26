@@ -1,9 +1,8 @@
 from contextlib import asynccontextmanager
 import asyncio
 from datetime import date, datetime, timezone
-from decimal import Decimal
 from threading import Lock
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -14,6 +13,7 @@ from sqlalchemy import String, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from .application.use_cases import ImportDocumentUseCase, ImportFinanceCsvUseCase
+from .application.document_lifecycle import DocumentImpactChanged, DocumentLifecycleUseCase, DocumentNotFound
 from .config import Settings
 from .database import Base, make_engine, make_session_factory
 from .documents.service import DocumentService
@@ -21,6 +21,7 @@ from .documents.processors.ocr import TesseractOcrProvider
 from .documents.processors.pdf import PdfDocumentProcessor
 from .documents.processors.ports import DocumentProcessingError, ProcessingContext, ProcessingRequest
 from .finance.service import FinanceCsvImportService
+from .finance.queries import active_transaction_filter, transaction_totals
 from .models import AIProviderProfile, Document, DocumentSourceRecord, FinanceTransaction, GmailConnection, ImportJob, utc_now
 from .documents.sources import DocumentSourceRegistry, LocalFileDocumentSource
 from .documents.sources.ports import DocumentSourceUnavailable
@@ -81,6 +82,11 @@ class GmailScheduleInput(BaseModel):
     enabled: bool
 
 
+class DocumentLifecycleInput(BaseModel):
+    impact_token: str = Field(pattern=r"^[a-f0-9]{64}$")
+    reason: str = Field(default="", max_length=200)
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -126,6 +132,7 @@ def create_app(
     document_import = ImportDocumentUseCase(documents)
     finance_service = FinanceCsvImportService(documents, document_sources)
     finance_import = ImportFinanceCsvUseCase(finance_service)
+    document_lifecycle = DocumentLifecycleUseCase()
     gmail_sync = GmailSyncUseCase(documents, finance_service, config.max_upload_bytes)
     gmail_sync_lock = Lock()
 
@@ -545,19 +552,47 @@ def create_app(
             result = document_import.execute(session, file.filename or "upload", content, "documents")
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
-        return {"id": result.document.id, "filename": result.document.filename, "sha256": result.document.sha256, "duplicate": result.duplicate}
+        return {"id": result.document.id, "filename": result.document.filename, "sha256": result.document.sha256, "duplicate": result.duplicate, "skipped_revoked": result.document.revoked_at is not None}
 
     @app.get("/api/documents")
-    def list_documents(session: Session = Depends(get_session)):
-        rows = session.scalars(select(Document).order_by(Document.created_at.desc())).all()
+    def list_documents(state: Literal["active", "revoked", "all"] = "active", session: Session = Depends(get_session)):
+        statement = select(Document)
+        if state != "all":
+            statement = statement.where(Document.revoked_at.is_(None) if state == "active" else Document.revoked_at.is_not(None))
+        rows = session.scalars(statement.order_by(Document.created_at.desc())).all()
         return [{
             "id": row.id,
             "filename": row.filename,
             "content_type": row.content_type,
             "size_bytes": row.size_bytes,
             "created_at": row.created_at,
+            "revoked_at": row.revoked_at,
+            "revocation_reason": row.revocation_reason,
             "sources": [{"type": source.source_type, "availability": source.availability_status} for source in row.sources],
         } for row in rows]
+
+    @app.get("/api/documents/{document_id}/import-impact")
+    def document_import_impact(document_id: str, session: Session = Depends(get_session)):
+        try:
+            return document_lifecycle.preview(session, document_id)
+        except DocumentNotFound:
+            raise HTTPException(status_code=404, detail="找不到文件") from None
+
+    @app.post("/api/documents/{document_id}/revoke")
+    def revoke_document(document_id: str, body: DocumentLifecycleInput, session: Session = Depends(get_session)):
+        return change_document_state(document_id, body, True, session)
+
+    @app.post("/api/documents/{document_id}/restore")
+    def restore_document(document_id: str, body: DocumentLifecycleInput, session: Session = Depends(get_session)):
+        return change_document_state(document_id, body, False, session)
+
+    def change_document_state(document_id: str, body: DocumentLifecycleInput, revoked: bool, session: Session):
+        try:
+            return document_lifecycle.execute(session, document_id, revoked=revoked, impact_token=body.impact_token, reason=body.reason)
+        except DocumentNotFound:
+            raise HTTPException(status_code=404, detail="找不到文件") from None
+        except DocumentImpactChanged:
+            raise HTTPException(status_code=409, detail="文件或交易已變更，請重新檢視影響後再確認") from None
 
     @app.post("/api/documents/{document_id}/save-local")
     def save_document_locally(document_id: str, session: Session = Depends(get_session)):
@@ -616,8 +651,7 @@ def create_app(
         month: str | None = Query(default=None, max_length=7),
         session: Session = Depends(get_session),
     ):
-        statement = select(FinanceTransaction)
-        filters = []
+        filters = [active_transaction_filter()]
         if month:
             try:
                 if len(month) != 7 or month[4] != "-" or not month[:4].isdigit() or not month[5:].isdigit():
@@ -627,11 +661,11 @@ def create_app(
                 end = date(year + 1, 1, 1) if month_number == 12 else date(year, month_number + 1, 1)
             except ValueError as error:
                 raise HTTPException(status_code=422, detail="月份格式無效，請使用 YYYY-MM") from error
-            filters = [
+            filters.extend([
                 FinanceTransaction.transaction_date >= start,
                 FinanceTransaction.transaction_date < end,
-            ]
-            statement = statement.where(*filters)
+            ])
+        statement = select(FinanceTransaction).where(*filters)
         total = session.scalar(select(func.count(FinanceTransaction.id)).where(*filters)) or 0
         rows = session.scalars(
             statement.order_by(
@@ -649,30 +683,13 @@ def create_app(
 
     @app.get("/api/dashboard")
     def dashboard(session: Session = Depends(get_session)):
-        totals = session.execute(select(
-            FinanceTransaction.currency,
-            func.count(FinanceTransaction.id),
-            func.coalesce(func.sum(case((FinanceTransaction.amount >= 0, FinanceTransaction.amount), else_=0)), 0),
-            func.coalesce(func.sum(case((FinanceTransaction.amount < 0, -FinanceTransaction.amount), else_=0)), 0),
-        ).group_by(FinanceTransaction.currency).order_by(FinanceTransaction.currency)).all()
-        return {
-            "transaction_count": sum(count for _, count, _, _ in totals),
-            "currency_totals": [
-                {
-                    "currency": currency,
-                    "income": str(income.quantize(Decimal("0.01"))),
-                    "expenses": str(expenses.quantize(Decimal("0.01"))),
-                    "net": str((income - expenses).quantize(Decimal("0.01"))),
-                }
-                for currency, _count, income, expenses in totals
-            ],
-        }
+        return transaction_totals(session)
 
     @app.get("/api/search")
     def search(q: str = Query(min_length=1, max_length=200), session: Session = Depends(get_session)):
         pattern = f"%{q.strip()}%"
-        documents = session.scalars(select(Document).where(Document.filename.ilike(pattern)).limit(50)).all()
-        transactions = session.scalars(select(FinanceTransaction).where(or_(FinanceTransaction.description.ilike(pattern), cast(FinanceTransaction.amount, String).ilike(pattern))).limit(50)).all()
+        documents = session.scalars(select(Document).where(Document.revoked_at.is_(None), Document.filename.ilike(pattern)).limit(50)).all()
+        transactions = session.scalars(select(FinanceTransaction).where(active_transaction_filter(), or_(FinanceTransaction.description.ilike(pattern), cast(FinanceTransaction.amount, String).ilike(pattern))).limit(50)).all()
         return {
             "documents": [{
                 "id": row.id,
@@ -680,6 +697,8 @@ def create_app(
                 "content_type": row.content_type,
                 "size_bytes": row.size_bytes,
                 "created_at": row.created_at,
+                "revoked_at": row.revoked_at,
+                "revocation_reason": row.revocation_reason,
                 "sources": [{"type": source.source_type, "availability": source.availability_status} for source in row.sources],
             } for row in documents],
             "transactions": [{"id": row.id, "source_document_id": row.source_document_id, "date": row.transaction_date, "description": row.description, "amount": str(row.amount), "currency": row.currency} for row in transactions],

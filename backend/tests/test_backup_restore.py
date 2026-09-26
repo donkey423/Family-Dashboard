@@ -1,4 +1,5 @@
 import shutil
+import pytest
 
 from fastapi.testclient import TestClient
 
@@ -13,7 +14,8 @@ def make_settings(root):
     )
 
 
-def test_database_and_document_storage_restore_together(tmp_path):
+@pytest.mark.parametrize("revoked", [False, True])
+def test_database_and_document_storage_restore_together(tmp_path, revoked):
     source_root = tmp_path / "source"
     backup_root = tmp_path / "backup"
     restore_root = tmp_path / "restored"
@@ -30,6 +32,10 @@ def test_database_and_document_storage_restore_together(tmp_path):
             "file": ("rehearsal.csv", csv_content, "text/csv"),
         })
         assert imported.status_code == 200
+        document_id = imported.json()["document_id"]
+        if revoked:
+            impact = client.get(f"/api/documents/{document_id}/import-impact").json()
+            assert client.post(f"/api/documents/{document_id}/revoke", json={"impact_token": impact["impact_token"], "reason": "Synthetic rehearsal"}).status_code == 200
 
     backup_root.mkdir()
     shutil.copy2(source_root / "family.db", backup_root / "family.db")
@@ -42,5 +48,12 @@ def test_database_and_document_storage_restore_together(tmp_path):
         documents = restored.get("/api/documents").json()
         pdf = next(document for document in documents if document["filename"] == "rehearsal.pdf")
         assert restored.get(f"/api/documents/{pdf['id']}/content").content == original_pdf
+        if revoked:
+            assert restored.get("/api/dashboard").json()["transaction_count"] == 0
+            assert restored.get("/api/search", params={"q": "Backup rehearsal"}).json()["transactions"] == []
+            impact = restored.get(f"/api/documents/{document_id}/import-impact").json()
+            assert impact["revocation_reason"] == "Synthetic rehearsal"
+            assert any(job["status"] == "revoked" for job in restored.get("/api/jobs").json())
+            assert restored.post(f"/api/documents/{document_id}/restore", json={"impact_token": impact["impact_token"]}).status_code == 200
         assert restored.get("/api/dashboard").json()["transaction_count"] == 1
         assert restored.get("/api/search", params={"q": "Backup rehearsal"}).json()["transactions"]

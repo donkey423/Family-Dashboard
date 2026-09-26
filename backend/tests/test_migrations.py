@@ -188,6 +188,33 @@ def test_alembic_uses_the_application_database_url_environment_override(tmp_path
     engine.dispose()
 
 
+def test_document_revocation_migration_preserves_data_and_guards_downgrade(tmp_path):
+    database_file = tmp_path / "revocation.db"
+    config = Config("backend/alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_file.as_posix()}")
+    command.upgrade(config, "0008_gmail_auto_sync")
+    engine = create_engine(f"sqlite:///{database_file.as_posix()}")
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO documents (id, sha256, filename, content_type, size_bytes, created_at) VALUES ('doc', 'hash', 'test.csv', 'text/csv', 10, '2026-09-01')"))
+        connection.execute(text("INSERT INTO finance_transactions (id, source_document_id, row_hash, description, amount, currency, raw_json, created_at) VALUES ('tx', 'doc', 'row', 'Synthetic', -10, 'TWD', '{}', '2026-09-01')"))
+    command.upgrade(config, "head")
+    with engine.begin() as connection:
+        assert connection.execute(text("SELECT revoked_at, revocation_reason, lifecycle_version FROM documents")).one() == (None, None, 0)
+        assert connection.execute(text("SELECT id, amount FROM finance_transactions")).one() == ("tx", -10)
+        connection.execute(text("UPDATE documents SET revoked_at = '2026-09-26', revocation_reason = 'Synthetic', lifecycle_version = 1"))
+    with pytest.raises(RuntimeError, match="Restore revoked documents"):
+        command.downgrade(config, "0008_gmail_auto_sync")
+    with engine.begin() as connection:
+        assert connection.scalar(text("SELECT revoked_at FROM documents")) == "2026-09-26"
+        connection.execute(text("UPDATE documents SET revoked_at = NULL, revocation_reason = NULL"))
+    command.downgrade(config, "0008_gmail_auto_sync")
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT COUNT(*) FROM documents")) == 1
+        assert connection.scalar(text("SELECT amount FROM finance_transactions")) == -10
+    assert "revoked_at" not in {column["name"] for column in inspect(engine).get_columns("documents")}
+    engine.dispose()
+
+
 def test_secret_profiles_migration_stores_credential_references_only(tmp_path):
     database_file = tmp_path / "secret-profiles.db"
     config = Config("backend/alembic.ini")

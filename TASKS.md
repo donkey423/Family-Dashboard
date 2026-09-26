@@ -93,7 +93,7 @@
 - [x] 支援「保存到家庭文件匣」：使用者明確選擇後新增 local source，不覆寫 Gmail source
 - [x] 定義 Gmail 授權失效或 attachment 不可取得時的 UI/API error handling
 - [ ] 以真實台灣信用卡帳單驗證第一個 bank/card parser，再決定 bank-specific adapter interface
-- [x] 驗收：連續按「立即同步 Gmail」不會建立重複 Document 或 Finance transaction；Job 只在新增/失敗批次建立
+- [x] 驗收：連續按「立即同步 Gmail」不會建立重複 Document 或 Finance transaction；Job 在新增、失敗或略過已撤銷文件的批次建立
 - [x] 驗收：合成資料測試確認 AI request、API response、DB fixture 不含身分證字號、生日或組合後 PDF 密碼
 - [x] 驗收：同一帳單可同時擁有 Gmail remote source 與使用者保存的 local source
 
@@ -116,6 +116,17 @@
 
 - [ ] 僅在確實需要「信件到達後數秒內更新」時，再評估 Gmail Push / Pub/Sub
 - [ ] Push 仍只觸發既有 `GmailSyncUseCase`，不建立第二套同步流程
+
+## M6：誤匯入撤銷與恢復
+
+- [x] 文件級可逆撤銷，保留來源、原始交易及 Jobs 稽核紀錄
+- [x] 影響預覽：筆數、各幣別金額，並拒絕過期的確認請求
+- [x] Dashboard、交易列表與搜尋同步排除已撤銷來源；恢復原交易不重建
+- [x] 手動上傳與 Gmail 對相同 hash 保持撤銷狀態，包括新郵件的相同附件
+- [x] UI 有效／已撤銷清單、原因、確認及恢復流程
+- [x] migration 保留既有資料；尚有撤銷文件時拒絕退回不理解撤銷狀態的舊 schema
+- [x] 合成資料覆蓋冪等、原子性、Gmail、升降級及備份還原；桌面／手機瀏覽器操作驗證
+- [ ] 使用中的家庭資料庫備份、升級與實際帳單驗收（本次未操作）
 
 ## 延後項目
 
