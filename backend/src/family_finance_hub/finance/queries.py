@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import case, func, select
@@ -10,18 +11,31 @@ def active_transaction_filter():
     return FinanceTransaction.document.has(Document.revoked_at.is_(None))
 
 
-def transaction_totals(session: Session, *, document_id: str | None = None) -> dict:
+def transaction_totals(
+    session: Session,
+    *,
+    document_id: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    currency: str | None = None,
+) -> dict:
     # Impact previews include revoked rows; ordinary summaries include only active documents.
-    predicate = (
+    predicates = [(
         FinanceTransaction.source_document_id == document_id
         if document_id is not None else active_transaction_filter()
-    )
+    )]
+    if start_date is not None:
+        predicates.append(FinanceTransaction.transaction_date >= start_date)
+    if end_date is not None:
+        predicates.append(FinanceTransaction.transaction_date < end_date)
+    if currency is not None:
+        predicates.append(FinanceTransaction.currency == currency)
     totals = session.execute(select(
         FinanceTransaction.currency,
         func.count(FinanceTransaction.id),
         func.coalesce(func.sum(case((FinanceTransaction.amount >= 0, FinanceTransaction.amount), else_=0)), 0),
         func.coalesce(func.sum(case((FinanceTransaction.amount < 0, -FinanceTransaction.amount), else_=0)), 0),
-    ).where(predicate).group_by(FinanceTransaction.currency).order_by(FinanceTransaction.currency)).all()
+    ).where(*predicates).group_by(FinanceTransaction.currency).order_by(FinanceTransaction.currency)).all()
     return {
         "transaction_count": sum(count for _, count, _, _ in totals),
         "currency_totals": [

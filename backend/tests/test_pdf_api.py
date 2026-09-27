@@ -234,3 +234,4 @@ def test_pdf_extraction_status_header_is_exposed_to_browser(tmp_path):
     assert response.status_code == 200
     assert response.headers["x-familyhub-text-extraction"] == "insufficient"
     assert "x-familyhub-text-extraction" in response.headers["access-control-expose-headers"].lower()
+    assert "x-familyhub-error" in response.headers["access-control-expose-headers"].lower()

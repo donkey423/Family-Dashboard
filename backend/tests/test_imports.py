@@ -364,6 +364,53 @@ def test_finance_csv_import_is_idempotent_and_linked_to_document(tmp_path):
     engine.dispose()
 
 
+def test_search_returns_totals_and_independent_pagination(tmp_path):
+    client, _ = make_client(tmp_path)
+    with client:
+        for index in range(3):
+            content = f"date,description,amount\n2026-09-{index + 1:02d},Coffee {index},-{index + 1}.00\n".encode()
+            response = client.post("/api/finance/import-csv", files={"file": (f"statement-{index}.csv", content, "text/csv")})
+            assert response.status_code == 200
+
+        first = client.get("/api/search", params={"q": "Coffee", "transaction_limit": 2})
+        assert first.status_code == 200
+        assert first.json()["transaction_total"] == 3
+        assert len(first.json()["transactions"]) == 2
+        assert first.json()["transaction_offset"] == 0
+        assert first.json()["document_total"] == 0
+
+        second = client.get("/api/search", params={"q": "Coffee", "transaction_limit": 2, "transaction_offset": 2})
+        assert [row["description"] for row in second.json()["transactions"]] == ["Coffee 0"]
+
+        documents = client.get("/api/search", params={"q": "statement", "document_limit": 1, "document_offset": 1})
+        assert documents.json()["document_total"] == 3
+        assert len(documents.json()["documents"]) == 1
+        assert documents.json()["documents"][0]["filename"] == "statement-1.csv"
+
+
+def test_document_detail_returns_sources_transactions_and_jobs(tmp_path):
+    client, _ = make_client(tmp_path)
+    content = b"date,description,amount\n2026-09-01,Salary,1000.00\n"
+    with client:
+        imported = client.post("/api/finance/import-csv", files={"file": ("salary.csv", content, "text/csv")})
+        assert imported.status_code == 200
+        document_id = imported.json()["document_id"]
+
+        response = client.get(f"/api/documents/{document_id}/detail")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["document"]["filename"] == "salary.csv"
+        assert payload["sources"] == [{
+            "type": "local_file",
+            "availability": "available",
+            "has_local_copy": True,
+            "last_verified_at": payload["sources"][0]["last_verified_at"],
+        }]
+        assert [row["description"] for row in payload["transactions"]] == ["Salary"]
+        assert {job["source_type"] for job in payload["jobs"]} == {"upload", "csv"}
+
+
 def test_transaction_list_supports_month_filter_and_pagination(tmp_path):
     client, _ = make_client(tmp_path)
     csv_bytes = (
@@ -385,6 +432,40 @@ def test_transaction_list_supports_month_filter_and_pagination(tmp_path):
         assert september["total"] == 2
         assert all(row["date"].startswith("2026-09") for row in september["items"])
         assert client.get("/api/finance/transactions", params={"month": "2026-13"}).status_code == 422
+
+
+def test_dashboard_supports_month_currency_and_empty_periods(tmp_path):
+    client, _ = make_client(tmp_path)
+    csv_bytes = (
+        b"date,description,amount,currency\n"
+        b"2026-09-01,September TWD,-10,TWD\n"
+        b"2026-09-02,September USD,-20,USD\n"
+        b"2026-08-31,August TWD,100,TWD\n"
+    )
+    with client:
+        imported = client.post("/api/finance/import-csv", files={"file": ("ledger.csv", csv_bytes, "text/csv")})
+        assert imported.status_code == 200
+
+        september = client.get("/api/dashboard", params={"month": "2026-09"})
+        assert september.status_code == 200
+        assert september.json()["transaction_count"] == 2
+        assert september.json()["available_currencies"] == ["TWD", "USD"]
+        assert september.json()["currency_totals"] == [
+            {"currency": "TWD", "income": "0.00", "expenses": "10.00", "net": "-10.00"},
+            {"currency": "USD", "income": "0.00", "expenses": "20.00", "net": "-20.00"},
+        ]
+
+        usd = client.get("/api/dashboard", params={"month": "2026-09", "currency": "usd"})
+        assert usd.json()["transaction_count"] == 1
+        assert usd.json()["currency_totals"] == [{"currency": "USD", "income": "0.00", "expenses": "20.00", "net": "-20.00"}]
+        assert client.get("/api/finance/transactions", params={"month": "2026-09", "currency": "USD"}).json()["total"] == 1
+
+        empty = client.get("/api/dashboard", params={"month": "2026-07"})
+        assert empty.json()["transaction_count"] == 0
+        assert empty.json()["currency_totals"] == []
+        assert empty.json()["available_currencies"] == ["TWD", "USD"]
+        assert client.get("/api/dashboard", params={"month": "2026-99"}).status_code == 422
+        assert client.get("/api/dashboard", params={"currency": "NT$"}).status_code == 422
 
 
 def test_upload_rejects_unsupported_file(tmp_path):

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type DocumentRow, type ImportImpact } from "./api";
+import { useDialogFocus } from "./useDialogFocus";
 
 type Props = {
   document: DocumentRow;
@@ -18,6 +19,8 @@ export function ImportLifecycleDialog({ document, onClose, onChanged }: Props) {
   const restoring = document.revoked_at !== null;
   const action = restoring ? "恢復" : "撤銷";
   const alreadyDone = impact !== null && (restoring ? impact.revoked_at === null : impact.revoked_at !== null);
+
+  useDialogFocus(dialog, onClose);
 
   useEffect(() => {
     const element = dialog.current;
@@ -76,7 +79,7 @@ export function ImportLifecycleDialog({ document, onClose, onChanged }: Props) {
         </select></label>}
         {!restoring && !alreadyDone && <p className="lifecycle-note">相同內容再次上傳或從 Gmail 同步，仍會保持已撤銷。</p>}
       </>}
-      <footer><button className="button secondary" type="button" autoFocus disabled={busy} onClick={onClose}>{alreadyDone ? "關閉" : "取消"}</button>
+      <footer><button className="button secondary" type="button" autoFocus data-dialog-initial-focus disabled={busy} onClick={onClose}>{alreadyDone ? "關閉" : "取消"}</button>
         <button className={`button ${restoring ? "primary" : "danger"}`} disabled={!impact || loading || busy || alreadyDone}>{busy ? "處理中…" : `確認${action}`}</button></footer>
     </form>
   </dialog>;

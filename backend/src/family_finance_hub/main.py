@@ -87,6 +87,29 @@ class DocumentLifecycleInput(BaseModel):
     reason: str = Field(default="", max_length=200)
 
 
+def _month_range(value: str | None) -> tuple[date, date] | None:
+    if not value:
+        return None
+    try:
+        if len(value) != 7 or value[4] != "-" or not value[:4].isdigit() or not value[5:].isdigit():
+            raise ValueError
+        year, month = int(value[:4]), int(value[5:])
+        start = date(year, month, 1)
+        end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+        return start, end
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="月份格式無效，請使用 YYYY-MM") from error
+
+
+def _currency_code(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip().upper()
+    if len(normalized) != 3 or not normalized.isalpha():
+        raise HTTPException(status_code=422, detail="幣別格式無效，請使用三碼英文字母")
+    return normalized
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -169,7 +192,7 @@ def create_app(
         allow_origins=list(config.cors_origins),
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
-        expose_headers=["X-FamilyHub-Text-Extraction"],
+        expose_headers=["X-FamilyHub-Text-Extraction", "X-FamilyHub-Error"],
     )
 
     def get_session():
@@ -341,10 +364,10 @@ def create_app(
     @app.post("/api/security/document-profiles", status_code=201)
     def create_document_security_profile(body: DocumentSecurityProfileInput, session: Session = Depends(get_session)):
         if not body.display_name.strip() or not body.institution.strip():
-            raise HTTPException(status_code=422, detail="請填寫 profile 名稱與機構名稱")
+            raise HTTPException(status_code=422, detail="請填寫文件解鎖設定名稱與機構名稱")
         with session.begin():
             if session.get(SecretProfile, body.secret_profile_id) is None:
-                raise HTTPException(status_code=404, detail="找不到家庭成員安全 profile")
+                raise HTTPException(status_code=404, detail="找不到家庭成員安全資料")
             profile = DocumentSecurityProfile(
                 id=str(uuid4()),
                 display_name=body.display_name.strip(),
@@ -364,13 +387,13 @@ def create_app(
     @app.post("/api/security/password-rules/analyze")
     def analyze_password_rule(body: PasswordRuleAnalysisInput, session: Session = Depends(get_session)):
         if not body.document_security_profile_id:
-            raise HTTPException(status_code=422, detail="請先選擇文件安全 profile")
+            raise HTTPException(status_code=422, detail="請先選擇文件解鎖設定")
         profile = session.get(DocumentSecurityProfile, body.document_security_profile_id)
         if profile is None:
-            raise HTTPException(status_code=404, detail="找不到文件安全 profile")
+            raise HTTPException(status_code=404, detail="找不到文件解鎖設定")
         secret_profile = session.get(SecretProfile, profile.secret_profile_id)
         if secret_profile is None:
-            raise HTTPException(status_code=404, detail="找不到家庭成員安全 profile")
+            raise HTTPException(status_code=404, detail="找不到家庭成員安全資料")
         try:
             national_id, birthday = get_secret_service().get_values(secret_profile)
             instruction = instruction_extractor.extract(
@@ -425,10 +448,10 @@ def create_app(
                 )).all()
                 profile = session.get(DocumentSecurityProfile, body.document_security_profile_id) if body.document_security_profile_id else None
                 if body.document_security_profile_id and profile is None:
-                    raise HTTPException(status_code=404, detail="找不到文件安全 profile")
+                    raise HTTPException(status_code=404, detail="找不到文件解鎖設定")
                 secret_profile = session.get(SecretProfile, profile.secret_profile_id) if profile else None
                 if profile and secret_profile is None:
-                    raise HTTPException(status_code=404, detail="找不到家庭成員安全 profile")
+                    raise HTTPException(status_code=404, detail="找不到家庭成員安全資料")
             if content is None:
                 raise DocumentSourceUnavailable("document source unavailable")
 
@@ -513,10 +536,14 @@ def create_app(
         except HTTPException:
             raise
         except DocumentSourceUnavailable:
-            raise HTTPException(status_code=503, detail="目前無法取得文件來源") from None
+            raise HTTPException(
+                status_code=503,
+                detail="目前無法取得文件來源",
+                headers={"X-FamilyHub-Error": "document_source_unavailable"},
+            ) from None
         except DocumentProcessingError as error:
             messages = {
-                "pdf_password_required": "PDF 需要密碼規則，請選擇文件安全 profile 並提供郵件說明。",
+                "pdf_password_required": "PDF 需要密碼規則，請選擇文件解鎖設定並提供郵件說明。",
                 "pdf_wrong_password": "目前的密碼規則無法開啟這份 PDF。",
                 "pdf_unsupported_encryption": "此 PDF 使用不支援的加密方式。",
                 "pdf_malformed": "PDF 無法讀取或內容格式不正確。",
@@ -570,6 +597,56 @@ def create_app(
             "revocation_reason": row.revocation_reason,
             "sources": [{"type": source.source_type, "availability": source.availability_status} for source in row.sources],
         } for row in rows]
+
+    @app.get("/api/documents/{document_id}/detail")
+    def document_detail(document_id: str, session: Session = Depends(get_session)):
+        document = session.get(Document, document_id)
+        if document is None:
+            raise HTTPException(status_code=404, detail="找不到文件")
+        transactions = session.scalars(
+            select(FinanceTransaction).where(FinanceTransaction.source_document_id == document_id).order_by(
+                case((FinanceTransaction.transaction_date.is_(None), 1), else_=0),
+                FinanceTransaction.transaction_date.desc(),
+                FinanceTransaction.created_at.desc(),
+                FinanceTransaction.id,
+            )
+        ).all()
+        jobs = session.scalars(select(ImportJob).where(ImportJob.document_id == document_id).order_by(ImportJob.created_at.desc())).all()
+        return {
+            "document": {
+                "id": document.id,
+                "filename": document.filename,
+                "content_type": document.content_type,
+                "size_bytes": document.size_bytes,
+                "created_at": document.created_at,
+                "revoked_at": document.revoked_at,
+                "revocation_reason": document.revocation_reason,
+                "sources": [{"type": source.source_type, "availability": source.availability_status} for source in document.sources],
+            },
+            "sources": [{
+                "type": source.source_type,
+                "availability": source.availability_status,
+                "has_local_copy": source.source_type == "local_file" and source.storage_key is not None,
+                "last_verified_at": source.last_verified_at,
+            } for source in document.sources],
+            "transactions": [{
+                "id": row.id,
+                "source_document_id": row.source_document_id,
+                "date": row.transaction_date,
+                "description": row.description,
+                "amount": str(row.amount),
+                "currency": row.currency,
+            } for row in transactions],
+            "jobs": [{
+                "id": row.id,
+                "document_id": row.document_id,
+                "source_type": row.source_type,
+                "target_module": row.target_module,
+                "status": row.status,
+                "summary": row.summary,
+                "created_at": row.created_at,
+            } for row in jobs],
+        }
 
     @app.get("/api/documents/{document_id}/import-impact")
     def document_import_impact(document_id: str, session: Session = Depends(get_session)):
@@ -649,22 +726,19 @@ def create_app(
         limit: int = Query(default=50, ge=1, le=200),
         offset: int = Query(default=0, ge=0),
         month: str | None = Query(default=None, max_length=7),
+        currency: str | None = Query(default=None, max_length=3),
         session: Session = Depends(get_session),
     ):
         filters = [active_transaction_filter()]
-        if month:
-            try:
-                if len(month) != 7 or month[4] != "-" or not month[:4].isdigit() or not month[5:].isdigit():
-                    raise ValueError
-                year, month_number = int(month[:4]), int(month[5:])
-                start = date(year, month_number, 1)
-                end = date(year + 1, 1, 1) if month_number == 12 else date(year, month_number + 1, 1)
-            except ValueError as error:
-                raise HTTPException(status_code=422, detail="月份格式無效，請使用 YYYY-MM") from error
+        month_range = _month_range(month)
+        if month_range:
             filters.extend([
-                FinanceTransaction.transaction_date >= start,
-                FinanceTransaction.transaction_date < end,
+                FinanceTransaction.transaction_date >= month_range[0],
+                FinanceTransaction.transaction_date < month_range[1],
             ])
+        currency_code = _currency_code(currency)
+        if currency_code:
+            filters.append(FinanceTransaction.currency == currency_code)
         statement = select(FinanceTransaction).where(*filters)
         total = session.scalar(select(func.count(FinanceTransaction.id)).where(*filters)) or 0
         rows = session.scalars(
@@ -682,14 +756,56 @@ def create_app(
         }
 
     @app.get("/api/dashboard")
-    def dashboard(session: Session = Depends(get_session)):
-        return transaction_totals(session)
+    def dashboard(
+        month: str | None = Query(default=None, max_length=7),
+        currency: str | None = Query(default=None, max_length=3),
+        session: Session = Depends(get_session),
+    ):
+        month_range = _month_range(month)
+        currency_code = _currency_code(currency)
+        totals = transaction_totals(
+            session,
+            start_date=month_range[0] if month_range else None,
+            end_date=month_range[1] if month_range else None,
+            currency=currency_code,
+        )
+        available_currencies = session.scalars(
+            select(FinanceTransaction.currency)
+            .join(Document, FinanceTransaction.source_document_id == Document.id)
+            .where(active_transaction_filter())
+            .distinct()
+            .order_by(FinanceTransaction.currency)
+        ).all()
+        return {**totals, "available_currencies": available_currencies}
 
     @app.get("/api/search")
-    def search(q: str = Query(min_length=1, max_length=200), session: Session = Depends(get_session)):
-        pattern = f"%{q.strip()}%"
-        documents = session.scalars(select(Document).where(Document.revoked_at.is_(None), Document.filename.ilike(pattern)).limit(50)).all()
-        transactions = session.scalars(select(FinanceTransaction).where(active_transaction_filter(), or_(FinanceTransaction.description.ilike(pattern), cast(FinanceTransaction.amount, String).ilike(pattern))).limit(50)).all()
+    def search(
+        q: str = Query(min_length=1, max_length=200),
+        document_limit: int = Query(default=10, ge=1, le=100),
+        document_offset: int = Query(default=0, ge=0),
+        transaction_limit: int = Query(default=10, ge=1, le=100),
+        transaction_offset: int = Query(default=0, ge=0),
+        session: Session = Depends(get_session),
+    ):
+        query = q.strip()
+        if not query:
+            raise HTTPException(status_code=422, detail="搜尋文字不可為空")
+        pattern = f"%{query}%"
+        document_filters = [Document.revoked_at.is_(None), Document.filename.ilike(pattern)]
+        transaction_filters = [active_transaction_filter(), or_(FinanceTransaction.description.ilike(pattern), cast(FinanceTransaction.amount, String).ilike(pattern))]
+        document_total = session.scalar(select(func.count(Document.id)).where(*document_filters)) or 0
+        transaction_total = session.scalar(select(func.count(FinanceTransaction.id)).where(*transaction_filters)) or 0
+        documents = session.scalars(
+            select(Document).where(*document_filters).order_by(Document.created_at.desc(), Document.id).offset(document_offset).limit(document_limit)
+        ).all()
+        transactions = session.scalars(
+            select(FinanceTransaction).where(*transaction_filters).order_by(
+                case((FinanceTransaction.transaction_date.is_(None), 1), else_=0),
+                FinanceTransaction.transaction_date.desc(),
+                FinanceTransaction.created_at.desc(),
+                FinanceTransaction.id,
+            ).offset(transaction_offset).limit(transaction_limit)
+        ).all()
         return {
             "documents": [{
                 "id": row.id,
@@ -702,6 +818,12 @@ def create_app(
                 "sources": [{"type": source.source_type, "availability": source.availability_status} for source in row.sources],
             } for row in documents],
             "transactions": [{"id": row.id, "source_document_id": row.source_document_id, "date": row.transaction_date, "description": row.description, "amount": str(row.amount), "currency": row.currency} for row in transactions],
+            "document_total": document_total,
+            "transaction_total": transaction_total,
+            "document_limit": document_limit,
+            "document_offset": document_offset,
+            "transaction_limit": transaction_limit,
+            "transaction_offset": transaction_offset,
         }
 
     @app.get("/api/jobs")

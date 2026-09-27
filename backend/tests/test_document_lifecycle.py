@@ -51,6 +51,7 @@ def test_revoke_restore_scopes_queries_and_preserves_original_records(tmp_path):
         assert client.get("/api/dashboard").json() == {
             "transaction_count": 1,
             "currency_totals": [{"currency": "TWD", "income": "0.00", "expenses": "5.00", "net": "-5.00"}],
+            "available_currencies": ["TWD"],
         }
         assert client.get("/api/finance/transactions?month=2026-08").json()["total"] == 0
         assert client.get("/api/finance/transactions?month=2026-09").json()["total"] == 1
