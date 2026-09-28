@@ -3,6 +3,13 @@
 ## 產品定位
 
 家庭收支記錄的近期目標是：信用卡帳單 PDF → 本機解鎖 → 逐筆解析與核對 → SQLite → 每月支出 Excel。先讓一家實際使用的銀行可靠運作，再接既有 Gmail 同步自動處理；不以通用家庭資料平台的功能完整度作為交付標準。
+家庭收支記錄的近期目標是：信用卡帳單 PDF → 本機解鎖 → 逐筆解析與核對 → SQLite → 每月支出 Excel。先讓一家實際使用的銀行可靠運作，再接既有 Gmail 同步自動處理；不以通用家庭資料平台的功能完整度作為交付標準。
+
+目前產品優先目標已收斂為：**每月自動取得信用卡帳單，安全解鎖 PDF，正確解析消費交易，讓使用者快速知道本月花了什麼與花多少；Excel 是主要使用成果，並由 SQLite 可重建。**
+
+既有 Documents、Finance、Gmail、PDF、Search、Jobs、Excel 等能力可作為已完成基礎設施，但「可持續擴充的通用家庭資料平台」不再是近期開發驅動力。除非出現真實需求，不為 Google Drive、Insurance、Assets、Vehicle 等未來領域繼續預先擴充。詳細的 scope reset、Overdesign 假說與高階模型審查問題見 `ARCHITECTURE_REVIEW_BRIEF.md`。
+
+Windows 家用電腦保存結構化資料與需要本地持久化的原始文件，其他裝置以瀏覽器透過 Tailscale 私有網路存取。
 
 Excel 是主要使用成果，Web 用於連線/解鎖設定、首次核對與例外處理。Windows 主機保存結構化資料及選擇保留的原始文件，其他裝置需要時透過 Tailscale 私有網路使用 Web。信用卡資料不代表所有家庭支出，也不保證當月尚未出帳的交易已齊全。
 
@@ -44,6 +51,8 @@ Gmail 信用卡帳單採「remote source first」：
 保留既有 `DocumentSource`、`DocumentProcessor`、Gmail、PDF、OCR 與 AIProvider 邊界；不新增 Insurance、Assets、Warranty、Travel、Vehicle、Subscriptions、Property、股票 API 或其他 provider。未來需求真正發生再設計，不為「通用」先做 registry、多銀行 framework 或空殼 UI。
 
 本輪不做完整 Dashboard、分類/備註管理、交易 AI、雙向 Excel 同步或任意手寫工作表保留。Gmail History/message search、30 分鐘 opt-in 排程及 Excel 背景檢查沿用，不重寫為 90 天水位、每日新排程或事件平台。
+
+近期不再以「預留所有家庭資料領域」作為開發目標。既有 `DocumentSource`、`DocumentProcessor`、Gmail source、password-protected PDF processor、OCR 邊界可保留；新的 provider/domain/通用 AI 能力一律等真實需求再新增。第一優先是完成並驗證 bank-specific 信用卡 PDF 交易解析的真實端到端流程。
 
 Document source 可包含 Local File、Gmail Attachment，未來可再增加 Google Drive 或其他 provider；processor 可包含 PDF、CSV、Image、password-protected PDF、OCR 等。來源與處理器應透過 port 隔離，核心不得直接依賴供應商 SDK。
 

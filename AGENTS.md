@@ -7,7 +7,8 @@
 - `ARCHITECTURE.md`：模組邊界、資料流、依賴方向與部署設計。
 - `TASKS.md`：目前里程碑與待辦。
 - `HANDOFF.md`：當前可驗證狀態、下一步與風險。
-- `IMPLEMENTATION_PLAN.md`：Excel 優先的 S0-S9 工作包、檔案落點、固定驗收數值、停止條件及 Luna max 啟動指示。本次只更新文件，接手模型收到開始指示後執行。
+- `IMPLEMENTATION_PLAN.md`：Excel 優先的 S0-S9 工作包、檔案落點、固定驗收數值、停止條件及 Luna max 啟動指示。
+- `ARCHITECTURE_REVIEW_BRIEF.md`：2026-09-28 使用者最新的信用卡帳單優先需求、Overdesign 假說、候選簡化方向與高階模型 review gate。
 - `backend/src/family_finance_hub`：FastAPI、application use cases、domain services、ports 與 adapters。
 - `backend/tests`：後端自動化測試。
 - `frontend/src`：React/TypeScript Web UI。
@@ -29,6 +30,7 @@
 - 不記錄文件內容、PDF 密碼、secret、OAuth token、身分證字號、生日或完整敏感資料。M5.2 必須使用 Windows Credential Manager/SecretStore；AI 只解析密碼規則文字，不得接收真實身分證字號、生日或實際密碼。
 - 新增模組應新增自己的 domain/service/schema migration，避免直接操作其他模組資料。
 - 進度以 TASKS.md 與 HANDOFF.md 為準：M5 共用流程、M6 撤銷／恢復、M7.1-M7.5 使用體驗改善及 M8 的 Excel 自動投影已實作；銀行 PDF 交易解析、正式資料庫升級與外部環境驗收仍未完成。不得把文件收錄、PDF 解密／抽取文字或合成測試當成真實帳單自動入帳驗收。
+- 近期產品方向以 `ARCHITECTURE_REVIEW_BRIEF.md` 為 review gate：核心目標收斂到每月信用卡帳單自動分析。高階審查完成前，不新增非核心平台能力，也不得把 brief 中的候選簡化直接視為已批准的刪除/重構。
 - Excel 是 SQLite 已提交交易的可重建投影，不是資料來源。只能覆蓋帶應用程式 ownership marker 的專用工作簿；外部修改、檔案佔用與輸出 hash 不一致必須保留可見狀態，不得靜默覆蓋未知檔案或把 Excel 反向匯入 Finance。
 - M5.2 密碼流程必須使用 versioned PasswordRule DSL；禁止直接執行/eval LLM 產生的程式碼，禁止以大量排列組合暴力猜密碼。
 - Bank-specific 密碼說明辨識、PasswordComposer、PDF decrypt、BankStatementParser 必須分層；不要把銀行規則硬編碼進通用 PdfDocumentProcessor。

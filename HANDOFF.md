@@ -76,6 +76,21 @@ M8 第一階段已完成專用 Excel 輸出、背景重試與設定介面；新�
 - 2026-09-28 Frontend production build：`npm --prefix frontend run build` 成功；本輪沒有修改前端程式。
 - 本輪未讀取或解密正式帳單內容，未操作正式 DB、Gmail、SecretStore、排程或網路設定；17 份本機 PDF 仍需授權的銀行設定/樣本才能進入 S4 真實 parser 驗收。
 
+## 目前產品方向的重新審查 Gate
+
+2026-09-28 使用者重新確認：近期核心需求不是繼續擴張「家庭資料平台」，而是**每月信用卡帳單自動分析**。最新詳細需求、疑似 Overdesign 清單、建議簡化方向與交給高階模型的 12 個審查問題，集中在 `ARCHITECTURE_REVIEW_BRIEF.md`。
+
+在高階模型重新審查前，不要因該文件的候選方案直接刪除 Gmail incremental sync、Documents 1:N、revocation、OCR 或 Excel safety；它們是「需判斷是否值得簡化」而不是「已決定移除」。同時也不要新增 Drive、其他家庭 domain、通用 AI、Push/PubSub 等非核心能力。
+
+近期開發優先序應暫時指向：
+1. 第一份真實信用卡帳單與 bank-specific parser。
+2. 密碼規則上下文擷取的真實郵件可靠性。
+3. sender/profile 自動匹配。
+4. 再由高階審查結果決定 Gmail scheduler/incremental sync 與 Excel background projection 是否收斂。
+
+
+## 最近程式驗證
+
 - M8 Backend：`.\\.venv\\Scripts\\python.exe -m pytest backend/tests -q -p no:cacheprovider --basetemp backend/.test-tmp/m8-full`，120 passed、2 個既有 FastAPI TestClient／Starlette anyio deprecation warnings。覆蓋 Excel 完整重建、冪等、撤銷／恢復、檔案佔用、重新啟動、外部修改偵測、下載保護，以及 PDF 密碼規則原始索引回歸。
 - M8 Frontend：`npm run build` 成功；以 `http://127.0.0.1:5190/?view=settings` 搭配隔離合成 DB 驗證 Excel 啟用、立即更新、4 筆交易、1 份待處理 PDF 與下載入口。桌面及 390px／320px 均無水平溢出，console error 為空。
 - M8 Migration：空白隔離 SQLite 由 `0001` 完整升級至 `0010_workbook_export`，Alembic version 查詢為 `0010_workbook_export`。使用中的資料庫尚未遷移。
