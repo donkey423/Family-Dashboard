@@ -2,7 +2,15 @@
 
 ## 產品定位
 
-家庭收支記錄是可持續擴充的 local-first 家庭資料平台。它不把核心限制為一次性記帳 App；Finance 是第一個消費共用文件資料的 domain。Windows 家用電腦保存結構化資料與需要本地持久化的原始文件，其他裝置以瀏覽器透過 Tailscale 私有網路存取。
+### 目前最高優先產品目標
+
+目前產品優先目標已收斂為：**每月自動取得信用卡帳單，安全解鎖 PDF，正確解析消費交易，讓使用者快速知道本月花了什麼與花多少；Excel 僅作為可選輸出。**
+
+既有 Documents、Finance、Gmail、PDF、Search、Jobs、Excel 等能力可作為已完成基礎設施，但「可持續擴充的通用家庭資料平台」不再是近期開發驅動力。除非出現真實需求，不為 Google Drive、Insurance、Assets、Vehicle 等未來領域繼續預先擴充。
+
+詳細的 scope reset、Overdesign 假說與高階模型審查問題見 `ARCHITECTURE_REVIEW_BRIEF.md`。
+
+Windows 家用電腦保存結構化資料與需要本地持久化的原始文件，其他裝置以瀏覽器透過 Tailscale 私有網路存取。
 
 Documents 代表「文件的 logical identity 與來源」，不等同於「一定存在 Windows 硬碟上的本地檔案」。未來文件可以來自本機上傳、Gmail attachment 或其他外部來源；只有需要永久保存的內容才寫入本機 storage。
 
@@ -35,7 +43,7 @@ Gmail 信用卡帳單採「remote source first」：
 
 ## 延伸方向
 
-保留 `DocumentSource`、`DocumentProcessor`、Gmail source、password-protected PDF processor、OCR processor、AIProvider、Insurance、Assets、Warranty、Travel、Vehicle、Subscriptions、Property 等未來擴充點。這些只作為架構邊界預留，不在 v0.1 提供空殼功能或外部整合。
+近期不再以「預留所有家庭資料領域」作為開發目標。既有 `DocumentSource`、`DocumentProcessor`、Gmail source、password-protected PDF processor、OCR 邊界可保留；新的 provider/domain/通用 AI 能力一律等真實需求再新增。第一優先是完成並驗證 bank-specific 信用卡 PDF 交易解析的真實端到端流程。
 
 Document source 可包含 Local File、Gmail Attachment，未來可再增加 Google Drive 或其他 provider；processor 可包含 PDF、CSV、Image、password-protected PDF、OCR 等。來源與處理器應透過 port 隔離，核心不得直接依賴供應商 SDK。
 

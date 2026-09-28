@@ -207,3 +207,21 @@
 - Windows 主機尚未確認 Tesseract 執行檔及 `chi_tra`/`eng` 語言資料；OCR pipeline 以合成 provider 完成測試，真實辨識待安裝 runtime 後驗收。
 - 尚無真實信用卡帳單樣本完成銀行專用 PDF 交易解析、密碼規則與金額核對；目前 Gmail CSV 可用通用解析器，PDF 可原始查看/解密預覽及抽取文字，不會臆測 PDF 交易。
 - Gmail 定時同步程式已完成，但預設關閉；只有完成唯讀授權並由使用者開啟後才會每 30 分鐘同步 CSV 與收錄 PDF 文件。真實帳單 PDF 交易解析仍須另行驗收，不能由 scheduler 取代。
+
+
+## M9：產品範圍收斂與架構重新審查（待高階模型確認）
+
+> 本里程碑目前是 review gate，不代表下列簡化已決定實作。完整背景與審查問題見 `ARCHITECTURE_REVIEW_BRIEF.md`。
+
+- [ ] 由高階模型以最新 `main` 實作重新判斷 Keep / Simplify / Freeze / Remove-later，不只閱讀文件。
+- [ ] 確認近期唯一核心產品流程：Gmail 信用卡帳單 → 安全解鎖 → BankStatementParser → Finance → 月份 Dashboard → optional Excel。
+- [ ] P0：以第一份真實信用卡帳單完成 bank-specific parser 與 statement total reconciliation。
+- [ ] P0：評估 PasswordInstructionExtractor 改為密碼關鍵行的上下文視窗擷取。
+- [ ] P0：評估用 `sender_pattern` 自動選 bank/document security profile，降低每月人工操作。
+- [ ] 決定 Gmail 日常同步保留 History API incremental state，或收斂為最近 60~90 天 idempotent re-scan。
+- [ ] 決定 Gmail 30 分鐘 scheduler 是否改成 startup + daily + manual。
+- [ ] 決定 Excel 30 秒 projection worker / UI polling 是否改成交易變更事件驅動 + 手動 rebuild。
+- [ ] 凍結 Google Drive、其他家庭 domain、通用 AI、Push/PubSub 與 OCR 進一步優化，直到核心真實帳單流程完成。
+- [ ] 不為簡化而全面重寫已完成的 Documents 1:N source / revocation / Excel safety；只有確認維護收益大於 migration/rewrite 成本才修改。
+- [ ] 高階審查完成後，先更新本里程碑與 ARCHITECTURE，再開始程式重構。
+

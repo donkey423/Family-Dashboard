@@ -42,6 +42,20 @@ M7 變更已提交為 `2b21333`，尚未推送遠端。
 
 密碼規則另修正候選值去重後規則索引錯位：預覽成功時會保存原始、真正命中的規則，不會因空白或重複候選值記錯規則。尚無經驗證的真實銀行 PDF parser，因此不能宣稱 PDF 已自動入帳。驗證僅使用隔離合成 DB／PDF／Excel，不變更正式資料庫、不連線 Gmail，也不讀取秘密。
 
+
+## 目前產品方向的重新審查 Gate
+
+2026-09-28 使用者重新確認：近期核心需求不是繼續擴張「家庭資料平台」，而是**每月信用卡帳單自動分析**。最新詳細需求、疑似 Overdesign 清單、建議簡化方向與交給高階模型的 12 個審查問題，集中在 `ARCHITECTURE_REVIEW_BRIEF.md`。
+
+在高階模型重新審查前，不要因該文件的候選方案直接刪除 Gmail incremental sync、Documents 1:N、revocation、OCR 或 Excel safety；它們是「需判斷是否值得簡化」而不是「已決定移除」。同時也不要新增 Drive、其他家庭 domain、通用 AI、Push/PubSub 等非核心能力。
+
+近期開發優先序應暫時指向：
+1. 第一份真實信用卡帳單與 bank-specific parser。
+2. 密碼規則上下文擷取的真實郵件可靠性。
+3. sender/profile 自動匹配。
+4. 再由高階審查結果決定 Gmail scheduler/incremental sync 與 Excel background projection 是否收斂。
+
+
 ## 最近程式驗證
 
 - M8 Backend：`.\\.venv\\Scripts\\python.exe -m pytest backend/tests -q -p no:cacheprovider --basetemp backend/.test-tmp/m8-full`，120 passed、2 個既有 FastAPI TestClient／Starlette anyio deprecation warnings。覆蓋 Excel 完整重建、冪等、撤銷／恢復、檔案佔用、重新啟動、外部修改偵測、下載保護，以及 PDF 密碼規則原始索引回歸。
