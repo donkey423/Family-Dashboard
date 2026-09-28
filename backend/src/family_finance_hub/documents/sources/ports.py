@@ -17,3 +17,14 @@ class DocumentSource(Protocol):
     source_type: str
 
     def read(self, reference: DocumentSourceReference) -> bytes: ...
+
+
+@dataclass(frozen=True)
+class SourceMessageContext:
+    subject: str
+    sender: str
+    body: str
+
+
+class MessageContextSource(Protocol):
+    def read_message_context(self, reference: Mapping[str, str]) -> SourceMessageContext: ...

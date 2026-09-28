@@ -52,6 +52,14 @@ class GmailSyncUseCase:
                 mode = "full-resume"
                 baseline_history_id = state.full_sync_baseline_history_id
                 page_token = state.full_sync_page_token
+            elif query != DEFAULT_GMAIL_QUERY:
+                # Gmail history.list has no search query. A scoped/manual query
+                # must use the message search path so unrelated history entries
+                # cannot bypass the requested scope.
+                full_sync = True
+                mode = "full-query"
+                baseline_history_id = _profile_history_id(client.get_profile())
+                page_token = None
             elif state.history_id:
                 page_token = None
                 history_page_token = None
@@ -110,7 +118,10 @@ class GmailSyncUseCase:
                 state.full_sync_page_token = current_page_token if state.full_sync_in_progress else None
                 state.full_sync_baseline_history_id = baseline_history_id if state.full_sync_in_progress else None
                 if not state.full_sync_in_progress:
-                    state.history_id = baseline_history_id
+                    # A scoped scan is not a complete baseline for the default
+                    # incremental cursor. Keep the existing default baseline.
+                    if query == DEFAULT_GMAIL_QUERY:
+                        state.history_id = baseline_history_id
                     state.last_successful_at = utc_now()
             else:
                 for message_id in dict.fromkeys(changed_message_ids):

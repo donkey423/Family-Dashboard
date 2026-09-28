@@ -32,7 +32,10 @@ class FakeGmail:
     def __init__(self):
         self.queries = []
         self.history_calls = []
+        self.message_calls = []
+        self.attachment_calls = []
         self.expire_history = False
+        self.empty_queries = set()
         self.csv = b"date,description,amount,currency\n2026-09-01,Test market,-245,TWD\n"
         writer = PdfWriter()
         writer.add_blank_page(width=300, height=400)
@@ -43,9 +46,12 @@ class FakeGmail:
 
     def list_messages(self, query, page_token=None):
         self.queries.append(query)
+        if query in self.empty_queries:
+            return {"messages": []}
         return {"messages": [{"id": "message-1"}]} if page_token is None else {"messages": []}
 
     def get_message(self, message_id):
+        self.message_calls.append(message_id)
         return {
             "id": message_id,
             "payload": {
@@ -73,6 +79,7 @@ class FakeGmail:
         }
 
     def get_attachment(self, message_id, attachment_id):
+        self.attachment_calls.append((message_id, attachment_id))
         return self.attachments[attachment_id]
 
 
@@ -131,6 +138,123 @@ def test_gmail_oauth_client_secret_is_saved_to_secret_store_only(tmp_path):
         assert connection.token_credential_ref not in vault.values
     assert b"synthetic-client-secret" not in (tmp_path / "gmail-test.db").read_bytes()
     engine.dispose()
+
+
+def test_scoped_gmail_query_does_not_process_history_messages_outside_query(tmp_path):
+    gmail = FakeGmail()
+    client, settings = make_app(tmp_path, MemorySecretStore(), gmail)
+
+    with client:
+        initial = client.post("/api/gmail/sync", json={})
+        assert initial.status_code == 200, initial.text
+        with make_session_factory(make_engine(settings.database_url))() as session:
+            initial_history_id = session.get(GmailSyncState, "gmail").history_id
+
+        scoped_query = "in:anywhere from:target@example.test filename:pdf"
+        gmail.empty_queries.add(scoped_query)
+        gmail.history_calls.clear()
+        gmail.message_calls.clear()
+        gmail.attachment_calls.clear()
+
+        scoped = client.post("/api/gmail/sync", json={"query": scoped_query})
+        assert scoped.status_code == 200, scoped.text
+        assert scoped.json()["sync_mode"] == "full-query"
+        assert scoped.json()["scanned_messages"] == 0
+        assert gmail.queries[-1] == scoped_query
+        assert gmail.history_calls == []
+        assert gmail.message_calls == []
+        assert gmail.attachment_calls == []
+
+        second_scoped_query = "in:anywhere from:other@example.test filename:pdf"
+        gmail.empty_queries.add(second_scoped_query)
+        second_scoped = client.post("/api/gmail/sync", json={"query": second_scoped_query})
+        assert second_scoped.status_code == 200, second_scoped.text
+        assert second_scoped.json()["sync_mode"] == "full-query"
+        assert gmail.history_calls == []
+
+        factory = client.app.state.session_factory
+        with factory() as session:
+            assert session.get(GmailSyncState, "gmail").history_id == initial_history_id
+
+        default_sync = client.post("/api/gmail/sync", json={})
+        assert default_sync.status_code == 200, default_sync.text
+        assert default_sync.json()["sync_mode"] == "incremental"
+        assert gmail.history_calls == [(initial_history_id, None)]
+        assert gmail.queries == [
+            "in:anywhere has:attachment {filename:pdf filename:csv}",
+            scoped_query,
+            second_scoped_query,
+        ]
+        with factory() as session:
+            assert session.get(GmailSyncState, "gmail").history_id == "120"
+
+
+def test_scoped_gmail_query_without_default_cursor_keeps_default_full_sync(tmp_path):
+    gmail = FakeGmail()
+    client, _settings = make_app(tmp_path, MemorySecretStore(), gmail)
+    scoped_query = "in:anywhere from:bank@example.test"
+
+    with client:
+        scoped = client.post("/api/gmail/sync", json={"query": scoped_query})
+        assert scoped.status_code == 200, scoped.text
+        assert scoped.json()["sync_mode"] == "full-query"
+        assert scoped.json()["scanned_messages"] == 1
+        assert gmail.history_calls == []
+        with client.app.state.session_factory() as session:
+            assert session.get(GmailSyncState, "gmail").history_id is None
+
+        default_sync = client.post("/api/gmail/sync", json={})
+        assert default_sync.status_code == 200, default_sync.text
+        assert default_sync.json()["sync_mode"] == "full"
+        assert gmail.queries == [scoped_query, "in:anywhere has:attachment {filename:pdf filename:csv}"]
+
+    with client.app.state.session_factory() as session:
+        assert session.get(GmailSyncState, "gmail").history_id == "100"
+
+
+def test_gmail_attachment_failure_retries_same_default_full_sync_page(tmp_path):
+    class FlakyAttachmentGmail(FakeGmail):
+        def __init__(self):
+            super().__init__()
+            self.csv_failed_once = False
+
+        def get_attachment(self, message_id, attachment_id):
+            if attachment_id == "att-csv" and not self.csv_failed_once:
+                self.csv_failed_once = True
+                raise OSError("temporary attachment failure")
+            return super().get_attachment(message_id, attachment_id)
+
+    gmail = FlakyAttachmentGmail()
+    client, settings = make_app(tmp_path, MemorySecretStore(), gmail)
+
+    with client:
+        first = client.post("/api/gmail/sync", json={})
+        assert first.status_code == 200, first.text
+        assert first.json()["failures"] == 1
+        assert first.json()["sync_mode"] == "full"
+
+        factory = client.app.state.session_factory
+        with factory() as session:
+            state = session.get(GmailSyncState, "gmail")
+            assert state.full_sync_in_progress is True
+            assert state.full_sync_query == "in:anywhere has:attachment {filename:pdf filename:csv}"
+
+        retried = client.post("/api/gmail/sync", json={})
+        assert retried.status_code == 200, retried.text
+        assert retried.json()["sync_mode"] == "full-resume"
+        assert retried.json()["failures"] == 0
+        assert retried.json()["created_transactions"] == 1
+
+    with client.app.state.session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(Document)) == 2
+        assert session.scalar(select(func.count()).select_from(FinanceTransaction)) == 1
+        state = session.get(GmailSyncState, "gmail")
+        assert state.full_sync_in_progress is False
+        assert state.history_id == "100"
+    assert [query for query in gmail.queries] == [
+        "in:anywhere has:attachment {filename:pdf filename:csv}",
+        "in:anywhere has:attachment {filename:pdf filename:csv}",
+    ]
 
 
 def test_gmail_sync_imports_csv_once_keeps_pdf_remote_and_can_save_local(tmp_path):
@@ -249,6 +373,7 @@ def test_full_gmail_sync_resumes_from_saved_page_token(tmp_path, monkeypatch):
             self.page_tokens = []
 
         def list_messages(self, query, page_token=None):
+            self.queries.append(query)
             self.page_tokens.append(page_token)
             if page_token is None:
                 return {"messages": [{"id": "message-1"}], "nextPageToken": "page-2"}
@@ -266,6 +391,10 @@ def test_full_gmail_sync_resumes_from_saved_page_token(tmp_path, monkeypatch):
         assert first.status_code == 200, first.text
         assert first.json()["truncated"] == 1
         assert first.json()["sync_mode"] == "full"
+        changed_query = client.post("/api/gmail/sync", json={"query": "in:anywhere from:other@example.test"})
+        assert changed_query.status_code == 422
+        assert "沿用原搜尋條件" in changed_query.json()["detail"]
+        assert gmail.queries == ["in:anywhere has:attachment {filename:pdf filename:csv}"]
         second = client.post("/api/gmail/sync", json={})
         assert second.status_code == 200, second.text
         assert second.json()["truncated"] == 0

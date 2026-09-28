@@ -99,6 +99,83 @@ def test_extractor_masks_compact_dates_inside_chinese_and_assigned_password_lite
     assert "證號末四碼" in extracted
 
 
+def test_extractor_keeps_neighboring_multiline_password_instructions_without_transaction_text():
+    extracted = PasswordInstructionExtractor().extract(PasswordInstructionContext(
+        body=(
+            "<p>附件密碼規則如下：</p>"
+            "<p>身分證後四碼</p>"
+            "<p>加出生日期 YYYYMMDD</p>"
+            "<p>消費明細：早餐 120 元。</p>"
+        ),
+        subject="本期信用卡帳單",
+    ), sensitive_values=("20991231",))
+
+    assert "附件密碼規則如下" in extracted
+    assert "身分證後四碼" in extracted
+    assert "出生日期 YYYYMMDD" in extracted
+    assert "消費明細" not in extracted
+    assert "120 元" not in extracted
+
+
+def test_extractor_preserves_inline_html_text_and_plain_text_line_breaks():
+    extractor = PasswordInstructionExtractor()
+    html = extractor.extract(PasswordInstructionContext(
+        body="<p>密<span>碼</span>規則：</p><p>身分證後四碼</p><p>生日 YYYYMMDD</p>",
+    ))
+    plain = extractor.extract(PasswordInstructionContext(
+        body="附件密碼規則如下：\n身分證後四碼\n加出生日期 YYYYMMDD",
+    ))
+
+    assert "密碼規則" in html
+    assert "身分證後四碼" in html
+    assert "\n身分證後四碼" in html
+    assert "附件密碼規則如下：\n身分證後四碼" in plain
+
+
+def test_extractor_preserves_inline_spacing_and_table_row_context():
+    extracted = PasswordInstructionExtractor().extract(PasswordInstructionContext(
+        body=(
+            "<table>"
+            "<tr><td>Password</td><td>rule: last four digits</td></tr>"
+            "<tr><td>消費摘要</td><td>synthetic shop 123 元</td></tr>"
+            "</table>"
+            "<p>Password <b>rule</b>: use the final four digits</p>"
+        ),
+    ))
+
+    assert "Password rule: last four digits" in extracted
+    assert "Password rule: use the final four digits" in extracted
+    assert "synthetic shop" not in extracted
+
+
+def test_extractor_keeps_repeated_lines_from_overlapping_context_windows():
+    extracted = PasswordInstructionExtractor().extract(PasswordInstructionContext(
+        body=(
+            "密碼規則如下：\n"
+            "請使用末四碼\n"
+            "共同規則\n"
+            "密碼提示：\n"
+            "再加出生月日\n"
+            "共同規則"
+        ),
+    ))
+
+    assert extracted.count("共同規則") == 2
+
+
+def test_extractor_masks_sensitive_values_before_applying_output_limit():
+    secret = "SECRETLEAK"
+    prefix = "Password instructions: "
+    body = prefix + ("x" * (1194 - len(prefix))) + secret
+    extracted = PasswordInstructionExtractor().extract(
+        PasswordInstructionContext(body=body),
+        sensitive_values=(secret,),
+    )
+
+    assert len(extracted) <= 1200
+    assert "SECRET" not in extracted
+
+
 def test_password_composer_uses_explicit_roc_date_format_and_never_expands_candidates():
     rule = PasswordRule.model_validate({
         "version": 1,

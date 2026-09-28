@@ -1,21 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from email.header import decode_header, make_header
 from email.message import Message
 from typing import Callable, Any
 
-from ...documents.sources.ports import DocumentSource, DocumentSourceReference, DocumentSourceUnavailable
+from ...documents.sources.ports import (
+    DocumentSource,
+    DocumentSourceReference,
+    DocumentSourceUnavailable,
+    SourceMessageContext,
+)
 from .client import GmailUnavailable, decode_base64url
 
 MAX_MESSAGE_TEXT_BYTES = 32_000
-
-
-@dataclass(frozen=True)
-class GmailMessageContext:
-    subject: str
-    sender: str
-    body: str
 
 
 class GmailAttachmentDocumentSource(DocumentSource):
@@ -48,18 +45,21 @@ class GmailAttachmentDocumentSource(DocumentSource):
             raise DocumentSourceUnavailable("Gmail 附件超過處理大小限制")
         return content
 
-    def read_message_context(self, reference: dict[str, Any]) -> GmailMessageContext:
+    def read_message_context(self, reference: dict[str, Any]) -> SourceMessageContext:
         message_id = reference.get("message_id")
         if not message_id:
-            return GmailMessageContext("", "", "")
-        message = self.client_factory().get_message(str(message_id))
+            return SourceMessageContext("", "", "")
+        try:
+            message = self.client_factory().get_message(str(message_id))
+        except GmailUnavailable:
+            raise DocumentSourceUnavailable("Gmail 郵件目前無法取得") from None
         headers = {
             str(item.get("name", "")).casefold(): _decode_header(str(item.get("value", "")))
             for item in message.get("payload", {}).get("headers", [])
         }
         plain_parts, html_parts = _text_parts(message.get("payload", {}))
         body = "\n".join(plain_parts or html_parts)[:MAX_MESSAGE_TEXT_BYTES]
-        return GmailMessageContext(
+        return SourceMessageContext(
             subject=headers.get("subject", "")[:500],
             sender=headers.get("from", "")[:255],
             body=body,

@@ -1,6 +1,8 @@
 # 家庭收支記錄
 
-家庭收支記錄是以 Windows 家用電腦為主機的 local-first 家庭資料平台。第一版提供文件匣、通用財務 CSV 匯入、收支總覽、搜尋及匯入工作紀錄；文件先進入共用 Documents domain，再由 Finance 等模組建立關聯。
+家庭收支記錄以 Windows 家用電腦為主機，近期目標是將信用卡 PDF 解鎖、解析與核對後，更新每月支出 Excel。SQLite 保留可追溯資料；Web 用於設定、核對確認與處理例外，完整 Dashboard 不是交付前置。
+
+**目前狀態：** 已有文件匣、通用 CSV 匯入、總覽/搜尋/工作紀錄、Gmail 同步、加密 PDF 預覽及專用 Excel 輸出；但銀行專用 PDF 交易 parser 尚未完成，不能宣稱信用卡 PDF 已自動入帳。Excel 優先的逐步實作與驗收見 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)，下列操作說明描述現有功能。
 
 ## 開發環境
 
@@ -55,7 +57,7 @@ npm run dev -- --host 127.0.0.1
 
 ## Gmail 與加密 PDF
 
-在「設定」頁匯入 Google Cloud 的 Gmail API OAuth 桌面應用程式 JSON，然後按「連接 Google 帳戶」及「立即同步 Gmail」。同步使用唯讀權限；預設查詢 `in:anywhere has:attachment {filename:pdf filename:csv}`，不限制日期，涵蓋可存取的全部郵件（含封存與垃圾郵件）。初次同步超過單次上限時，再按一次同步即可接續。OAuth 設定與 token 僅放 Windows Credential Manager。連線後可手動同步；定時同步需另外勾選啟用，預設關閉，每 30 分鐘同步一次。Windows 關機時不會執行，重新啟動後會補跑已到期的同步。替換 OAuth 設定會關閉定時同步，需重新授權及手動啟用。
+在「設定」頁匯入 Google Cloud 的 Gmail API OAuth 桌面應用程式 JSON，然後按「連接 Google 帳戶」及「立即同步 Gmail」。同步使用唯讀權限；預設查詢 `in:anywhere has:attachment {filename:pdf filename:csv}`，不限制日期。垃圾郵件/垃圾桶的完整涵蓋仍待補強與驗收，不能只憑查詢字串宣稱全部掃描完成。初次同步超過單次上限時，再按一次同步即可接續。OAuth 設定與 token 僅放 Windows Credential Manager。連線後可手動同步；定時同步需另外勾選啟用，預設關閉，每 30 分鐘同步一次。Windows 關機時不會執行，重新啟動後會補跑已到期的同步。替換 OAuth 設定會關閉定時同步，需重新授權及手動啟用。
 
 Gmail CSV 會使用通用欄位解析匯入交易；解析失敗的 CSV 仍會保存在共用文件匣並留下失敗紀錄，不會阻止後續郵件同步。PDF 會先進共用文件匣，不會把抽取文字猜成交易。查看加密 PDF 時，可建立家庭成員及文件解鎖設定；系統可即時讀取該 Gmail 郵件的主旨、寄件者與文字本文，僅在記憶體中擷取並遮罩密碼規則。勾選允許 AI 後，AI 僅會收到遮罩後的規則文字；身分證字號、生日及實際密碼都留在本機 Credential Manager/本機記憶體。非 Gmail 文件可在預覽視窗手動輸入郵件密碼說明。解密預覽不會改寫原始 PDF。
 
@@ -90,5 +92,6 @@ npm run build
 - [專案目標](PROJECT.md)
 - [架構](ARCHITECTURE.md)
 - [里程碑與待辦](TASKS.md)
+- [Excel 優先實作流程與 Luna max 交接](IMPLEMENTATION_PLAN.md)
 - [維護交接](HANDOFF.md)
 - [操作與部署](docs/operations.md)

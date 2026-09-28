@@ -14,12 +14,20 @@ from sqlalchemy.orm import Session
 
 from .application.use_cases import ImportDocumentUseCase, ImportFinanceCsvUseCase
 from .application.document_lifecycle import DocumentImpactChanged, DocumentLifecycleUseCase, DocumentNotFound
+from .application.pdf_processing import (
+    PdfPreviewCommand,
+    PdfPreviewDocumentNotFound,
+    PdfPreviewProfileNotFound,
+    PdfPreviewSecretProfileNotFound,
+    PdfPreviewUnsupportedDocument,
+    PdfPreviewUseCase,
+)
 from .config import Settings
 from .database import Base, make_engine, make_session_factory
 from .documents.service import DocumentService
 from .documents.processors.ocr import TesseractOcrProvider
 from .documents.processors.pdf import PdfDocumentProcessor
-from .documents.processors.ports import DocumentProcessingError, ProcessingContext, ProcessingRequest
+from .documents.processors.ports import DocumentProcessingError
 from .finance.service import FinanceCsvImportService
 from .finance.queries import active_transaction_filter, transaction_totals
 from .exports.ports import WorkbookWriter
@@ -31,7 +39,7 @@ from .documents.sources.ports import DocumentSourceUnavailable
 from .models import DocumentSecurityProfile, PasswordRuleRecord, SecretProfile
 from .security.secrets import KeyringSecretStore, SecretStore, SecretStoreUnavailable
 from .security.secrets.service import SecretProfileService
-from .security.password_rules import PasswordComposer, PasswordInstructionContext, PasswordInstructionExtractor
+from .security.password_rules import PasswordInstructionContext, PasswordInstructionExtractor
 from .security.password_rules.ports import PasswordRuleInterpreter, PasswordRuleInterpreterUnavailable
 from .security.password_rules.provider_service import AIProviderService
 from .security.password_rules.service import PasswordRuleService
@@ -149,6 +157,15 @@ def create_app(
                 raise HTTPException(status_code=503, detail="Windows 安全資料保管庫目前無法使用") from error
         return active_secret_store
 
+    def get_pdf_secret_store() -> SecretStore:
+        try:
+            return get_secret_store()
+        except HTTPException as error:
+            raise SecretStoreUnavailable("Windows 安全資料保管庫目前無法使用") from error
+
+    def get_pdf_interpreter(session: Session) -> PasswordRuleInterpreter:
+        return password_interpreter or AIProviderService(get_pdf_secret_store()).interpreter(session)
+
     def make_gmail_client() -> GmailClient:
         if gmail_client_factory is not None:
             return gmail_client_factory()
@@ -160,6 +177,15 @@ def create_app(
 
     gmail_source = GmailAttachmentDocumentSource(make_gmail_client, config.max_upload_bytes)
     document_sources = DocumentSourceRegistry((LocalFileDocumentSource(storage), gmail_source))
+    pdf_preview = PdfPreviewUseCase(
+        document_sources,
+        gmail_source,
+        active_pdf_processor,
+        instruction_extractor,
+        password_rules,
+        get_pdf_secret_store,
+        get_pdf_interpreter,
+    )
     document_import = ImportDocumentUseCase(documents)
     finance_service = FinanceCsvImportService(documents, document_sources)
     finance_import = ImportFinanceCsvUseCase(finance_service)
@@ -476,125 +502,26 @@ def create_app(
         session: Session = Depends(get_session),
     ):
         try:
-            with session.begin():
-                document = session.get(Document, document_id)
-                if document is None:
-                    raise HTTPException(status_code=404, detail="找不到文件")
-                if document.content_type != "application/pdf" and not document.filename.lower().endswith(".pdf"):
-                    raise HTTPException(status_code=415, detail="目前只支援 PDF 預覽")
-                try:
-                    content = document_sources.read(document)
-                except DocumentSourceUnavailable:
-                    content = None
-                gmail_references = session.scalars(select(DocumentSourceRecord).where(
-                    DocumentSourceRecord.document_id == document_id,
-                    DocumentSourceRecord.source_type == "gmail_attachment",
-                )).all()
-                profile = session.get(DocumentSecurityProfile, body.document_security_profile_id) if body.document_security_profile_id else None
-                if body.document_security_profile_id and profile is None:
-                    raise HTTPException(status_code=404, detail="找不到文件解鎖設定")
-                secret_profile = session.get(SecretProfile, profile.secret_profile_id) if profile else None
-                if profile and secret_profile is None:
-                    raise HTTPException(status_code=404, detail="找不到家庭成員安全資料")
-            if content is None:
-                raise DocumentSourceUnavailable("document source unavailable")
-
-            request = ProcessingRequest(
-                content=content,
-                context=ProcessingContext(
-                    filename=document.filename,
-                    content_type=document.content_type,
-                    document_security_profile_id=profile.id if profile else None,
+            result = pdf_preview.execute(
+                session,
+                document_id,
+                PdfPreviewCommand(
+                    document_security_profile_id=body.document_security_profile_id,
+                    subject=body.subject,
+                    body=body.body,
+                    sender=body.sender,
+                    filename=body.filename,
+                    allow_ai_analysis=body.allow_ai_analysis,
                 ),
             )
-            rule = None
-            fingerprint = ""
-            processed = None
-            candidate_rule_indexes: tuple[int, ...] = ()
-            try:
-                processed = active_pdf_processor.process(request)
-            except DocumentProcessingError as initial_error:
-                if initial_error.code != "pdf_password_required" or not profile or not secret_profile:
-                    raise
-                gmail_context = None
-                for source in gmail_references:
-                    try:
-                        gmail_context = gmail_source.read_message_context(source.source_reference or {})
-                        break
-                    except GmailUnavailable:
-                        continue
-                national_id, birthday = get_secret_service().get_values(secret_profile)
-                instruction = instruction_extractor.extract(
-                    PasswordInstructionContext(
-                        "\n".join(filter(None, (
-                            gmail_context.subject if gmail_context else "",
-                            body.subject,
-                        ))),
-                        "\n".join(filter(None, (
-                            gmail_context.body if gmail_context else "",
-                            body.body,
-                        ))),
-                        gmail_context.sender if gmail_context else body.sender,
-                        body.filename or document.filename,
-                    ),
-                    (value for value in (national_id, birthday) if value),
-                )
-                if not instruction:
-                    raise initial_error
-                context = {"institution": profile.institution, "document_type": "PDF statement"}
-                fingerprint = password_rules.fingerprint(instruction, context)
-                rule = password_rules.get_verified(session, profile.id, fingerprint)
-                session.commit()
-                if rule:
-                    candidates, candidate_rule_indexes = PasswordComposer(
-                        get_secret_store()
-                    ).compose_with_rule_indexes(
-                        rule,
-                        secret_profile.national_id_credential_ref,
-                        secret_profile.birthday_credential_ref,
-                    )
-                else:
-                    candidates = ()
-                if candidates:
-                    try:
-                        processed = active_pdf_processor.process(request, password_candidates=candidates)
-                    except DocumentProcessingError as cached_error:
-                        if cached_error.code != "pdf_wrong_password" or not body.allow_ai_analysis:
-                            raise
-                        rule = None
-                else:
-                    rule = None
-
-                if processed is None:
-                    if not body.allow_ai_analysis:
-                        raise DocumentProcessingError("pdf_password_required", "尚無已驗證的密碼規則") from None
-                    interpreter = password_interpreter or AIProviderService(get_secret_store()).interpreter(session)
-                    rule = interpreter.interpret(instruction, context)
-                    candidates, candidate_rule_indexes = PasswordComposer(
-                        get_secret_store()
-                    ).compose_with_rule_indexes(
-                        rule,
-                        secret_profile.national_id_credential_ref,
-                        secret_profile.birthday_credential_ref,
-                    )
-                    if not candidates:
-                        raise DocumentProcessingError("pdf_password_required", "密碼規則不明確或無法使用") from None
-                    processed = active_pdf_processor.process(request, password_candidates=candidates)
-            if processed is None:
-                raise DocumentProcessingError("pdf_malformed", "PDF 無法處理") from None
-            if processed.was_encrypted and rule is not None and fingerprint:
-                if rule.status == "ambiguous" and processed.successful_candidate_index is not None:
-                    try:
-                        rule_index = candidate_rule_indexes[processed.successful_candidate_index]
-                    except IndexError:
-                        raise DocumentProcessingError(
-                            "pdf_malformed", "PDF 密碼規則結果無法對應"
-                        ) from None
-                    selected = rule.candidates[rule_index]
-                    rule = rule.model_copy(update={"status": "resolved", "candidates": [selected]})
-                if rule.status == "resolved" and profile:
-                    password_rules.save_verified(session, profile.id, fingerprint, rule)
-                    session.commit()
+        except PdfPreviewDocumentNotFound:
+            raise HTTPException(status_code=404, detail="找不到文件") from None
+        except PdfPreviewProfileNotFound:
+            raise HTTPException(status_code=404, detail="找不到文件解鎖設定") from None
+        except PdfPreviewSecretProfileNotFound:
+            raise HTTPException(status_code=404, detail="找不到家庭成員安全資料") from None
+        except PdfPreviewUnsupportedDocument:
+            raise HTTPException(status_code=415, detail="目前只支援 PDF 預覽") from None
         except HTTPException:
             raise
         except DocumentSourceUnavailable:
@@ -622,11 +549,12 @@ def create_app(
             raise HTTPException(status_code=503, detail="Windows 安全資料保管庫目前無法使用") from None
         except Exception:
             raise HTTPException(status_code=503, detail="PDF 預覽處理失敗") from None
+        processed = result.processed
         return Response(
             content=processed.preview_bytes,
             media_type="application/pdf",
             headers={
-                "Content-Disposition": f"inline; filename*=UTF-8''{quote(document.filename)}",
+                "Content-Disposition": f"inline; filename*=UTF-8''{quote(result.filename)}",
                 "Cache-Control": "private, no-store, max-age=0",
                 "X-FamilyHub-Text-Extraction": processed.ocr_status,
             },

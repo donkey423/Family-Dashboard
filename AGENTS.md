@@ -3,16 +3,19 @@
 ## 專案導覽
 
 - `README.md`：目前功能、環境、啟動和測試命令。
-- `PROJECT.md`：產品目標、v0.1 邊界與明確排除項目。
+- `PROJECT.md`：信用卡 PDF 到 Excel 的近期目標、歷史 v0.1 範圍與明確排除項目。
 - `ARCHITECTURE.md`：模組邊界、資料流、依賴方向與部署設計。
 - `TASKS.md`：目前里程碑與待辦。
 - `HANDOFF.md`：當前可驗證狀態、下一步與風險。
+- `IMPLEMENTATION_PLAN.md`：Excel 優先的 S0-S9 工作包、檔案落點、固定驗收數值、停止條件及 Luna max 啟動指示。本次只更新文件，接手模型收到開始指示後執行。
 - `backend/src/family_finance_hub`：FastAPI、application use cases、domain services、ports 與 adapters。
 - `backend/tests`：後端自動化測試。
 - `frontend/src`：React/TypeScript Web UI。
 
 ## 邊界與限制
 
+- 近期工作依 `IMPLEMENTATION_PLAN.md` 收斂為信用卡 PDF 解鎖、解析、核對、SQLite 入帳及每月支出 Excel；Web 只補設定與例外處理。S6 先交付正確 Excel，不以完整 Dashboard、分類或同步引擎重寫為前置，不擴充通用家庭平台。獲得實作指示後按 S0-S9 連續完成，每步驗證及更新交接後繼續；必要真實樣本/外部授權不足才停在關卡。未通過真實資料關卡不得宣稱自動化完成；候選簡化不是任意刪除/重構授權。
+- 保留現有 Gmail History/message search、每 30 分鐘 opt-in 排程及 Excel 背景檢查；本輪只接帳單 PDF-only 與受控入帳，不新增 90 天掃描水位、每日排程或事件平台。舊計畫中這些重寫要求已延後，以新版 IMPLEMENTATION_PLAN 為準。
 - 保持 Modular Monolith；不引入 microservices、Redis、Kafka、Kubernetes 或 PostgreSQL。
 - v0.1 本機上傳由 Documents 接收並透過 StoragePort 保存；文件讀取與解析必須透過 `DocumentSource` / `DocumentProcessor` 邊界，不可假設每筆 Document 都有永久 local file。
 - Documents 是 logical document identity + metadata + source relationship。Local File、Gmail Attachment 及未來 Drive 等來源應透過 `DocumentSource` port 取得內容。
@@ -33,9 +36,11 @@
 
 ## 驗證
 
-從 repository 根目錄執行 `python -m pytest backend\tests` 與 `cd frontend; npm run build`。資料庫 schema 變更需另外檢查 `alembic -c backend\alembic.ini upgrade head`。若環境未安裝 Python 或前端依賴，明確回報未執行的驗證，不可宣稱通過。
+從 repository 根目錄以既有 `.venv` 執行後端測試及 `npm --prefix frontend run build`，完整命令見 IMPLEMENTATION_PLAN。schema 變更沿用 `backend/tests/test_migrations.py` 的暫存 SQLite/Alembic Config，驗證升級、資料保留與限制；不把未指定隔離 DB 的 `upgrade head` 當測試。若缺 runtime 或依賴，明確回報未執行範圍，不可宣稱通過。
 
 若只修改設計文件，不必為了文件變更虛構程式驗證；HANDOFF 必須清楚區分「已決定/已規劃」與「已實作/已驗證」。
+
+接手先檢查 Git 狀態並保留未提交修改，再讀本指引、README、HANDOFF、TASKS 與 IMPLEMENTATION_PLAN。`ARCHITECTURE_REVIEW_BRIEF.md` 是背景，checkout 缺檔時可唯讀查看本機已有的 `4ca61b1` 版本，不自行合併。S1-S3 及 S4 純契約已有程式與隔離測試，先核對而非重寫；銀行 parser 仍需兩期授權樣本。文件修改與程式實作授權分開；開始實作後每步完成即接下一步，必要外部關卡才停止。
 
 ## 完成標準
 

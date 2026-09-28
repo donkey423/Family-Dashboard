@@ -1,5 +1,24 @@
 # 家庭收支記錄里程碑
 
+## 目前執行入口：信用卡 PDF 到 Excel
+
+2026-09-28 已將 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 改為 Excel 優先的執行規格；本輪接續完成版型無關的 Statement 正規化與入帳閘門，但尚未建立真實銀行 parser。前輪 S1-S3 已補完，下一個外部關卡仍是 S4 真實銀行解析器。M0-M8 勾選代表既有功能，不代表真實 PDF 入帳；歷史未勾項不自動成為下一個任務。
+
+- [x] S0：重新確認 Git/隔離環境，重跑測試與 build。
+- [x] S1：Gmail 自訂 query 與預設 cursor 隔離、分頁、失敗重試；FakeGmail 聚焦測試通過。
+- [x] S2：密碼提示 HTML/重疊上下文、遮罩後截斷；測試僅使用合成資料。
+- [x] S3：共用 PDF 解鎖 application use case、唯一安全 profile 匹配及 API 相容性測試。
+- [ ] S4：通用 Statement 輸出契約/月支出語意與版型無關正規化閘門已有程式（契約+正規化聚焦測試 26 passed）；銀行 parser、兩期逐筆核對及實際對帳式待樣本。
+- [ ] S5：最小 Statement/account 模型、狀態、冪等約束與隔離 migration。
+- [ ] S6：A 分析/帳戶 API、B 原子確認/查詢/撤銷、C 正確 Excel；完成真實 PDF 到 Excel、重跑與恢復驗收。
+- [ ] S7：最小帳戶設定、待處理/核對確認及 Excel 操作介面；不做完整 Dashboard 或分類系統。
+- [ ] S8：沿用 Gmail 同步/30 分鐘排程，接銀行範圍 PDF-only 與使用者 opt-in 的受控自動入帳；不重寫 History/掃描水位。
+- [ ] S9：固定 Windows 入口、授權後的正式升級與真實端到端驗收。
+
+M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自動化與交付。每步 focused tests，S0/S6/S7/S9 全套 backend/build，schema 另做隔離 migration；更新 HANDOFF 才勾選。缺真實樣本/外部驗收保持未完成，不能拿合成資料代替。S0 已勾是前輪基線，接手仍要重驗。
+
+本輪延後完整 Dashboard、分類/備註、每日排程/90 天新水位、移除 History 及 Excel 事件驅動重寫。既有功能保留，不因延後而拆掉；詳細工作包、固定測試數值與缺件處理只維護在 IMPLEMENTATION_PLAN，避免多份衝突規格。
+
 ## M0：產品與架構基線
 
 - [x] 固定產品名稱、v0.1 範圍與排除項目

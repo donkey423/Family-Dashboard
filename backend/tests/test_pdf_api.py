@@ -18,11 +18,13 @@ from family_finance_hub.security.password_rules.schema import PasswordRule
 class MemorySecretStore:
     def __init__(self):
         self.values = {}
+        self.get_calls = []
 
     def set(self, reference, value):
         self.values[reference] = value
 
     def get(self, reference):
+        self.get_calls.append(reference)
         return self.values.get(reference)
 
     def delete(self, reference):
@@ -187,6 +189,117 @@ def test_pdf_preview_uses_ai_rules_locally_and_persists_only_verified_rule(tmp_p
         assert "19840302" not in serialized
         assert "678919840302" not in serialized
     engine.dispose()
+
+
+def test_pdf_preview_auto_matches_unique_sender_profile_without_returning_secret_material(tmp_path):
+    secret_store = MemorySecretStore()
+    interpreter = FakeInterpreter(ambiguous_rule())
+    client, _ = make_client(tmp_path, secret_store, interpreter)
+    original_pdf = make_encrypted_pdf("678919840302")
+
+    with client:
+        _, document_profile = make_profiles(client)
+        uploaded = client.post("/api/documents", files={
+            "file": ("statement.pdf", original_pdf, "application/pdf"),
+        })
+        assert uploaded.status_code == 200
+
+        response = client.post(
+            f"/api/documents/{uploaded.json()['id']}/preview",
+            json={
+                "sender": "Bank Billing <statements@example.test>",
+                "body": "密碼規則：身分證末四碼加生日 YYYYMMDD。",
+                "allow_ai_analysis": True,
+            },
+        )
+
+    assert response.status_code == 200
+    assert not PdfReader(BytesIO(response.content)).is_encrypted
+    assert len(interpreter.calls) == 1
+    assert document_profile["secret_profile_id"] not in response.text
+
+
+def test_pdf_preview_does_not_choose_between_multiple_sender_profiles(tmp_path):
+    secret_store = MemorySecretStore()
+    interpreter = FakeInterpreter(ambiguous_rule())
+    client, _ = make_client(tmp_path, secret_store, interpreter)
+    original_pdf = make_encrypted_pdf("678919840302")
+
+    with client:
+        make_profiles(client)
+        second_secret = client.post("/api/security/profiles", json={
+            "display_name": "第二位合成成員",
+            "national_id": "B987654321",
+            "birthday": "1985-04-03",
+        })
+        assert second_secret.status_code == 201
+        second_profile = client.post("/api/security/document-profiles", json={
+            "display_name": "第二個測試帳單",
+            "institution": "另一張測試卡",
+            "sender_pattern": "@example.test",
+            "secret_profile_id": second_secret.json()["id"],
+        })
+        assert second_profile.status_code == 201
+        uploaded = client.post("/api/documents", files={
+            "file": ("statement.pdf", original_pdf, "application/pdf"),
+        })
+        assert uploaded.status_code == 200
+
+        response = client.post(
+            f"/api/documents/{uploaded.json()['id']}/preview",
+            json={
+                "sender": "statements@example.test",
+                "body": "密碼規則：身分證末四碼加生日 YYYYMMDD。",
+                "allow_ai_analysis": True,
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.headers["x-familyhub-error"] == "pdf_password_required"
+    assert interpreter.calls == []
+    assert secret_store.get_calls == []
+
+
+def test_pdf_preview_manual_profile_selection_takes_precedence_over_sender_match(tmp_path):
+    secret_store = MemorySecretStore()
+    interpreter = FakeInterpreter(ambiguous_rule())
+    client, _ = make_client(tmp_path, secret_store, interpreter)
+    original_pdf = make_encrypted_pdf("432119850403")
+
+    with client:
+        first_secret, first_profile = make_profiles(client)
+        second_secret = client.post("/api/security/profiles", json={
+            "display_name": "第二位合成測試成員",
+            "national_id": "B987654321",
+            "birthday": "1985-04-03",
+        })
+        assert second_secret.status_code == 201
+        second_profile = client.post("/api/security/document-profiles", json={
+            "display_name": "第二個合成帳單",
+            "institution": "另一間測試銀行",
+            "sender_pattern": "@example.test",
+            "secret_profile_id": second_secret.json()["id"],
+        })
+        assert second_profile.status_code == 201
+        uploaded = client.post("/api/documents", files={
+            "file": ("synthetic-statement.pdf", original_pdf, "application/pdf"),
+        })
+        response = client.post(
+            f"/api/documents/{uploaded.json()['id']}/preview",
+            json={
+                "document_security_profile_id": second_profile.json()["id"],
+                "sender": "statements@example.test",
+                "body": "Password rule: national ID suffix plus birthday YYYYMMDD.",
+                "allow_ai_analysis": True,
+            },
+        )
+
+    assert response.status_code == 200
+    assert not PdfReader(BytesIO(response.content)).is_encrypted
+    assert len(interpreter.calls) == 1
+    assert all(first_secret["id"] not in reference for reference in secret_store.get_calls)
+    assert any(second_secret.json()["id"] in reference for reference in secret_store.get_calls)
+    assert first_profile["id"] != second_profile.json()["id"]
 
 
 @pytest.mark.parametrize("filtered_entry", ["duplicate", "empty"])

@@ -1,5 +1,11 @@
 # 家庭收支記錄架構
 
+## 近期交付範圍
+
+近期產品目標為信用卡 PDF 解鎖、解析與核對後寫入 SQLite，產生每月支出 Excel；Web 補設定、核對確認及例外處理。完整 Dashboard、新家庭模組及新同步引擎不是前置。既有 Documents/Sources、SecretStore、去重、撤銷及 Excel 安全輸出仍保留。
+
+以下記錄現有架構與邊界；後續擴充點不等於已排定待辦。尚未實作的工作、狀態/API/schema 與驗收以 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 為準；銀行專用 PDF 交易 parser 目前仍未完成，Excel 信用卡語意亦待串接。
+
 ## 執行拓樸
 
 ```text
@@ -281,7 +287,7 @@ PasswordRule DSL 第一版只允許白名單操作，例如：
 
 #### PDF processor 邊界
 
-目前 `DocumentProcessor.process(content: bytes)` 對加密 PDF 不足。實作 PDF 前應加入 processing request/context，至少能傳遞 filename、content type、document/bank profile 與 `credential_ref` 等非秘密 reference；不要把 plaintext password 當成通用 processor 參數四處傳遞。
+目前 `DocumentProcessor.process(request: ProcessingRequest)` 已使用 `ProcessingContext` 傳遞 filename、content type、document security profile ID 與非秘密 metadata。`PasswordAwarePdfProcessor` 另接受只在本機記憶體存在的 `password_candidates`；共用 `PdfPreviewUseCase` 協調來源、profile、SecretStore、規則與處理器，不把秘密放進 context、DB、log 或 API response。後續 Statement 入帳沿用此 application 流程，不再建立第二套解鎖流程。
 
 第一版 PDF stack 以 `pypdf[crypto]` 處理 encryption detection、in-memory decrypt 與 text extraction；只有真實銀行 PDF 驗證出現相容性問題時才增加 pikepdf/qpdf fallback。OCR 只在成功解密後且文字抽取不足時啟用，不對所有 PDF 預設執行。通用 `OcrProvider` port 目前有本機 Tesseract adapter，以 PDFium 記憶體渲染並透過 stdin 傳送頁面影像；每份文件最多 20 頁、每頁最多約 8 百萬像素，總逾時 120 秒。Tesseract executable 及 `chi_tra`/`eng` traineddata 需在 Windows 主機另行安裝；無引擎或 OCR 失敗不阻止 PDF 預覽。
 
