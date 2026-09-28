@@ -40,6 +40,22 @@ export class ApiError extends Error {
   }
 }
 
+export type WorkbookExportStatus = {
+  enabled: boolean;
+  status: string;
+  output_path: string;
+  file_available: boolean;
+  last_successful_at: string | null;
+  last_error: string | null;
+  last_error_code: string | null;
+  exported_transactions: number;
+  current_transactions: number;
+  pending_pdf_documents: number;
+  needs_update: boolean;
+  check_interval_seconds: number;
+  pdf_transaction_parser_ready: boolean;
+};
+
 async function responseError(response: Response): Promise<ApiError> {
   const payload = await response.json().catch(() => null);
   return new ApiError(
@@ -74,6 +90,10 @@ async function requestBlob(path: string, body: unknown): Promise<{ blob: Blob; e
 }
 
 export const api = {
+  workbookStatus: () => request<WorkbookExportStatus>("/api/exports/excel/status"),
+  configureWorkbook: (enabled: boolean) => postJson<WorkbookExportStatus>("/api/exports/excel/settings", { enabled }),
+  refreshWorkbook: () => postJson<WorkbookExportStatus>("/api/exports/excel/refresh", {}),
+  workbookUrl: `${API_BASE}/api/exports/excel/content`,
   documentUrl: (id: string) => `${API_BASE}/api/documents/${encodeURIComponent(id)}/content`,
   dashboard: (options: { month?: string; currency?: string } = {}) => {
     const params = new URLSearchParams();

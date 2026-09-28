@@ -153,6 +153,16 @@ nav { display: grid; gap: 5px; }
 .period-controls { justify-content: flex-end; }
 @media (max-width: 640px) { .period-controls, .transaction-filters { width: 100%; justify-content: stretch; }.period-controls label, .transaction-filters label { flex: 1; min-width: 0; }.period-controls input, .period-controls select, .transaction-filters input, .transaction-filters select { width: 100%; }.transaction-filters { margin-left: 0; }.transactions-page .panel-heading { align-items: stretch; } }
 
+.excel-settings { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+.excel-toggle { margin-top: 18px; font-size: 14px; }
+.excel-status-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 22px 0; }
+.excel-status-grid dt, .excel-path > span { color: var(--muted); font-size: 12px; }
+.excel-status-grid dd { margin: 6px 0 0; font-size: 14px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.excel-path { display: grid; gap: 6px; font-size: 13px; }
+.excel-path code { white-space: normal; overflow-wrap: anywhere; }
+.excel-settings .button { text-decoration: none; }
+@media (max-width: 640px) { .excel-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.excel-status-grid > div:last-child { grid-column: 1 / -1; } }
+
 /* M7.5: keep the dense desktop table readable while turning each mobile row into a two-line ledger item. */
 .panel-heading p { font-size: 12px; }
 .text-button { font-size: 12px; }

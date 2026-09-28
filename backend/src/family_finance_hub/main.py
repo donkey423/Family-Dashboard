@@ -22,6 +22,9 @@ from .documents.processors.pdf import PdfDocumentProcessor
 from .documents.processors.ports import DocumentProcessingError, ProcessingContext, ProcessingRequest
 from .finance.service import FinanceCsvImportService
 from .finance.queries import active_transaction_filter, transaction_totals
+from .exports.ports import WorkbookWriter
+from .exports.service import WorkbookExportBusy, WorkbookExportService
+from .exports.xlsx import XlsxWorkbookWriter
 from .models import AIProviderProfile, Document, DocumentSourceRecord, FinanceTransaction, GmailConnection, ImportJob, utc_now
 from .documents.sources import DocumentSourceRegistry, LocalFileDocumentSource
 from .documents.sources.ports import DocumentSourceUnavailable
@@ -82,6 +85,10 @@ class GmailScheduleInput(BaseModel):
     enabled: bool
 
 
+class WorkbookExportInput(BaseModel):
+    enabled: bool
+
+
 class DocumentLifecycleInput(BaseModel):
     impact_token: str = Field(pattern=r"^[a-f0-9]{64}$")
     reason: str = Field(default="", max_length=200)
@@ -118,6 +125,7 @@ def create_app(
     password_interpreter: PasswordRuleInterpreter | None = None,
     pdf_processor: PdfDocumentProcessor | None = None,
     gmail_client_factory: Callable[[], GmailClient] | None = None,
+    workbook_writer: WorkbookWriter | None = None,
 ) -> FastAPI:
     config = settings or Settings.from_environment()
     engine = make_engine(config.database_url)
@@ -158,6 +166,7 @@ def create_app(
     document_lifecycle = DocumentLifecycleUseCase()
     gmail_sync = GmailSyncUseCase(documents, finance_service, config.max_upload_bytes)
     gmail_sync_lock = Lock()
+    workbook_export = WorkbookExportService(session_factory, workbook_writer or XlsxWorkbookWriter(), config.workbook_path)
 
     def get_secret_service() -> SecretProfileService:
         return SecretProfileService(get_secret_store())
@@ -176,17 +185,20 @@ def create_app(
             Base.metadata.create_all(engine)
         stop_scheduler = asyncio.Event()
         scheduler_task = asyncio.create_task(gmail_scheduler.run(stop_scheduler))
+        export_task = asyncio.create_task(workbook_export.run(stop_scheduler))
         try:
             yield
         finally:
             stop_scheduler.set()
             await scheduler_task
+            await export_task
         engine.dispose()
 
     app = FastAPI(title="家庭收支記錄 API", version="0.1.0", lifespan=lifespan)
     app.state.session_factory = session_factory
     app.state.settings = config
     app.state.gmail_sync_scheduler = gmail_scheduler
+    app.state.workbook_export = workbook_export
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(config.cors_origins),
@@ -205,6 +217,38 @@ def create_app(
     @app.get("/api/health")
     def health():
         return {"status": "ok", "product": "家庭收支記錄"}
+
+    @app.get("/api/exports/excel/status")
+    def workbook_export_status():
+        return workbook_export.status()
+
+    @app.post("/api/exports/excel/settings")
+    def configure_workbook_export(body: WorkbookExportInput):
+        try:
+            return workbook_export.configure(body.enabled)
+        except WorkbookExportBusy:
+            raise HTTPException(status_code=409, detail="Excel 正在更新，請稍後重試") from None
+
+    @app.post("/api/exports/excel/refresh")
+    def refresh_workbook_export():
+        try:
+            workbook_export.refresh(force=True)
+        except WorkbookExportBusy:
+            raise HTTPException(status_code=409, detail="Excel 正在更新，請稍後重試") from None
+        return workbook_export.status()
+
+    @app.get("/api/exports/excel/content")
+    def download_workbook():
+        try:
+            content = workbook_export.read_workbook()
+        except FileNotFoundError:
+            raise HTTPException(status_code=409, detail="Excel 尚未更新，請先完成更新再下載") from None
+        except OSError:
+            raise HTTPException(status_code=503, detail="Excel 檔案目前無法讀取") from None
+        return Response(content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(config.workbook_path.name)}",
+            "Cache-Control": "private, no-store",
+        })
 
     @app.get("/api/security/profiles")
     def list_secret_profiles(session: Session = Depends(get_session)):
@@ -466,6 +510,7 @@ def create_app(
             rule = None
             fingerprint = ""
             processed = None
+            candidate_rule_indexes: tuple[int, ...] = ()
             try:
                 processed = active_pdf_processor.process(request)
             except DocumentProcessingError as initial_error:
@@ -500,9 +545,16 @@ def create_app(
                 fingerprint = password_rules.fingerprint(instruction, context)
                 rule = password_rules.get_verified(session, profile.id, fingerprint)
                 session.commit()
-                candidates = PasswordComposer(get_secret_store()).compose(
-                    rule, secret_profile.national_id_credential_ref, secret_profile.birthday_credential_ref
-                ) if rule else ()
+                if rule:
+                    candidates, candidate_rule_indexes = PasswordComposer(
+                        get_secret_store()
+                    ).compose_with_rule_indexes(
+                        rule,
+                        secret_profile.national_id_credential_ref,
+                        secret_profile.birthday_credential_ref,
+                    )
+                else:
+                    candidates = ()
                 if candidates:
                     try:
                         processed = active_pdf_processor.process(request, password_candidates=candidates)
@@ -518,8 +570,12 @@ def create_app(
                         raise DocumentProcessingError("pdf_password_required", "尚無已驗證的密碼規則") from None
                     interpreter = password_interpreter or AIProviderService(get_secret_store()).interpreter(session)
                     rule = interpreter.interpret(instruction, context)
-                    candidates = PasswordComposer(get_secret_store()).compose(
-                        rule, secret_profile.national_id_credential_ref, secret_profile.birthday_credential_ref
+                    candidates, candidate_rule_indexes = PasswordComposer(
+                        get_secret_store()
+                    ).compose_with_rule_indexes(
+                        rule,
+                        secret_profile.national_id_credential_ref,
+                        secret_profile.birthday_credential_ref,
                     )
                     if not candidates:
                         raise DocumentProcessingError("pdf_password_required", "密碼規則不明確或無法使用") from None
@@ -528,7 +584,13 @@ def create_app(
                 raise DocumentProcessingError("pdf_malformed", "PDF 無法處理") from None
             if processed.was_encrypted and rule is not None and fingerprint:
                 if rule.status == "ambiguous" and processed.successful_candidate_index is not None:
-                    selected = rule.candidates[processed.successful_candidate_index]
+                    try:
+                        rule_index = candidate_rule_indexes[processed.successful_candidate_index]
+                    except IndexError:
+                        raise DocumentProcessingError(
+                            "pdf_malformed", "PDF 密碼規則結果無法對應"
+                        ) from None
+                    selected = rule.candidates[rule_index]
                     rule = rule.model_copy(update={"status": "resolved", "candidates": [selected]})
                 if rule.status == "resolved" and profile:
                     password_rules.save_verified(session, profile.id, fingerprint, rule)

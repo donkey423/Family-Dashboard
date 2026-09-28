@@ -55,6 +55,7 @@ Documents 是文件的 logical identity、metadata 與來源關聯，不應等�
 - Jobs：匯入作業狀態、來源與可供 UI 顯示的錯誤摘要。
 - Search：跨文件 metadata 與 Finance 交易的查詢服務。
 - Dashboard：以 Finance 查詢服務提供統計資料。
+- Exports：把已提交的 Documents/Finance 快照投影成可重建的專用 Excel；不擁有交易資料，也不反向讀取 Excel 更新 domain。
 
 SQLAlchemy 持久化 model 集中在 infrastructure/schema 邊界，由各 domain service 擁有其資料操作。Application use case 協調跨模組工作並擁有 transaction boundary；底層 service 不可 commit 整個 use case。Alembic migration 是資料庫 schema 變更的正式路徑。
 
@@ -160,6 +161,28 @@ Trigger --------+-- Scheduler: 每 30 分鐘
 4. **Push optional**：只有產品真的需要近即時更新時，才導入 Gmail Push / Pub/Sub；Push 仍只是一種 trigger。
 
 Windows 關機時 scheduler 不執行，這是 local-first 架構的預期行為。重新開機後會補跑已到期的排程，由 incremental sync 補抓關機期間的新信，因此不要求主機 24 小時常駐。OAuth 設定被替換時會自動停用排程，須重新授權並再次明確啟用。
+
+### Excel 投影與重建
+
+```text
+Documents + Finance committed state
+              |
+              v
+      WorkbookExportService
+       (full snapshot/hash)
+              |
+              v
+        WorkbookWriter port
+              |
+              v
+ Windows local .xlsx adapter
+```
+
+Excel 是輸出投影，不是資料來源。`WorkbookExportService` 只讀取已提交資料，並複用 Finance 的有效文件條件排除已撤銷帳單；writer 在 DB session/transaction 結束後寫入同目錄 temporary file，再以原子替換更新目標。成功替換並計算輸出 SHA-256 後才更新 `WorkbookExportState` 與完成 Job；失敗不會前移快照指紋，也不會破壞上一版。
+
+輸出檔含應用程式 ownership marker。既有無標記工作簿、symlink 或格式異常檔案不會被覆蓋。狀態同時保存輸入快照 hash 與輸出檔 SHA-256；目標消失、被外部修改或與目前 SQLite 快照不一致時，下載端點回報尚待更新。背景 worker 為 opt-in，每 30 秒檢查；啟動後立即檢查一次，檔案被 Excel 佔用時保留舊檔並重試。
+
+目前投影包括月份／幣別摘要、所有有效交易與文件狀態。零交易 PDF 只顯示為待處理，不會觸發猜測解析；未來銀行 parser 必須先寫回 Finance transaction，再由同一投影自然進入 Excel。
 
 ### 即時查看原始帳單
 

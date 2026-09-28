@@ -2,7 +2,7 @@
 
 ## 目前狀態
 
-產品「家庭收支記錄」v0.1 為 Windows 主機上的 local-first Modular Monolith。M1-M5.4 的共用平台與既定流程已實作：Documents/1:N source records、SHA-256 冪等匯入、通用 Finance CSV、Dashboard/Search/Jobs、密碼規則安全邊界、加密 PDF transient preview、Gmail 手動/增量同步與 opt-in 每 30 分鐘 scheduler。M7.1-M7.5 的搜尋、來源追溯、月份／幣別總覽、設定分組、PDF 預覽體驗及手機排版也已實作；銀行專用 PDF parser 與外部環境驗收尚未完成。
+產品「家庭收支記錄」v0.1 為 Windows 主機上的 local-first Modular Monolith。M1-M5.4 的共用平台與既定流程已實作：Documents/1:N source records、SHA-256 冪等匯入、通用 Finance CSV、Dashboard/Search/Jobs、密碼規則安全邊界、加密 PDF transient preview、Gmail 手動/增量同步與 opt-in 每 30 分鐘 scheduler。M7.1-M7.5 的搜尋、來源追溯、月份／幣別總覽、設定分組、PDF 預覽體驗及手機排版，以及 M8 第一階段的專用 Excel 投影也已實作；銀行專用 PDF parser 與外部環境驗收尚未完成。
 
 PDF 文字抽取不足時才走 `OcrProvider`；目前 Tesseract adapter 會先以 `--list-langs` 確認設定所需 traineddata，再使用 PDFium 在記憶體渲染、透過 stdin 傳頁面影像，最多 20 頁、每頁約 8 MP、總逾時 120 秒。缺少語言資料會回報獨立狀態；OCR 文字僅保留於此次處理記憶體，不寫 DB/log/文件暫存；OCR 失敗不影響原始/解密 PDF 預覽。OCR 執行檔和 `chi_tra`/`eng` 語言資料尚未在此 Windows 主機安裝/驗收。銀行專用 PDF statement parser 尚未實作；PDF 仍只屬於共用 Document，不會猜測或自動建立 Finance transaction。
 
@@ -32,12 +32,21 @@ Gmail 使用者授權尚未設定或執行；自動同步預設關閉，需使�
 - M7.5 已完成：主要字級層級與多幣別摘要、手機交易兩行排列、單排導覽、長內容縮排／換行及共用 `EmptyState`／`TransactionTable` 元件已整理。
 - 待處理：M7 前端行為測試基礎設施與更大規模長檔名／失敗狀態矩陣，銀行 PDF parser 也仍未完成。
 
-下一輪優先補 M7 前端行為測試與隔離資料矩陣；再依真實帳單樣本決定 bank-specific PDF parser。隨功能調整拆分 `App.tsx`，不全面重寫。
+下一輪優先取得一份可在本機測試的真實銀行帳單，依實際格式實作 bank-specific PDF parser；再處理 Windows 開機常駐與 Gmail 長期授權驗收。M7 前端行為測試基礎設施與更大規模隔離資料矩陣仍應補強；隨功能調整拆分 `App.tsx`，不全面重寫。
 
-本輪已修改程式、測試及本機 Markdown；未操作正式資料、未保存秘密、未提交或推送 Git。
+M7 變更已提交為 `2b21333`，尚未推送遠端。
+
+## M8 第一階段：Excel 自動投影已完成
+
+使用者確認主要目標為 Gmail 帳單自動解鎖、解析並更新 Excel。M8 第一階段已完成專用 Excel 輸出、背景重試與設定介面：SQLite 仍是唯一事實來源；啟用後會立即並每 30 秒重建應用程式擁有的完整工作簿，只輸出有效交易，另列待處理 PDF。撤銷／恢復會反映在下一次輸出；檔案被 Excel 佔用時保留舊版本並稍後重試；外部修改會由 SHA-256 偵測，不提供下載並從 SQLite 安全重建。預設路徑為 `%LOCALAPPDATA%\\FamilyFinanceHub\\exports\\家庭收支記錄.xlsx`，可由 `FAMILY_FINANCE_HUB_EXCEL_PATH` 覆寫。
+
+密碼規則另修正候選值去重後規則索引錯位：預覽成功時會保存原始、真正命中的規則，不會因空白或重複候選值記錯規則。尚無經驗證的真實銀行 PDF parser，因此不能宣稱 PDF 已自動入帳。驗證僅使用隔離合成 DB／PDF／Excel，不變更正式資料庫、不連線 Gmail，也不讀取秘密。
 
 ## 最近程式驗證
 
+- M8 Backend：`.\\.venv\\Scripts\\python.exe -m pytest backend/tests -q -p no:cacheprovider --basetemp backend/.test-tmp/m8-full`，120 passed、2 個既有 FastAPI TestClient／Starlette anyio deprecation warnings。覆蓋 Excel 完整重建、冪等、撤銷／恢復、檔案佔用、重新啟動、外部修改偵測、下載保護，以及 PDF 密碼規則原始索引回歸。
+- M8 Frontend：`npm run build` 成功；以 `http://127.0.0.1:5190/?view=settings` 搭配隔離合成 DB 驗證 Excel 啟用、立即更新、4 筆交易、1 份待處理 PDF 與下載入口。桌面及 390px／320px 均無水平溢出，console error 為空。
+- M8 Migration：空白隔離 SQLite 由 `0001` 完整升級至 `0010_workbook_export`，Alembic version 查詢為 `0010_workbook_export`。使用中的資料庫尚未遷移。
 - M7.1-M7.2 Backend：`\.venv\Scripts\python.exe -m pytest backend/tests -q -p no:cacheprovider --basetemp backend/.test-tmp/m7-2`，69 passed、2 個既有 Starlette/httpx/anyio 相依套件 deprecation warnings。
 - M7.1-M7.2 Frontend：`npm run build` 成功；隔離合成資料瀏覽器驗證搜尋結果頁、URL／上一頁、分頁、新增資料入口、未授權 Gmail 下一步、文件詳情、來源連結與匯入歷史，沒有目前頁面的 console error。
 - M7.3 Backend：`\.venv\Scripts\python.exe -m pytest backend/tests -q -p no:cacheprovider --basetemp backend/.test-tmp/m7-3-final`，70 passed、2 個既有 Starlette/httpx/anyio 相依套件 deprecation warnings。覆蓋 Dashboard 跨月、多幣別、空期間、幣別／月份格式錯誤、有效文件條件及撤銷／恢復回歸。
@@ -53,20 +62,21 @@ Gmail 使用者授權尚未設定或執行；自動同步預設關閉，需使�
 - 瀏覽器以隔離合成帳單驗證桌面及 390px／320px 手機版撤銷、恢復、取消、摘要更新與過期預覽 409 後重新確認；沒有頁面水平溢出。撤銷後僅剩另一份文件的交易，恢復後精確回到原有四筆與各幣別金額。正常流程無 console 錯誤。
 - 上一輪驗證預覽為 `http://127.0.0.1:5177/`，API 為 8018；DB/storage 位於忽略的 `backend/.test-tmp/lifecycle-preview-20260926/`。僅含合成資料，與正式資料隔離；此處記錄驗證環境，不保證服務持續執行。
 - 修正 PDF OCR 狀態標頭未透過 CORS 暴露的整合問題；跨來源 API 測試通過，瀏覽器以合成 PDF 驗證「OCR 尚未就緒」提示出現且仍可預覽。
-- Alembic head 為 `0009_document_revocation`；測試覆蓋既有資料保留，以及有已撤銷文件時拒絕 downgrade，避免舊程式重新計入收支。OCR 無 schema migration。
+- Alembic head 為 `0010_workbook_export`；`0009_document_revocation` 的既有資料保留與 downgrade 防護仍由測試覆蓋。OCR 無 schema migration。
 - `backend/tests/test_backup_restore.py` 以有效／已撤銷兩種合成 DB + documents storage 演練備份／還原，恢復 PDF bytes、Finance transaction、撤銷狀態及工作紀錄；已撤銷交易需明確恢復才重新計入。
 - Tesseract executable 未找到；Tailscale CLI/service 亦未找到，無法做真實 OCR runtime 或 tailnet/Firewall 驗證。
 
 ## 正式使用與外部驗收
 
-正式使用撤銷功能前，先停止 API、成對備份正式 DB/storage，確認資料庫位址後升級至 `0009_document_revocation` 並重新啟動。此步尚未執行；操作方式見 `docs/operations.md`。
+正式使用撤銷與 Excel 投影前，先停止 API、成對備份正式 DB/storage，確認資料庫位址後升級至目前 head `0010_workbook_export` 並重新啟動。此步尚未執行；操作方式見 `docs/operations.md`。
 
 1. 在 Windows 安裝 Tesseract 及 `chi_tra`/`eng` traineddata；以合成掃描 PDF 驗證實際辨識品質與真實子程序逾時。缺語言資料的提早檢查已由合成測試覆蓋，但真實 runtime 尚未驗收。
 2. 由使用者設定 Google Cloud OAuth 桌面 client 並在家庭主機互動授權；以真實台灣信用卡帳單在本機核對解密和 OCR 結果，不把帳單放入 repository。
 3. 根據核對過的真實格式定義 bank-specific `BankStatementParser`/profile，補日期、幣別、金額、退款與冪等映射；通過人工核對前不自動寫交易。
-4. 安裝/登入 Tailscale 並確認家庭裝置與 Windows Firewall 規則後，再做遠端 Web 使用檢查。不要公開服務或設 router port forwarding。
-5. 尚未驗證真實資料庫的生產備份/還原；目前只完成隔離合成 rehearsal。未提供自動或加密備份。
-6. 搜尋分頁已列入 M7.1，不再等資料量增長才處理；工作歷史目前最多 100 筆，其分頁與匯入批次大小另依使用量評估。
+4. 完成 Windows 開機啟動與背景常駐包裝，並確認 Gmail OAuth refresh token 在選定發布狀態下可長期使用；不要用測試中的短效授權宣稱已可長期自動化。
+5. 安裝/登入 Tailscale 並確認家庭裝置與 Windows Firewall 規則後，再做遠端 Web 使用檢查。不要公開服務或設 router port forwarding。
+6. 尚未驗證真實資料庫的生產備份/還原；目前只完成隔離合成 rehearsal。未提供自動或加密備份。
+7. 搜尋分頁已列入 M7.1，不再等資料量增長才處理；工作歷史目前最多 100 筆，其分頁與匯入批次大小另依使用量評估。
 
 ## 安全界線
 

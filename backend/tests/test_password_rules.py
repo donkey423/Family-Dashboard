@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
 
+import pytest
 from pydantic import ValidationError
 from sqlalchemy import select
 
@@ -118,6 +119,61 @@ def test_password_composer_uses_explicit_roc_date_format_and_never_expands_candi
 
     assert candidates == ("67890730302", "19840302")
     assert len(candidates) <= 3
+
+
+@pytest.mark.parametrize(
+    ("filtered_entries", "expected_candidates", "expected_indexes"),
+    [
+        ("duplicate", ("A12319840302", "678919840302"), (0, 2)),
+        ("empty", ("A12319840302", "678919840302"), (1, 2)),
+        ("empty_and_duplicate", ("678919840302",), (1,)),
+    ],
+)
+def test_password_composer_preserves_original_indexes_after_filtering(
+    filtered_entries, expected_candidates, expected_indexes,
+):
+    prefix = make_rule(transform="prefix").model_dump(mode="json")["candidates"][0]
+    suffix = make_rule().model_dump(mode="json")["candidates"][0]
+    leading = make_rule(transform="prefix").model_dump(mode="json")["candidates"][0]
+    if filtered_entries == "duplicate":
+        leading["parts"][0]["case"] = "preserve"
+        rules = [leading, prefix, suffix]
+    else:
+        leading["parts"][0].update(transform="substring", start=100)
+        rules = [leading, prefix, suffix] if filtered_entries == "empty" else [leading, suffix, suffix]
+    rule = PasswordRule.model_validate({"version": 1, "status": "ambiguous", "candidates": rules})
+    composer = PasswordComposer(MemorySecretStore({"national": "A123456789", "birthday": "1984-03-02"}))
+
+    candidates, rule_indexes = composer.compose_with_rule_indexes(rule, "national", "birthday")
+
+    assert candidates == expected_candidates
+    assert rule_indexes == expected_indexes
+    assert composer.compose(rule, "national", "birthday") == candidates
+    for password, rule_index in zip(candidates, rule_indexes, strict=True):
+        selected_rule = PasswordRule(version=1, status="resolved", candidates=[rule.candidates[rule_index]])
+        assert composer.compose(selected_rule, "national", "birthday") == (password,)
+
+
+@pytest.mark.parametrize("values", [
+    {},
+    {"national": "A123456789"},
+    {"birthday": "1984-03-02"},
+    {"national": "A123456789", "birthday": "invalid-date"},
+])
+def test_password_composer_returns_empty_mapping_when_secrets_are_unavailable(values):
+    composer = PasswordComposer(MemorySecretStore(values))
+    rule = make_rule()
+
+    assert composer.compose_with_rule_indexes(rule, "national", "birthday") == ((), ())
+    assert composer.compose(rule, "national", "birthday") == ()
+
+
+def test_password_composer_returns_empty_mapping_for_unsupported_rule():
+    composer = PasswordComposer(MemorySecretStore({"national": "A123456789", "birthday": "1984-03-02"}))
+    rule = PasswordRule(version=1, status="unsupported", candidates=[])
+
+    assert composer.compose_with_rule_indexes(rule, "national", "birthday") == ((), ())
+    assert composer.compose(rule, "national", "birthday") == ()
 
 
 def test_password_rule_schema_rejects_unlisted_operations_and_excess_candidates():

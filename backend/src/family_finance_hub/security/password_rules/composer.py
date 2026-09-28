@@ -14,23 +14,36 @@ class PasswordComposer:
         national_id_reference: str,
         birthday_reference: str,
     ) -> tuple[str, ...]:
+        candidates, _ = self.compose_with_rule_indexes(
+            rule, national_id_reference, birthday_reference
+        )
+        return candidates
+
+    def compose_with_rule_indexes(
+        self,
+        rule: PasswordRule,
+        national_id_reference: str,
+        birthday_reference: str,
+    ) -> tuple[tuple[str, ...], tuple[int, ...]]:
         if rule.status == "unsupported":
-            return ()
+            return (), ()
         national_id = self.secret_store.get(national_id_reference)
         birthday_text = self.secret_store.get(birthday_reference)
         if not national_id or not birthday_text:
-            return ()
+            return (), ()
         try:
             birthday = date.fromisoformat(birthday_text)
         except ValueError:
-            return ()
+            return (), ()
         values = {"national_id": national_id, "birthday": birthday}
         candidates: list[str] = []
-        for candidate in rule.candidates[:3]:
+        rule_indexes: list[int] = []
+        for rule_index, candidate in enumerate(rule.candidates[:3]):
             value = self._compose_candidate(candidate, values)
             if value and value not in candidates:
                 candidates.append(value)
-        return tuple(candidates[:3])
+                rule_indexes.append(rule_index)
+        return tuple(candidates[:3]), tuple(rule_indexes[:3])
 
     @classmethod
     def _compose_candidate(cls, candidate: PasswordCandidateRule, values: dict[str, str | date]) -> str:

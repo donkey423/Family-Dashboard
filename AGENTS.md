@@ -25,7 +25,8 @@
 - SQLAlchemy/Alembic 是 SQLite schema 持久化路徑；migration 不可由生產程式啟動時靜默取代。
 - 不記錄文件內容、PDF 密碼、secret、OAuth token、身分證字號、生日或完整敏感資料。M5.2 必須使用 Windows Credential Manager/SecretStore；AI 只解析密碼規則文字，不得接收真實身分證字號、生日或實際密碼。
 - 新增模組應新增自己的 domain/service/schema migration，避免直接操作其他模組資料。
-- 進度以 TASKS.md 與 HANDOFF.md 為準：M5 共用流程、M6 撤銷／恢復及 M7.1-M7.5 使用體驗改善已實作；銀行 PDF 交易解析、正式資料庫升級與外部環境驗收仍未完成。不得把文件收錄、PDF 解密／抽取文字或合成測試當成真實帳單自動入帳驗收。
+- 進度以 TASKS.md 與 HANDOFF.md 為準：M5 共用流程、M6 撤銷／恢復、M7.1-M7.5 使用體驗改善及 M8 的 Excel 自動投影已實作；銀行 PDF 交易解析、正式資料庫升級與外部環境驗收仍未完成。不得把文件收錄、PDF 解密／抽取文字或合成測試當成真實帳單自動入帳驗收。
+- Excel 是 SQLite 已提交交易的可重建投影，不是資料來源。只能覆蓋帶應用程式 ownership marker 的專用工作簿；外部修改、檔案佔用與輸出 hash 不一致必須保留可見狀態，不得靜默覆蓋未知檔案或把 Excel 反向匯入 Finance。
 - M5.2 密碼流程必須使用 versioned PasswordRule DSL；禁止直接執行/eval LLM 產生的程式碼，禁止以大量排列組合暴力猜密碼。
 - Bank-specific 密碼說明辨識、PasswordComposer、PDF decrypt、BankStatementParser 必須分層；不要把銀行規則硬編碼進通用 PdfDocumentProcessor。
 - 修改 Gmail、PDF 或密碼流程前，先閱讀 ARCHITECTURE.md 的「密碼保護 PDF 與密碼規則解析」及 HANDOFF.md 的目前狀態與安全界線。

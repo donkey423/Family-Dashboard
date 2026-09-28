@@ -11,6 +11,11 @@ class Settings:
     cors_origins: tuple[str, ...] = ("http://127.0.0.1:5173", "http://localhost:5173")
     tesseract_executable: str | None = None
     ocr_languages: str = "chi_tra+eng"
+    excel_output_path: Path | None = None
+
+    @property
+    def workbook_path(self) -> Path:
+        return self.excel_output_path or self.storage_root.parent / "exports" / "家庭收支記錄.xlsx"
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -27,4 +32,5 @@ class Settings:
             ).split(","))),
             tesseract_executable=os.getenv("FAMILY_FINANCE_HUB_TESSERACT") or None,
             ocr_languages=os.getenv("FAMILY_FINANCE_HUB_OCR_LANG", "chi_tra+eng"),
+            excel_output_path=Path(os.environ["FAMILY_FINANCE_HUB_EXCEL_PATH"]) if os.getenv("FAMILY_FINANCE_HUB_EXCEL_PATH") else None,
         )

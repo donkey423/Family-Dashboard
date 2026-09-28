@@ -1,6 +1,7 @@
 from io import BytesIO
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfReader, PdfWriter
 from sqlalchemy import select
@@ -186,6 +187,61 @@ def test_pdf_preview_uses_ai_rules_locally_and_persists_only_verified_rule(tmp_p
         assert "19840302" not in serialized
         assert "678919840302" not in serialized
     engine.dispose()
+
+
+@pytest.mark.parametrize("filtered_entry", ["duplicate", "empty"])
+def test_pdf_preview_persists_and_reuses_successful_rule_after_candidate_filtering(tmp_path, filtered_entry):
+    payload = ambiguous_rule().model_dump(mode="json")
+    leading = ambiguous_rule().model_dump(mode="json")["candidates"][0]
+    if filtered_entry == "duplicate":
+        leading["parts"][0]["case"] = "preserve"
+    else:
+        leading["parts"][0].update(transform="substring", start=100)
+    payload["candidates"].insert(0, leading)
+    rule = PasswordRule.model_validate(payload)
+    interpreter = FakeInterpreter(rule)
+    client, settings = make_client(tmp_path, MemorySecretStore(), interpreter)
+    original_pdf = make_encrypted_pdf("678919840302")
+    engine = make_engine(settings.database_url)
+    factory = make_session_factory(engine)
+
+    try:
+        with client:
+            _, document_profile = make_profiles(client)
+            uploaded = client.post("/api/documents", files={
+                "file": ("synthetic-statement.pdf", original_pdf, "application/pdf"),
+            })
+            assert uploaded.status_code == 200
+            preview_url = f"/api/documents/{uploaded.json()['id']}/preview"
+            body = {
+                "document_security_profile_id": document_profile["id"],
+                "body": "Password rule: national ID suffix plus birthday YYYYMMDD.",
+                "allow_ai_analysis": True,
+            }
+
+            preview = client.post(preview_url, json=body)
+
+            assert preview.status_code == 200
+            assert not PdfReader(BytesIO(preview.content)).is_encrypted
+            assert len(interpreter.calls) == 1
+            with factory() as session:
+                record = session.scalar(select(PasswordRuleRecord))
+                assert record is not None
+                assert record.rule_json == PasswordRule(
+                    version=1, status="resolved", candidates=[rule.candidates[2]],
+                ).model_dump(mode="json")
+                serialized = json.dumps(record.rule_json)
+                for sensitive in ("A123456789", "19840302", "678919840302"):
+                    assert sensitive not in serialized
+
+            reused = client.post(preview_url, json={**body, "allow_ai_analysis": False})
+
+            assert reused.status_code == 200
+            assert not PdfReader(BytesIO(reused.content)).is_encrypted
+            assert len(interpreter.calls) == 1
+            assert client.get(f"/api/documents/{uploaded.json()['id']}/content").content == original_pdf
+    finally:
+        engine.dispose()
 
 
 def test_password_rule_analysis_never_returns_secret_material(tmp_path):

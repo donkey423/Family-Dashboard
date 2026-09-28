@@ -135,6 +135,19 @@ class GmailSyncState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
+class WorkbookExportState(Base):
+    __tablename__ = "workbook_export_state"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    snapshot_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    output_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="never", server_default="never")
+    last_successful_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    transaction_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
 class ImportJob(Base):
     __tablename__ = "import_jobs"
 

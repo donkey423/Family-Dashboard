@@ -4,6 +4,7 @@ import { ImportLifecycleDialog } from "./ImportLifecycleDialog";
 import { useDialogFocus } from "./useDialogFocus";
 import { EmptyState } from "./EmptyState";
 import { TransactionTable } from "./TransactionTable";
+import { ExcelExportSettings } from "./ExcelExportSettings";
 
 type View = "overview" | "documents" | "transactions" | "activity" | "settings" | "search";
 type SettingsGroup = "connections" | "members" | "unlock" | "advanced";
@@ -29,7 +30,7 @@ const viewDescriptions: Record<View, string> = {
   search: "從已收錄的文件與有效交易中查找資料。",
 };
 const settingsGroups: { id: SettingsGroup; label: string; description: string }[] = [
-  { id: "connections", label: "連線服務", description: "Gmail 唯讀連線與同步" },
+  { id: "connections", label: "連線服務", description: "Gmail 與 Excel 自動更新" },
   { id: "members", label: "家庭成員", description: "本機安全資料保管" },
   { id: "unlock", label: "文件解鎖", description: "PDF 密碼規則與成員關聯" },
   { id: "advanced", label: "進階設定", description: "選用的 AI 規則辨識" },
@@ -638,6 +639,7 @@ function SettingsView({ report, onRefresh }: { report: (message: string, error?:
         <div className="gmail-actions"><label className="button secondary">選擇 OAuth 桌面設定<input type="file" accept="application/json,.json" disabled={busy} onChange={(event) => { void configureGmail(event.target.files?.[0]); event.currentTarget.value = ""; }} /></label><button className="button secondary" disabled={busy || !gmail?.configured} onClick={() => void authorizeGmail()}>連接 Google 帳戶</button><button className="button primary" disabled={busy || !gmail?.authorized} onClick={() => void syncGmail()}>{busy ? "處理中…" : "立即同步 Gmail"}</button></div>
         {gmail && <div className="gmail-schedule"><label><input type="checkbox" checked={gmail.auto_sync_enabled} disabled={busy || !gmail.authorized} onChange={(event) => void setGmailSchedule(event.target.checked)} /><span>啟用每 {gmail.sync_interval_minutes} 分鐘自動同步</span></label>{gmail.auto_sync_enabled && gmail.next_sync_at && <span className="settings-note">下次同步：{new Date(gmail.next_sync_at).toLocaleString("zh-TW")}</span>}</div>}
         <p className="settings-note">請先在 Google Cloud 建立 OAuth 用戶端 ID，應用程式類型選「桌面應用程式」，啟用 Gmail API，下載 JSON 後於此選取。連線只要求 gmail.readonly 權限。</p>
+        <ExcelExportSettings />
       </section>}
     </div>
   </>;
