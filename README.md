@@ -78,7 +78,7 @@ Gmail CSV 會使用通用欄位解析匯入交易；解析失敗的 CSV 仍會�
 
 PDF 內嵌文字不足時，系統才會嘗試使用本機 OCR；PDFium 會在記憶體中渲染，Tesseract 透過標準輸入處理影像，不建立臨時帳單影像。OCR 需要另外安裝 Tesseract 及 `chi_tra`、`eng` 語言資料；亦可用 `FAMILY_FINANCE_HUB_TESSERACT` 指向執行檔，並以 `FAMILY_FINANCE_HUB_OCR_LANG` 指定語言。執行 OCR 前會檢查設定所需的語言資料；引擎尚未就緒或缺少語言資料時仍可檢視 PDF，介面會分別顯示狀態。OCR 文字只在此次處理的記憶體中使用，不寫入資料庫；銀行專用 PDF 交易 parser 尚未實作。
 
-AI API key 在「設定 → 進階設定」保存，屬可選功能；目前 UI 預設 Groq Free + `openai/gpt-oss-20b`，也可由使用者明確選擇 OpenAI。UI 的預設值不會自動覆寫既有的已保存 provider，切換後必須明確保存。供應商額度與模型可能調整，不宣稱永久免費。設定後，開啟有密碼且有可用提示的 PDF 可能呼叫 AI 並產生 API 用量；預覽視窗可關閉 AI 後重試。未設定 key 時不呼叫 AI。若提示只藏在尚未解鎖的 PDF 內，仍需由郵件或使用者提供提示。真實身分證、生日、實際 PDF 密碼及帳單全文不會送給 provider；Groq 失敗或 429 不會自動切換到 OpenAI。定時同步只會處理 CSV 與建立 PDF 文件來源，不會將 PDF 自動解析為財務交易。
+AI API 設定在「設定 → 進階設定」保存，屬可選功能；目前 UI 對新設定預設 Groq Free + `openai/gpt-oss-20b`，也可由使用者明確選擇 OpenAI。請區分：Groq 是目前 Recommended / new-setup Default，真正 Active Provider 仍以 backend 已保存的 profile + Windows Credential Manager 為準；既有 OpenAI 不會因升級自動改 Groq。切換後應重新讀取設定狀態確認 provider/model，並先以 synthetic prompt 驗證真實 Groq，再測帳單。供應商額度與模型可能調整，不宣稱永久免費。未設定 provider credential 時不呼叫 AI。若提示只藏在尚未解鎖的 PDF 內，仍需由郵件或使用者提供提示。真實身分證、生日、實際 PDF 密碼及帳單全文不會送給 provider；Groq 失敗或 429 不會自動切換到 OpenAI。定時同步只會處理 CSV 與建立 PDF 文件來源，不會將 PDF 自動解析為財務交易。
 
 ## Excel 自動更新
 
