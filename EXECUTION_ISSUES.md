@@ -47,7 +47,7 @@
 - **現象：** 程式與設定頁已加入 Groq，UI 預設為 Groq + `openai/gpt-oss-20b`；但現場服務 API 仍回報已保存的 `openai` / `gpt-4.1-mini` profile。
 - **原因：** UI 預設值只是新設定的預填，不能為了切換 provider 自動覆寫 Windows Credential Manager 中既有的 profile。這是避免無提示改變外部 API 用量與秘密設定的安全行為。
 - **處理：** 文件明確寫出「必須在設定頁選擇 Groq、輸入 key、按保存」，並保留 OpenAI 只有使用者明確選擇時才可用的路徑。
-- **目前限制：** 尚未保存真實 Groq key，因此尚未宣稱真實 Groq request 已成功；`groq_adapter_in_worktree=true` 只代表程式存在，不代表 runtime 已切換。
+- **目前限制：** Groq 程式已在 `main`，但最後一次有證據的 runtime 仍是 OpenAI。只有完成 safe-switch、重新讀取 Active Provider，並跑過真實 synthetic Groq request，才可宣稱 runtime 已切換。
 
 ### 2.5 內建 Gmail OAuth 與 Gmail 網頁操作不是同一條連線
 
