@@ -71,7 +71,7 @@ S4 新增 `finance/statements/contracts.py`：銀行 parser 的純輸入/輸出�
 
 下一步依 `IMPLEMENTATION_PLAN.md` 完成 S4：等待銀行名稱及兩期 PDF 樣本，保存在使用者授權的私有位置，或以欄位/版面相同的合成副本提供；一份用來開發，一份盲測。缺樣本期間不推測銀行格式、不建多銀行 framework，也不先建立依賴實際 parser 契約的 Statement schema。前端行為測試隨 S7 需要補強，不為完成舊清單而重排非核心功能，不全面重寫 `App.tsx`。
 
-M7 `2b21333` 與 M8 `488cee7` 均已包含於審查時的遠端 `origin/main`；本次接手時最新遠端文件提交為 `4f9bfb5`。
+M7 `2b21333`、M8 `488cee7`、免費 API 文件與 Groq 程式 `eeb6883` 均已包含於目前 `main` 歷史；後續接手只以最新 Git HEAD 為準，不再使用 `4f9bfb5` 當最新遠端。
 
 ## M8 第一階段：Excel 自動投影已完成
 
@@ -131,7 +131,7 @@ M8 第一階段已完成專用 Excel 輸出、背景重試與設定介面；新�
 - 修正 PDF OCR 狀態標頭未透過 CORS 暴露的整合問題；跨來源 API 測試通過，瀏覽器以合成 PDF 驗證「OCR 尚未就緒」提示出現且仍可預覽。
 - Alembic head 為 `0010_workbook_export`；`0009_document_revocation` 的既有資料保留與 downgrade 防護仍由測試覆蓋。OCR 無 schema migration。
 - `backend/tests/test_backup_restore.py` 以有效／已撤銷兩種合成 DB + documents storage 演練備份／還原，恢復 PDF bytes、Finance transaction、撤銷狀態及工作紀錄；已撤銷交易需明確恢復才重新計入。
-- Tesseract executable 未找到；Tailscale CLI/service 亦未找到，無法做真實 OCR runtime 或 tailnet/Firewall 驗證。
+- Tesseract executable 與 `chi_tra`/`eng` runtime 尚未完成真實 OCR 驗收。較早的「Tailscale CLI/service 未找到」已被後續部署結果取代：Tailscale 私有 HTTPS → `localhost:3000` 已驗證可用；仍待重新開機自動觸發與實體 iPhone/MacBook 驗收。
 
 ## 正式使用與外部驗收
 
