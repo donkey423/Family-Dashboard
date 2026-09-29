@@ -1,6 +1,6 @@
 # 免費 AI 密碼規則解析導入計畫
 
-> 狀態：**Groq 第一階段程式已合併至 `main`（實作 commit `eeb6883`，目前 `main` 基準 `b40163d`），合成測試已通過；最後一次可驗證 runtime 仍是既有 OpenAI profile。真實 Groq key、真實 Groq request、Groq 解鎖與交易入帳仍待驗收。**
+> 狀態：**Groq 第一階段程式已合併至 `main`（實作 commit `eeb6883`；`b40163d` 是本輪程式審查基準，不是永久的最新 HEAD），合成測試已通過；最後一次可驗證 runtime 仍是既有 OpenAI profile。S3F-C safe switch、S3F-B 真實 Groq runtime activation、Groq 解鎖與交易入帳仍待驗收。**
 >
 > 更新日期：2026-09-29。免費額度、模型與 API 相容性會變動；真正實作或切換模型前，必須重新確認 provider 官方文件，不可把本文數字當永久保證。
 
@@ -98,7 +98,7 @@ Cloudflare REST API 還需要 Account ID，設定面比 Groq 多，因此**不�
 - 程式與設定頁已支援 Groq，而且 Groq 實作已在 `main`；最後一次 runtime smoke check 的已保存 profile 仍回報 `runtime_provider=openai`、`runtime_model=gpt-4.1-mini`。Git 已包含 Groq 不等於 SecretStore 已保存 Groq key；設定頁的 Groq 預設值不會自動覆寫既有 Active Provider，必須由使用者在「設定 → 進階設定」明確切換。
 - 已從使用者授權的 Gmail 網頁下載一份信用卡 PDF，透過 FamilyHub 文件入口收錄；同一份 bytes 再次收錄回報 `duplicate=true`，證明 SHA-256 冪等路徑正常。FamilyHub 內建 Gmail OAuth 仍未授權，因此這次是 Gmail 網頁手動下載，不是內建 Gmail scheduler 的真實驗收。
 - 開啟該 PDF 的 AI 預覽時，實際呼叫的是既有 OpenAI profile，服務回報額度不足；系統沒有自動改呼叫 Groq，也沒有建立任何 Finance transaction。這次結果是「文件已收錄、尚未解鎖/入帳」，不是帳單解析成功。
-- 後續應先在本機保存 Groq key，以合成提示確認真實 Groq request，再重新跑授權 PDF；不得把 key、身分資料、生日、PDF 密碼或帳單全文貼到聊天或提交到 repository。
+- 後續應先依 `GROQ_RUNTIME_REVIEW.md` 完成 safe-switch/Test Connection，再明確切換 Groq，以合成提示確認真實 Groq request 與 verified cache，最後才重新跑授權 PDF；不得把 credential、身分資料、生日、PDF 密碼或帳單全文貼到聊天或提交到 repository。
 
 ### 4.2 Provider 狀態語意：Recommended / Default / Active
 
@@ -136,7 +136,7 @@ Provider error 也建議轉成穩定且不含 upstream body 的 reason code，�
 
 ## 5. 實作順序
 
-> Phase A-C 已由 `eeb6883` 完成並合併 `main`。以下保留作設計契約與回歸檢查，不可再次另起一套實作；現在真正未完成的是 runtime activation、真實 Groq smoke test，以及 safe-switch hardening。
+> Phase A-C 已由 `eeb6883` 完成並合併 `main`。以下保留作設計契約與回歸檢查，不可再次另起一套實作；現在的順序是 **先 safe-switch hardening，再 runtime activation，再真實 PDF**。程式級細節以 `GROQ_RUNTIME_REVIEW.md` 為準。
 
 ### Phase A（已實作）：讓 AI provider 真正 provider-neutral
 
