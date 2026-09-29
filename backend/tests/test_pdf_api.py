@@ -171,6 +171,142 @@ def test_personal_unlock_updates_only_supplied_field_and_rejects_empty_input(tmp
         assert "1984-03-02" in store.values.values()
 
 
+def test_pdf_preview_uses_confirmed_email_id_format_without_ai(tmp_path):
+    secret_store = MemorySecretStore()
+    interpreter = FakeInterpreter(single_value_rule("national_id"))
+    client, settings = make_client(tmp_path, secret_store, interpreter)
+    original_pdf = make_encrypted_pdf("A123456789")
+
+    with client:
+        saved = client.put(
+            "/api/security/personal-unlock",
+            json={"national_id": "a123456789"},
+        )
+        assert saved.status_code == 200
+        uploaded = client.post("/api/documents", files={
+            "file": ("synthetic.pdf", original_pdf, "application/pdf"),
+        })
+        preview = client.post(
+            f"/api/documents/{uploaded.json()['id']}/preview",
+            json={
+                "body": "附件檔案開啟密碼為您的身分證字號（英文字母為大寫）。",
+                "allow_ai_analysis": False,
+            },
+        )
+
+        assert preview.status_code == 200
+        assert not PdfReader(BytesIO(preview.content)).is_encrypted
+        assert interpreter.calls == []
+        assert client.get(f"/api/documents/{uploaded.json()['id']}/content").content == original_pdf
+
+    engine = make_engine(settings.database_url)
+    factory = make_session_factory(engine)
+    with factory() as session:
+        record = session.scalar(select(PasswordRuleRecord))
+        assert record is not None
+        part = record.rule_json["candidates"][0]["parts"][0]
+        assert part["source"] == "national_id"
+        assert part["transform"] == "full"
+        assert part["case"] == "upper"
+        assert "A123456789" not in json.dumps(record.rule_json)
+    engine.dispose()
+
+
+def test_pdf_preview_resolves_explicit_domestic_and_foreign_email_rule_without_ai(tmp_path):
+    secret_store = MemorySecretStore()
+    interpreter = FakeInterpreter(single_value_rule("national_id"))
+    client, settings = make_client(tmp_path, secret_store, interpreter)
+    original_pdf = make_encrypted_pdf("A123456789")
+
+    with client:
+        saved = client.put(
+            "/api/security/personal-unlock",
+            json={"national_id": "a123456789", "birthday": "1984-03-02"},
+        )
+        assert saved.status_code == 200
+        uploaded = client.post("/api/documents", files={
+            "file": ("synthetic.pdf", original_pdf, "application/pdf"),
+        })
+        preview = client.post(
+            f"/api/documents/{uploaded.json()['id']}/preview",
+            json={
+                "body": (
+                    "附件預設密碼：本國籍客戶預設密碼為身分證字號（英文字母大寫）；"
+                    "外籍客戶預設密碼為西元生日8碼YYYYMMDD。"
+                ),
+                "allow_ai_analysis": False,
+            },
+        )
+
+        assert preview.status_code == 200
+        assert not PdfReader(BytesIO(preview.content)).is_encrypted
+        assert interpreter.calls == []
+
+    engine = make_engine(settings.database_url)
+    factory = make_session_factory(engine)
+    with factory() as session:
+        record = session.scalar(select(PasswordRuleRecord))
+        assert record is not None
+        assert record.rule_json["status"] == "resolved"
+        assert len(record.rule_json["candidates"]) == 1
+        assert record.rule_json["candidates"][0]["parts"][0]["source"] == "national_id"
+    engine.dispose()
+
+
+def test_pdf_preview_does_not_try_identity_without_confirmed_email_format(tmp_path):
+    secret_store = MemorySecretStore()
+    interpreter = FakeInterpreter(single_value_rule("national_id"))
+    client, _ = make_client(tmp_path, secret_store, interpreter)
+    original_pdf = make_encrypted_pdf("A123456789")
+
+    with client:
+        assert client.put(
+            "/api/security/personal-unlock",
+            json={"national_id": "A123456789"},
+        ).status_code == 200
+        uploaded = client.post("/api/documents", files={
+            "file": ("synthetic.pdf", original_pdf, "application/pdf"),
+        })
+        preview = client.post(
+            f"/api/documents/{uploaded.json()['id']}/preview",
+            json={
+                "body": "附件已加密，請輸入密碼開啟。",
+                "allow_ai_analysis": False,
+            },
+        )
+
+    assert preview.status_code == 422
+    assert preview.headers["x-familyhub-error"] == "pdf_password_required"
+    assert interpreter.calls == []
+
+
+def test_pdf_preview_does_not_guess_after_confirmed_format_fails(tmp_path):
+    secret_store = MemorySecretStore()
+    interpreter = FakeInterpreter(single_value_rule("national_id"))
+    client, _ = make_client(tmp_path, secret_store, interpreter)
+    original_pdf = make_encrypted_pdf("DIFFERENT-PASSWORD")
+
+    with client:
+        assert client.put(
+            "/api/security/personal-unlock",
+            json={"national_id": "A123456789"},
+        ).status_code == 200
+        uploaded = client.post("/api/documents", files={
+            "file": ("synthetic.pdf", original_pdf, "application/pdf"),
+        })
+        preview = client.post(
+            f"/api/documents/{uploaded.json()['id']}/preview",
+            json={
+                "body": "開啟密碼為身分證字號，英文字母為大寫。",
+                "allow_ai_analysis": True,
+            },
+        )
+
+    assert preview.status_code == 422
+    assert preview.headers["x-familyhub-error"] == "pdf_wrong_password"
+    assert interpreter.calls == []
+
+
 def test_ai_provider_key_is_kept_in_secret_store_only(tmp_path):
     secret_store = MemorySecretStore()
     client, settings = make_client(tmp_path, secret_store)

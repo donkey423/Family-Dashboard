@@ -96,6 +96,15 @@ class MemoryMessageContextSource:
         )
 
 
+class PasswordlessMessageContextSource:
+    def read_message_context(self, reference):
+        return SourceMessageContext(
+            subject="Synthetic encrypted statement",
+            sender="billing@bank.example",
+            body="The attached statement is encrypted. See the email for help.",
+        )
+
+
 class MemorySecretStore:
     def __init__(self, values):
         self.values = values
@@ -186,6 +195,79 @@ def test_gmail_password_hint_unlocks_with_personal_identity_without_sender_profi
             assert result.processed.was_encrypted
             assert not PdfReader(BytesIO(result.processed.preview_bytes)).is_encrypted
             assert set(store.get_calls) == {"personal:id", "personal:birthday"}
+    finally:
+        engine.dispose()
+
+
+def test_gmail_preview_never_replaces_source_email_rule_with_manual_hint():
+    original_pdf = _encrypted_pdf("A123456789")
+    source_registry = DocumentSourceRegistry((MemoryDocumentSource(original_pdf),))
+    store = MemorySecretStore({"personal:id": "A123456789"})
+    engine = make_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+    use_case = PdfPreviewUseCase(
+        source_registry,
+        PasswordlessMessageContextSource(),
+        PdfDocumentProcessor(),
+        PasswordInstructionExtractor(),
+        PasswordRuleService(),
+        lambda: store,
+        lambda session: pytest.fail("AI must not run when analysis is disabled"),
+    )
+
+    try:
+        with factory() as session:
+            document = Document(
+                id="gmail-source-rule-only",
+                sha256=sha256(original_pdf).hexdigest(),
+                filename="statement.pdf",
+                content_type="application/pdf",
+                size_bytes=len(original_pdf),
+            )
+            document.sources.extend([
+                DocumentSourceRecord(
+                    id="gmail-rule-memory-source",
+                    source_type="memory_pdf",
+                    source_key="memory:gmail-rule-only",
+                    availability_status="available",
+                ),
+                DocumentSourceRecord(
+                    id="gmail-rule-source",
+                    source_type="gmail_attachment",
+                    source_key="gmail:rule-only",
+                    source_reference={"message_id": "gmail-rule-only"},
+                    availability_status="available",
+                ),
+            ])
+            session.add_all([
+                document,
+                SecretProfile(
+                    id=PERSONAL_UNLOCK_ID,
+                    display_name="Personal unlock",
+                    national_id_credential_ref="personal:id",
+                    birthday_credential_ref="personal:birthday",
+                ),
+                DocumentSecurityProfile(
+                    id=PERSONAL_UNLOCK_ID,
+                    display_name="Personal unlock",
+                    institution="Generic",
+                    secret_profile_id=PERSONAL_UNLOCK_ID,
+                ),
+            ])
+            session.commit()
+
+            with pytest.raises(DocumentProcessingError) as error:
+                use_case.execute(
+                    session,
+                    document.id,
+                    PdfPreviewCommand(
+                        body="開啟密碼為身分證字號，英文字母為大寫。",
+                        allow_ai_analysis=False,
+                    ),
+                )
+
+            assert error.value.code == "pdf_password_required"
     finally:
         engine.dispose()
 

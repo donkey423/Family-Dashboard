@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, JSON, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Index, JSON, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -160,9 +160,60 @@ class ImportJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class StatementAccount(Base):
+    """A local, non-secret label for the account a statement belongs to."""
+
+    __tablename__ = "statement_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    bank_id: Mapped[str] = mapped_column(String(80), index=True)
+    display_name: Mapped[str] = mapped_column(String(100))
+    account_hint: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class Statement(Base):
+    """A parsed statement draft and its explicit import lifecycle."""
+
+    __tablename__ = "statements"
+    __table_args__ = (
+        UniqueConstraint("document_id", name="uq_statement_document_id"),
+        Index("ix_statements_account_period_status", "statement_account_id", "period_start", "period_end", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id"), index=True)
+    statement_account_id: Mapped[str | None] = mapped_column(
+        ForeignKey("statement_accounts.id"), nullable=True, index=True
+    )
+    bank_id: Mapped[str] = mapped_column(String(80))
+    format_version: Mapped[str] = mapped_column(String(40))
+    period_start: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    period_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    parser_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    parser_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", server_default="pending", index=True)
+    reason_code: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    statement_json: Mapped[dict[str, object] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    review_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    document: Mapped[Document] = relationship()
+    account: Mapped[StatementAccount | None] = relationship()
+
+
 class FinanceTransaction(Base):
     __tablename__ = "finance_transactions"
-    __table_args__ = (UniqueConstraint("row_hash", name="uq_finance_transaction_row_hash"),)
+    __table_args__ = (
+        UniqueConstraint("row_hash", name="uq_finance_transaction_row_hash"),
+        UniqueConstraint(
+            "statement_id", "statement_line_index",
+            name="uq_finance_transaction_statement_line",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     source_document_id: Mapped[str] = mapped_column(ForeignKey("documents.id"), index=True)
@@ -172,6 +223,11 @@ class FinanceTransaction(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
     currency: Mapped[str] = mapped_column(String(8), default="TWD")
     raw_json: Mapped[str] = mapped_column(Text)
+    statement_id: Mapped[str | None] = mapped_column(ForeignKey("statements.id"), nullable=True, index=True)
+    posting_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    transaction_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    statement_line_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     document: Mapped[Document] = relationship()
+    statement: Mapped[Statement | None] = relationship()

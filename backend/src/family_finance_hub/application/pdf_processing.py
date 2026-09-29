@@ -27,7 +27,12 @@ from ..models import (
     DocumentSourceRecord,
     SecretProfile,
 )
-from ..security.password_rules import PasswordComposer, PasswordInstructionContext, PasswordInstructionExtractor
+from ..security.password_rules import (
+    ExplicitPasswordRuleParser,
+    PasswordComposer,
+    PasswordInstructionContext,
+    PasswordInstructionExtractor,
+)
 from ..security.password_rules.ports import PasswordRuleInterpreter
 from ..security.password_rules.service import PasswordRuleService
 from ..security.secrets.ports import SecretStore
@@ -148,6 +153,7 @@ class PdfPreviewUseCase:
         password_rules: PasswordRuleService,
         secret_store_factory: Callable[[], SecretStore],
         interpreter_factory: Callable[[Session], PasswordRuleInterpreter],
+        explicit_rule_parser: ExplicitPasswordRuleParser | None = None,
     ):
         self.document_sources = document_sources
         self.message_context_source = message_context_source
@@ -156,6 +162,7 @@ class PdfPreviewUseCase:
         self.password_rules = password_rules
         self.secret_store_factory = secret_store_factory
         self.interpreter_factory = interpreter_factory
+        self.explicit_rule_parser = explicit_rule_parser or ExplicitPasswordRuleParser()
 
     def execute(
         self,
@@ -241,14 +248,8 @@ class PdfPreviewUseCase:
                 raise DocumentProcessingError("pdf_password_required", "尚未保存可用的解鎖資料") from None
             instruction = self.instruction_extractor.extract(
                 PasswordInstructionContext(
-                    "\n".join(filter(None, (
-                        message_context.subject if message_context else "",
-                        command.subject,
-                    ))),
-                    "\n".join(filter(None, (
-                        message_context.body if message_context else "",
-                        command.body,
-                    ))),
+                    message_context.subject if message_context else command.subject,
+                    message_context.body if message_context else command.body,
                     message_context.sender if message_context else command.sender,
                     command.filename or document.filename,
                 ),
@@ -262,7 +263,9 @@ class PdfPreviewUseCase:
                 else {"institution": profile.institution, "document_type": "PDF statement"}
             )
             fingerprint = self.password_rules.fingerprint(instruction, context)
-            rule = self.password_rules.get_verified(session, profile.id, fingerprint)
+            explicit_rule = self.explicit_rule_parser.parse(instruction)
+            cached_rule = self.password_rules.get_verified(session, profile.id, fingerprint)
+            rule = explicit_rule or cached_rule
             session.commit()
             if rule:
                 candidates, candidate_rule_indexes = PasswordComposer(secret_store).compose_with_rule_indexes(
@@ -276,15 +279,27 @@ class PdfPreviewUseCase:
                 try:
                     processed = self.pdf_processor.process(request, password_candidates=candidates)
                 except DocumentProcessingError as cached_error:
-                    if cached_error.code != "pdf_wrong_password" or not command.allow_ai_analysis:
+                    if (
+                        cached_error.code != "pdf_wrong_password"
+                        or explicit_rule is not None
+                        or not command.allow_ai_analysis
+                    ):
                         raise
                     rule = None
             else:
                 rule = None
 
             if processed is None:
+                if explicit_rule is not None:
+                    raise DocumentProcessingError(
+                        "pdf_password_required",
+                        "郵件已說明密碼格式，但尚未保存所需的身分資料",
+                    ) from None
                 if not command.allow_ai_analysis:
-                    raise DocumentProcessingError("pdf_password_required", "尚無已驗證的密碼規則") from None
+                    raise DocumentProcessingError(
+                        "pdf_password_required",
+                        "郵件中沒有可由本機確認的密碼格式，且尚無已驗證的密碼規則",
+                    ) from None
                 interpreter = self.interpreter_factory(session)
                 session.commit()
                 rule = interpreter.interpret(instruction, context)

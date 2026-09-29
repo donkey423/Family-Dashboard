@@ -14,6 +14,14 @@ class ExportTransaction:
     amount: Decimal
     currency: str
     source_filename: str
+    statement_id: str | None = None
+    posting_date: date | None = None
+    transaction_kind: str | None = None
+    statement_account: str | None = None
+    statement_period_start: date | None = None
+    statement_period_end: date | None = None
+    source_type: str = "csv"
+    statement_line_index: int | None = None
 
 
 @dataclass(frozen=True)

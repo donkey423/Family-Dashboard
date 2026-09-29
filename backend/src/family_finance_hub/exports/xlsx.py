@@ -129,6 +129,10 @@ def _monthly_totals(
 ) -> dict[tuple[date | None, str], tuple[Decimal, Decimal, int]]:
     totals: dict[tuple[date | None, str], tuple[Decimal, Decimal, int]] = {}
     for transaction in transactions:
+        # Statement rows use card-specific semantics in the dedicated sheet;
+        # keep this legacy CSV summary from treating card payments as income.
+        if transaction.statement_id is not None:
+            continue
         if not transaction.amount.is_finite():
             raise WorkbookWriteError("Workbook amounts must be finite numbers.")
         month = (
@@ -142,6 +146,37 @@ def _monthly_totals(
         else:
             expenses -= transaction.amount
         totals[key] = (income, expenses, count + 1)
+    return totals
+
+
+def _card_monthly_totals(
+    transactions: tuple[ExportTransaction, ...],
+) -> dict[tuple[date | None, str, str], tuple[Decimal, Decimal, Decimal, Decimal, Decimal, int]]:
+    totals: dict[tuple[date | None, str, str], tuple[Decimal, Decimal, Decimal, Decimal, Decimal, int]] = {}
+    for transaction in transactions:
+        if transaction.statement_id is None:
+            continue
+        if not transaction.amount.is_finite():
+            raise WorkbookWriteError("Workbook amounts must be finite numbers.")
+        source_date = transaction.transaction_date or transaction.posting_date
+        month = source_date.replace(day=1) if source_date is not None else None
+        key = (month, transaction.statement_account or "", transaction.currency)
+        purchases, refunds, fees, interest, payments, count = totals.get(
+            key, (Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), 0)
+        )
+        if transaction.transaction_kind == "purchase":
+            purchases += -transaction.amount
+        elif transaction.transaction_kind == "refund":
+            refunds += transaction.amount
+        elif transaction.transaction_kind == "fee":
+            fees += -transaction.amount
+        elif transaction.transaction_kind == "interest":
+            interest += -transaction.amount
+        elif transaction.transaction_kind == "payment":
+            payments += transaction.amount
+        else:
+            raise WorkbookWriteError("Statement transaction kind is not importable.")
+        totals[key] = (purchases, refunds, fees, interest, payments, count + 1)
     return totals
 
 
@@ -164,7 +199,10 @@ def _populate_workbook(workbook: Workbook, snapshot: WorkbookSnapshot) -> None:
     _format_sheet(summary, (16, 14, 20, 20, 20, 14))
 
     detail = workbook.create_sheet("交易明細")
-    _append_row(detail, ("交易日期", "說明", "金額", "幣別", "來源檔名", "交易 ID", "文件 ID"))
+    _append_row(detail, (
+        "交易日期", "說明", "金額", "幣別", "來源檔名", "交易 ID", "文件 ID",
+        "來源類型", "帳戶", "交易類型", "入帳日期", "帳單起日", "帳單迄日", "帳單列號", "Statement ID",
+    ))
     for row, transaction in enumerate(
         sorted(
             snapshot.transactions,
@@ -180,8 +218,16 @@ def _populate_workbook(workbook: Workbook, snapshot: WorkbookSnapshot) -> None:
             transaction.source_filename,
             transaction.id,
             transaction.document_id,
+            transaction.source_type,
+            transaction.statement_account,
+            transaction.transaction_kind,
+            transaction.posting_date,
+            transaction.statement_period_start,
+            transaction.statement_period_end,
+            transaction.statement_line_index,
+            transaction.statement_id,
         ), row=row)
-    _format_sheet(detail, (16, 60, 20, 14, 50, 40, 40))
+    _format_sheet(detail, (16, 60, 20, 14, 50, 40, 40, 24, 24, 18, 16, 16, 16, 14, 40))
 
     documents = workbook.create_sheet("文件狀態")
     _append_row(documents, ("文件 ID", "檔名", "狀態", "交易筆數"))
@@ -199,6 +245,31 @@ def _populate_workbook(workbook: Workbook, snapshot: WorkbookSnapshot) -> None:
             row=row,
         )
     _format_sheet(documents, (40, 50, 18, 14))
+
+    card_summary = workbook.create_sheet("信用卡月支出", 0)
+    _append_row(card_summary, (
+        "月份", "帳戶", "幣別", "消費", "退款", "淨消費", "費用", "利息", "含費用支出", "繳款", "交易筆數"
+    ))
+    card_totals = _card_monthly_totals(snapshot.transactions)
+    for row, key in enumerate(sorted(card_totals, key=lambda item: (item[0] is None, item[0] or date.min, item[1], item[2])), start=2):
+        month, account, currency = key
+        purchases, refunds, fees, interest, payments, count = card_totals[key]
+        _append_row(card_summary, (
+            month or "未知月份",
+            account or "未命名帳戶",
+            currency,
+            purchases,
+            refunds,
+            purchases - refunds,
+            fees,
+            interest,
+            purchases + fees + interest - refunds,
+            payments,
+            count,
+        ), row=row)
+        if month is not None:
+            card_summary.cell(row=row, column=1).number_format = "yyyy-mm"
+    _format_sheet(card_summary, (16, 24, 14, 18, 18, 18, 18, 18, 20, 18, 14))
 
     marker = workbook.create_sheet(_MARKER_SHEET)
     _append_row(marker, (_MARKER_VALUE,))

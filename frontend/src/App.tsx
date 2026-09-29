@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, type AiProvider, type AiProviderStatus, type Dashboard, type DocumentDetail, type DocumentRow, type Job, type Transaction, type PersonalUnlockStatus, type GmailStatus, type TransactionPage, type ImportImpact, type SearchResult } from "./api";
+import { api, ApiError, type AiProvider, type AiProviderStatus, type Dashboard, type DocumentDetail, type DocumentRow, type Job, type Transaction, type PersonalUnlockStatus, type GmailStatus, type TransactionPage, type ImportImpact, type SearchResult, type Statement } from "./api";
 import { ImportLifecycleDialog } from "./ImportLifecycleDialog";
 import { useDialogFocus } from "./useDialogFocus";
 import { EmptyState } from "./EmptyState";
@@ -68,6 +68,20 @@ const money = (value: string, currency: string) => {
   try { return new Intl.NumberFormat("zh-TW", { style: "currency", currency }).format(Number(value)); }
   catch { return `${currency} ${value}`; }
 };
+const statementReason = (value: string | null) => {
+  const labels: Record<string, string> = {
+    parser_not_configured: "帳單解析器尚未啟用。",
+    unsupported_bank_layout: "目前尚未支援這份帳單版型。",
+    statement_rows_need_ocr: "這份帳單的交易列需要 OCR；目前不會猜測交易。",
+    statement_rows_missing: "帳單有應繳金額，但沒有可靠的交易列。",
+    statement_reconciliation_mismatch: "交易列合計與帳單金額不一致，未匯入。",
+    statement_reconciliation_unavailable: "無法確認帳單合計，未匯入。",
+    statement_row_description_unreliable: "交易說明無法可靠讀取，未匯入。",
+    statement_row_value_unreliable: "交易日期或金額無法可靠讀取，未匯入。",
+  };
+  return value?.split(",").map((reason) => labels[reason] ?? reason).join(" ") || "尚未分析。";
+};
+const statementPeriod = (statement: Statement) => statement.period_start && statement.period_end ? `${statement.period_start} 至 ${statement.period_end}` : "期間待確認";
 const groupedMoney = (dashboard: Dashboard, field: "income" | "expenses" | "net") => dashboard.currency_totals.length
   ? dashboard.currency_totals.map((total) => dashboard.currency_totals.length > 1 ? `${total.currency} ${money(total[field], total.currency)}` : money(total[field], total.currency)).join(" · ")
   : "—";
@@ -297,7 +311,7 @@ export default function App() {
       <footer className="page-footer"><span>家庭收支記錄 v0.1</span><span>資料保存在此 Windows 主機</span></footer>
     </main>
     {addDataOpen && <AddDataDialog busy={busy} onClose={() => setAddDataOpen(false)} onUpload={upload} onGmailSync={async () => { const result = await api.syncGmail(); await refresh(); return `Gmail 同步完成：新增附件 ${result.new_attachments} 份、交易 ${result.created_transactions} 筆、略過已撤銷 ${result.skipped_revoked} 份、失敗 ${result.failures} 件${result.truncated ? "；已達單次安全上限，請再次同步接續處理" : ""}`; }} onSettings={() => { setAddDataOpen(false); navigate("settings"); }} />}
-    {detailDocumentId && <DocumentDetailDialog documentId={detailDocumentId} onClose={() => setDetailDocumentId(null)} onPreview={(document) => { setDetailDocumentId(null); setPreviewDocument(document); }} onSaveLocal={saveLocally} onChangeImport={openLifecycle} />}
+    {detailDocumentId && <DocumentDetailDialog documentId={detailDocumentId} onClose={() => setDetailDocumentId(null)} onPreview={(document) => { setDetailDocumentId(null); setPreviewDocument(document); }} onSaveLocal={saveLocally} onChangeImport={openLifecycle} onImported={refresh} />}
     {previewDocument && <PdfPreviewDialog document={previewDocument} onClose={() => setPreviewDocument(null)} />}
     {lifecycleDocument && <ImportLifecycleDialog document={lifecycleDocument} onClose={() => { setLifecycleDocument(null); void refresh(); }} onChanged={importStateChanged} />}
   </div>;
@@ -444,7 +458,7 @@ function AddDataDialog({ busy, onClose, onUpload, onGmailSync, onSettings }: {
     <section className="data-dialog" role="dialog" aria-modal="true" aria-labelledby="add-data-title">
       <header className="data-dialog-header"><div><p className="eyebrow">資料入口</p><h2 id="add-data-title">新增資料</h2><p>先收錄來源，再依資料類型決定是否建立交易。</p></div><button className="icon-button" aria-label="關閉新增資料" title="關閉新增資料" disabled={working} onClick={onClose}>×</button></header>
       <div className="data-options">
-        <article className="data-option"><span className="data-option-icon">DOC</span><div><h3>只收錄文件</h3><p>PDF、JPG、PNG 或其他 CSV 來源會進入文件匣；PDF 不會自動建立財務交易。</p><label className="button secondary">加入文件<input type="file" accept=".pdf,.jpg,.jpeg,.png,.csv" disabled={busy || working} onChange={(event) => { void importFile(event.target.files?.[0], false); event.currentTarget.value = ""; }} /></label></div></article>
+        <article className="data-option"><span className="data-option-icon">DOC</span><div><h3>只收錄文件</h3><p>PDF、JPG、PNG 或其他 CSV 來源會進入文件匣；PDF 會在文件詳情中分析、核對後匯入。</p><label className="button secondary">加入文件<input type="file" accept=".pdf,.jpg,.jpeg,.png,.csv" disabled={busy || working} onChange={(event) => { void importFile(event.target.files?.[0], false); event.currentTarget.value = ""; }} /></label></div></article>
         <article className="data-option"><span className="data-option-icon csv">CSV</span><div><h3>收錄並建立交易</h3><p>通用 CSV 會先做 SHA-256 去重，再解析有效資料列；結果會顯示新增或略過筆數。</p><label className="button primary">匯入財務 CSV<input type="file" accept=".csv,text/csv" disabled={busy || working} onChange={(event) => { void importFile(event.target.files?.[0], true); event.currentTarget.value = ""; }} /></label></div></article>
         <article className="data-option"><span className="data-option-icon gmail">G</span><div><h3>同步 Gmail 帳單</h3><p>只使用 Gmail 唯讀授權；附件先收錄，CSV 才會進入通用財務匯入。</p>{loading ? <p className="settings-note">正在檢查 Gmail 連線…</p> : gmail?.authorized ? <button className="button secondary" disabled={busy || working} onClick={() => void syncGmail()}>立即同步 Gmail</button> : <><p className="settings-note">尚未完成 Gmail 唯讀授權。</p><button className="text-button" onClick={onSettings}>前往設定連線 <span>→</span></button></>}</div></article>
       </div>
@@ -456,27 +470,60 @@ function AddDataDialog({ busy, onClose, onUpload, onGmailSync, onSettings }: {
   </div>;
 }
 
-function DocumentDetailDialog({ documentId, onClose, onPreview, onSaveLocal, onChangeImport }: {
+function DocumentDetailDialog({ documentId, onClose, onPreview, onSaveLocal, onChangeImport, onImported }: {
   documentId: string;
   onClose: () => void;
   onPreview: (document: DocumentRow) => void;
   onSaveLocal: (document: DocumentRow) => void;
   onChangeImport: (document: DocumentRow) => void;
+  onImported: () => Promise<void>;
 }) {
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
+  const [statement, setStatement] = useState<Statement | null>(null);
   const [loading, setLoading] = useState(true);
+  const [statementBusy, setStatementBusy] = useState(false);
   const [error, setError] = useState("");
+  const [passwordHint, setPasswordHint] = useState("");
   const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let active = true;
-    setLoading(true); setError(""); setDetail(null);
-    api.documentDetail(documentId).then((result) => { if (active) setDetail(result); }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "無法載入文件詳情"); }).finally(() => { if (active) setLoading(false); });
+    setLoading(true); setError(""); setDetail(null); setPasswordHint("");
+    Promise.all([api.documentDetail(documentId), api.statements()]).then(([result, statements]) => {
+      if (!active) return;
+      setDetail(result);
+      setStatement(statements.find((item) => item.document_id === documentId) ?? null);
+    }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "無法載入文件詳情"); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [documentId, retry]);
 
+  async function analyzeStatement() {
+    if (!detail?.document) return;
+    setStatementBusy(true); setError("");
+    try {
+      const result = await api.analyzeStatement(documentId, { filename: detail.document.filename, body: passwordHint, allow_ai_analysis: false });
+      setStatement(result);
+      setRetry((value) => value + 1);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "帳單分析失敗");
+    } finally { setStatementBusy(false); }
+  }
+
+  async function confirmStatement() {
+    if (!statement) return;
+    setStatementBusy(true); setError("");
+    try {
+      await api.confirmStatement(statement.statement_id, statement.review_version);
+      setStatement(await api.statementDetail(statement.statement_id));
+      await onImported();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "帳單匯入失敗");
+    } finally { setStatementBusy(false); }
+  }
+
   const document = detail?.document;
   const isPdf = document?.content_type.includes("pdf") || document?.filename.toLowerCase().endsWith(".pdf");
+  const hasGmailSource = detail?.sources.some((source) => source.type === "gmail_attachment") ?? false;
   return <div className="data-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="document-detail-title">
       <header className="data-dialog-header"><div><p className="eyebrow">文件詳情</p><h2 id="document-detail-title">{document?.filename ?? "載入文件中"}</h2><p>來源、收錄狀態、關聯交易與處理紀錄集中在這裡。</p></div><button className="icon-button" aria-label="關閉文件詳情" title="關閉文件詳情" onClick={onClose}>×</button></header>
@@ -485,6 +532,7 @@ function DocumentDetailDialog({ documentId, onClose, onPreview, onSaveLocal, onC
       {detail && document && <div className="detail-content">
         <div className="detail-meta"><span className={document.revoked_at ? "connection-state" : "connection-state ready"}>{document.revoked_at ? "已撤銷" : "有效文件"}</span><span>{formatBytes(document.size_bytes)} · 收錄於 {new Date(document.created_at).toLocaleString("zh-TW")}</span></div>
         {document.revoked_at && <p className="lifecycle-note">撤銷原因：{document.revocation_reason || "未提供"}</p>}
+        {isPdf && <section className="detail-section statement-import-section"><div className="panel-heading"><div><h3>匯入家庭收支</h3><p>先解鎖與解析，再核對交易，確認後才會寫入收支與 Excel。</p></div><div className="detail-actions">{(!statement || statement.status === "pending") && <button className="small-action" disabled={statementBusy || document.revoked_at !== null} onClick={() => void analyzeStatement()}>{statementBusy ? "處理中…" : statement ? "重新分析" : "分析帳單"}</button>}{statement?.status === "ready" && <button className="small-action primary-action" disabled={statementBusy || document.revoked_at !== null} onClick={() => void confirmStatement()}>{statementBusy ? "匯入中…" : "確認匯入"}</button>}</div></div>{!hasGmailSource && <label className="statement-hint-field"><span>郵件中的密碼規則提示（選填，不要貼實際密碼）</span><textarea rows={3} maxLength={20_000} value={passwordHint} onChange={(event) => setPasswordHint(event.target.value)} placeholder="例如：PDF 密碼為身分證字號，英文字母請用大寫。" /><small>Gmail 附件會自動讀取原郵件；只有本機文件沒有郵件內文時才需要補充。</small></label>}{!statement && <p className="statement-help">這份 PDF 尚未分析。系統會使用 Gmail 郵件中的密碼提示與本機解鎖資料，成功後才顯示可匯入的交易。</p>}{statement && <><div className="statement-summary"><span className={`connection-state ${statement.status === "ready" || statement.status === "imported" ? "ready" : ""}`}>{statement.status === "ready" ? "待確認" : statement.status === "imported" ? "已匯入" : "待處理"}</span><span>{statement.bank_id} · {statementPeriod(statement)} · {statement.line_count} 筆交易列</span></div>{statement.status === "pending" && <p className="statement-help">{statementReason(statement.reason_code)}</p>}{statement.status === "imported" && <p className="notice success" role="status">這份帳單已匯入家庭收支；重複按下不會建立第二份交易。</p>}{statement.status === "ready" && <StatementReviewTable statement={statement} />}</>}</section>}
         <section className="detail-section"><div className="panel-heading"><div><h3>來源</h3><p>來源可用性與本機副本狀態</p></div><div className="detail-actions">{isPdf && <button className="small-action" onClick={() => onPreview(document)}>預覽 PDF</button>}{detail.sources.some((source) => source.type === "gmail_attachment" && !source.has_local_copy) && <button className="small-action" onClick={() => onSaveLocal(document)}>保存本機副本</button>}<button className={`small-action ${document.revoked_at ? "" : "revoke-action"}`} onClick={() => onChangeImport(document)}>{document.revoked_at ? "恢復文件" : "撤銷匯入"}</button></div></div><ul className="detail-source-list">{detail.sources.map((source) => <li key={`${source.type}-${source.availability}`}><strong>{source.type === "local_file" ? "本機文件匣" : source.type === "gmail_attachment" ? "Gmail 附件" : source.type}</strong><span>{source.has_local_copy ? "已有本機副本" : "僅保留來源參照"} · {source.availability === "available" ? "可取得" : source.availability === "unavailable" ? "目前不可取得" : "狀態未知"}</span></li>)}</ul></section>
         <section className="detail-section"><div className="panel-heading"><div><h3>關聯交易 <span className="detail-count">{detail.transactions.length}</span></h3><p>有效與已撤銷來源的原始交易紀錄</p></div></div><TransactionTable rows={detail.transactions} /></section>
         <section className="detail-section"><div className="panel-heading"><div><h3>匯入歷史 <span className="detail-count">{detail.jobs.length}</span></h3><p>這份文件的收錄、財務解析與狀態變更</p></div></div><JobList rows={detail.jobs} expanded /></section>
@@ -492,6 +540,12 @@ function DocumentDetailDialog({ documentId, onClose, onPreview, onSaveLocal, onC
       <footer className="data-dialog-footer"><button className="button secondary" onClick={onClose}>關閉</button></footer>
     </section>
   </div>;
+}
+
+function StatementReviewTable({ statement }: { statement: Statement }) {
+  const rows = statement.lines ?? [];
+  if (!rows.length) return <p className="statement-help">帳單已確認本期沒有新增交易；確認後會留下帳單匯入紀錄，但不會虛構交易。</p>;
+  return <div className="statement-review-table"><div className="statement-review-head"><span>日期</span><span>項目</span><span>金額</span></div>{rows.map((line) => <div className="statement-review-row" key={line.line_index}><span>{line.transaction_date ?? "日期待確認"}</span><span>{line.description}</span><strong className={line.amount.startsWith("-") ? "expense" : "income"}>{money(line.amount, line.currency)}</strong></div>)}</div>;
 }
 
 function SettingsView({ report, onRefresh }: { report: (message: string, error?: string) => void; onRefresh: () => Promise<void> }) {

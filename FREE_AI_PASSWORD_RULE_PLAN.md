@@ -91,14 +91,14 @@ Cloudflare REST API 還需要 Account ID，設定面比 Groq 多，因此**不�
 - `security/password_rules/openai_responses.py` 保留既有 OpenAI adapter，僅抽出 provider 名稱與 `store` 開關供 Groq 相容 adapter 使用。
 - `main.py` 與 `frontend/src/api.ts` 支援 provider；設定頁預設 Groq 與 `openai/gpt-oss-20b`，仍可明確選擇 OpenAI。
 
-因此第一階段沒有重寫 PasswordRule DSL、沒有新增 migration，也沒有建立通用 AI framework。尚未完成的驗收是使用者在本機保存 Groq key、以合成提示呼叫真實 Groq，以及在授權的真實 PDF 上確認解鎖；這些不在測試中假裝完成。
+因此第一階段沒有重寫 PasswordRule DSL、沒有新增 migration，也沒有建立通用 AI framework。使用者在本機保存 Groq key及以合成提示呼叫真實 Groq 仍未驗收；授權真實 PDF 的本機解鎖已由郵件明示規則完成，不依賴 Groq。
 
 ### 4.1 2026-09-29 實際執行狀態
 
 - 程式與設定頁已支援 Groq，但目前線上服務的已保存 profile 仍回報 `runtime_provider=openai`、`runtime_model=gpt-4.1-mini`；`groq_adapter_in_worktree=true` 不代表 Groq key 已設定。設定頁的 Groq 預設值不會自動覆寫既有的 SecretStore profile，必須由使用者在「設定 → 進階設定」明確保存 Groq key。
 - 已從使用者授權的 Gmail 網頁下載一份信用卡 PDF，透過 FamilyHub 文件入口收錄；同一份 bytes 再次收錄回報 `duplicate=true`，證明 SHA-256 冪等路徑正常。FamilyHub 內建 Gmail OAuth 仍未授權，因此這次是 Gmail 網頁手動下載，不是內建 Gmail scheduler 的真實驗收。
-- 開啟該 PDF 的 AI 預覽時，實際呼叫的是既有 OpenAI profile，服務回報額度不足；系統沒有自動改呼叫 Groq，也沒有建立任何 Finance transaction。這次結果是「文件已收錄、尚未解鎖/入帳」，不是帳單解析成功。
-- 後續應先在本機保存 Groq key，以合成提示確認真實 Groq request，再重新跑授權 PDF；不得把 key、身分資料、生日、PDF 密碼或帳單全文貼到聊天或提交到 repository。
+- 第一次允許 AI 的預覽實際呼叫既有 OpenAI profile並因額度不足停止；系統沒有自動改呼叫 Groq。確認來源郵件的明示格式後，改以目前 parser 產生的有限規則並關閉 AI，透過 live processor 與 Windows SecretStore 成功解鎖同一份 Gmail 下載 PDF；原始檔為加密、輸出為未加密且文字抽取可用，沒有建立 Finance transaction。
+- 後續若要驗證 Groq，應先在本機保存 key並用合成提示確認真實 response；這不是明示格式帳單解鎖或銀行 parser 的前置。不得把 key、身分資料、生日、PDF 密碼或帳單全文貼到聊天或提交到 repository。
 
 ## 5. 實作順序
 
@@ -271,7 +271,8 @@ failure → pending/manual review
 - [x] `backend/tests` 完整測試：187 passed；2 個既有 FastAPI/anyio 相依套件棄用警告，不是失敗。
 - [x] `npm --prefix frontend run build` production build 成功。
 - [x] Groq/OpenAI dispatch、遮罩 payload、verified cache、失敗不 fallback 與設定 API/UI 有合成測試覆蓋。
-- [ ] 真實 Groq key、真實 Groq 回應與加密 PDF 解鎖尚未驗收。
+- [ ] 真實 Groq key與真實 Groq 回應尚未驗收。
+- [x] Gmail 網頁下載的真實加密 PDF 已用來源郵件明示規則、Windows SecretStore 與關閉 AI 的預覽路徑成功解鎖並抽取文字；FamilyHub 內建 Gmail OAuth 仍未驗收。
 - [ ] 真實銀行 PDF 的逐筆 parser、核對與 PDF → Excel 入帳尚未完成；本次實際 PDF 維持 0 筆交易。
 
 ## 10. 实作优先级

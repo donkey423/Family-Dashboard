@@ -98,7 +98,7 @@ def test_manual_export_does_not_enable_automation_and_pdf_remains_pending(tmp_pa
         status = response.json()
         assert not status["enabled"]
         assert status["pending_pdf_documents"] == 1
-        assert not status["pdf_transaction_parser_ready"]
+        assert status["pdf_transaction_parser_ready"]
         assert status["exported_transactions"] == 3
         assert "synthetic-locked.pdf" in str(read_rows(client))
 

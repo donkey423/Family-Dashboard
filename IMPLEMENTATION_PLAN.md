@@ -1,6 +1,8 @@
 # 家庭收支記錄：Excel 優先實作流程
 
-本文件供 Luna max 或其他接手模型逐步實作。2026-09-28 依目前程式重新收斂範圍；S4 已先完成不依賴銀行版型的正規化閘門，以下待辦仍不代表銀行解析、入帳或真實驗收已完成。
+本文件供 Luna max 或其他接手模型逐步實作。2026-09-28 依目前程式重新收斂範圍；2026-09-29 已完成第一個已授權中國信託版型的 S4 parser、S5 statement migration、S6 原子確認／入帳／Excel 與 S7 最小介面。以下仍保留第二期盲測、其他版型與 Gmail 長期自動化的驗收條件，不把單一版型擴張成通用銀行解析。
+
+**目前執行狀態（2026-09-29）：** 真實加密帳單已完成「解鎖 → 解析 → 帳單合計核對 → 使用者確認 → Finance → Excel」；同一帳單再次確認為冪等。現有 parser 範圍是中國信託交易列與受限台新零交易版型。未知版型、缺交易列、解鎖失敗或對帳不符會保留 pending。內建 Gmail OAuth 尚未完成長期授權，因此 Gmail scheduler 目前只負責收錄附件，不能宣稱新信件已無人自動入帳。
 
 ## 1. 交付目標與授權
 
@@ -26,12 +28,12 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 | --- | --- | --- |
 | Git | 接手時本機 master 為 `001ca5d`、`origin/main` 為 `4f9bfb5`；工作區有先前未提交的程式與文件修改 | 已同步最新遠端，或可以 reset |
 | S1-S3 | Gmail 自訂查詢隔離、提示上下文/遮罩、共用 PDF 解鎖用例已有程式與合成測試 | 需要全部重寫 |
-| S4 | `finance/statements/contracts.py` 與 `finance/statements/normalization.py` 已有純契約、月支出語意、穩定列 hash 及 pending 閘門；契約+正規化聚焦測試 26 passed | 已有任何一家銀行的交易解析器 |
+| S4 | `finance/statements/contracts.py`、`normalization.py` 與 `taiwan_credit_cards.py` 已有契約、月支出語意、穩定列 hash、pending 閘門及中國信託／受限台新 parser；parser 聚焦測試通過 | 已完成兩期盲測或所有銀行 |
 | PDF | 來源讀取、本機解密、文字抽取/預覽，OCR 有介面及 adapter | 已建立 Finance 交易 |
 | Gmail | 手動/排程共用同步；每 30 分鐘排程需 opt-in；PDF 收錄、CSV 可入帳 | PDF 可自動入帳 |
-| SQLite | FinanceTransaction、來源、工作及撤銷已存在，尚無 Statement/StatementAccount | 可把 PDF 列塞入 CSV 流程就完成 |
+| SQLite | FinanceTransaction、來源、工作及撤銷已存在；`0011_statement_import` 增加 Statement/StatementAccount/StatementLine 與冪等入帳欄位 | 可把 PDF 列塞入 CSV 流程就完成 |
 | Excel | 已有快照、背景檢查、ownership marker、原子替換及佔用重試 | 已正確區分信用卡退款、繳款與收入 |
-| 驗證 | 前輪基線 128 passed/build 成功；後續聚焦 74 passed，皆為隔離合成資料 | 本次文件修改跑過程式測試，或通過真實銀行驗收 |
+| 驗證 | 帳單／入帳聚焦 33 passed、frontend production build 成功；完整 backend 207 passed、2 個既有套件棄用警告 | 已完成第二期盲測、Gmail OAuth 長期自動化 |
 
 `ARCHITECTURE_REVIEW_BRIEF.md` 是背景，不是刪除授權。checkout 缺檔時可唯讀查看本機已有的 `4f9bfb5` 版本，不自行 merge/reset。執行規格以本文件為準，進度以 TASKS/HANDOFF 為準。
 
@@ -128,7 +130,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 **目的：** 將目前 OpenAI-only 的密碼提示解析改成免費 API 優先；完整規格見 [FREE_AI_PASSWORD_RULE_PLAN.md](FREE_AI_PASSWORD_RULE_PLAN.md)。
 
-**目前狀態（2026-09-29）：** provider-neutral 程式、Groq adapter、設定 API/UI 與安全邊界已完成；合成測試及 frontend build 已通過。實際服務仍使用已保存的 OpenAI profile，尚未保存 Groq key，因此 Groq 真實 request 與真實 PDF 解鎖仍未驗收。這次實際 Gmail PDF 已完成文件收錄及 SHA-256 重複收錄驗證，但 AI 預覽因現存 OpenAI 額度不足停止，沒有建立交易；不得把這次結果視為 parser 或 Excel 入帳完成。
+**目前狀態（2026-09-29）：** provider-neutral 程式、Groq adapter、設定 API/UI 與安全邊界已完成；合成測試及 frontend build 已通過。實際服務仍使用已保存的 OpenAI profile，尚未保存 Groq key，因此 Groq 真實 request 尚未驗收。明示格式的真實帳單不需要 AI；該帳單已另由受限本機規則解鎖並完成 Statement parser、核對、Finance 與 Excel 驗收。這不代表 Groq 真實 request 或所有銀行版型已驗收。
 
 - 第一階段接 Groq Free，預設 `openai/gpt-oss-20b`；實作前重新查 Groq 官方 Free Plan、model list 與 Structured Outputs 支援。
 - 沿用 `PasswordRuleInterpreter`、`PasswordRuleService` verified cache、`SecretStore` 與 `PasswordComposer`；只把 provider config、adapter、UI 改成 provider-neutral，不新增 migration 或通用 AI 平台。
@@ -140,9 +142,9 @@ S3F 是小型前置改善，不得延誤 S4 第一家真實銀行 parser。
 
 ## 8. S4：第一家銀行真實解析器
 
-**前置：** 使用者指定一家銀行與至少兩期 PDF 的私有路徑，或明確授權的既有來源。密碼由既有本機設定供應，不要求貼入文件。
-**已有：** `finance/statements/contracts.py`、`finance/statements/normalization.py`。後者只負責把已驗證的 Statement contract 轉成穩定列，未知列、缺日期、未核對或對帳不符會回 `pending`；不讀 PDF/Gmail/DB/秘密，也不取代銀行 parser。
-**建議新增：** `finance/statements/<bank_id>.py`、`backend/tests/test_statement_parser.py`。
+**前置：** 第一個中國信託帳單已在使用者授權的本機來源完成；第二期未參與調整的樣本仍是正式 S4 完成條件。密碼由既有本機設定供應，不要求貼入文件。
+**已有：** `finance/statements/contracts.py`、`finance/statements/normalization.py`、`finance/statements/taiwan_credit_cards.py`。parser 只處理已驗證的版型；未知列、缺日期、未核對或對帳不符會回 `pending`；不讀 DB/Gmail/SecretStore。
+**驗證：** `backend/tests/test_taiwan_credit_cards.py` 已覆蓋中國信託交易列、`/UNIC` 文字解碼、台新零交易、未知版型與對帳不符。
 
 ### S4A 樣本與核對規則
 
@@ -159,7 +161,7 @@ S3F 是小型前置改善，不得延誤 S4 第一家真實銀行 parser。
 4. 不把末四碼當唯一帳戶，不存完整卡號。只做一個 parser，不建 registry/跨銀行猜測框架。
 
 **必測：** 跨月/年、退款/繳款/費用/利息、分期、外幣、重複表頭、跨頁、合法相同列、零消費、漏列/未知列/未知版型/不平衡。
-**完成：** A/B 均逐列核對日期、類型、金額、幣別、列數與核對式；只記去識別化樣本代號/結果。若 B 被拿來修規則，不再稱盲測，需另一份獨立驗證或明記限制。缺第二期可完成程式但 S4 仍待驗收，不開無人入帳。
+**完成條件：** 現有中國信託 parser 已完成第一份實際帳單逐列／合計核對與入帳；仍需第二期獨立盲測才能將 S4 標為完整。缺第二期時可維持受控人工確認，但不開啟無人入帳。
 
 ## 9. S5：最小模型與隔離 migration
 

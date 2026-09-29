@@ -30,7 +30,7 @@ npm run dev -- --host <Windows-Tailscale-IP>
 
 ## 資料庫版本升級
 
-本版本 Alembic head 為 `0010_workbook_export`。停止 API 並成對備份 DB 與文件後，在確認 `FAMILY_FINANCE_HUB_DATABASE_URL` 指向正確資料庫的環境執行 `python -m alembic -c backend/alembic.ini upgrade head`，再啟動新版 API 與前端。`0009` 增加撤銷狀態／原因／版本欄位，`0010` 增加 Excel 投影設定與狀態；兩者都不刪除文件或交易。
+本版本 Alembic head 為 `0011_statement_import`。停止 API 並成對備份 DB 與文件後，在確認 `FAMILY_FINANCE_HUB_DATABASE_URL` 指向正確資料庫的環境執行 `python -m alembic -c backend/alembic.ini upgrade head`，再啟動新版 API 與前端。`0009` 增加撤銷狀態／原因／版本欄位，`0010` 增加 Excel 投影設定與狀態，`0011` 增加可核對的信用卡帳單、帳單列與冪等入帳狀態；migration 不刪除文件或交易。
 
 回退時不要讓舊版 API 讀取仍有已撤銷文件的資料庫，否則舊查詢會重新把交易算入。migration downgrade 因此在還有撤銷文件時拒絕執行；需先透過正常恢復流程處理，或成對還原升級前備份並回到相符版本。不可直接清空撤銷欄位規避檢查。
 
@@ -46,7 +46,7 @@ npm run dev -- --host <Windows-Tailscale-IP>
 
 AI 密碼規則設定可在「設定 → 進階設定」選擇 Groq（免費優先）或 OpenAI。Groq 目前使用 `openai/gpt-oss-20b` 與 Responses JSON Schema；Groq Responses 不接受 `store`，程式不會送出。只有遮罩後的密碼提示與必要非敏感 context 會送出，provider 失敗/429 會保留待處理，不會自動切換到可能付費的 provider。免費額度、模型及 Structured Outputs 支援需以供應商當下官方文件為準。
 
-切換 provider 後必須按保存；設定頁的 Groq 預設值只提供新設定的預填，不會自動改寫既有的 Windows Credential Manager profile。可用設定頁重新讀取的實際 provider/model 確認目前服務使用哪一條路徑。2026-09-29 的現場服務仍是既有 OpenAI profile；Groq adapter 已部署於程式但尚未保存 Groq key。這次授權 Gmail 網頁下載的 PDF 已完成本機收錄與重複 bytes 去重，AI 預覽因 OpenAI 額度不足停止且沒有建立交易；要驗證 Groq，需先在本機保存 key，再用合成提示測試。
+切換 provider 後必須按保存；設定頁的 Groq 預設值只提供新設定的預填，不會自動改寫既有的 Windows Credential Manager profile。可用設定頁重新讀取的實際 provider/model 確認目前服務使用哪一條路徑。2026-09-29 的現場服務仍是既有 OpenAI profile；Groq adapter 已在工作區但尚未保存 Groq key。這次授權 Gmail 網頁下載的真實加密 PDF 已完成本機收錄、重複 bytes 去重、郵件格式確認、關閉 AI 解鎖及文字抽取，沒有建立交易。來源郵件已明示的完整格式不需要 AI；若要另行驗證 Groq，仍需先在本機保存 key，再用合成提示測試。
 
 Gmail OAuth 授權會在執行 API 的 Windows 主機開啟瀏覽器並使用 loopback callback，因此首次連線需要互動式桌面 session。授權完成後可手動同步；定時同步預設關閉，必須在 UI 明確啟用後才每 30 分鐘觸發一次，並且只呼叫既有 Gmail sync use case。它可匯入通用 CSV 與收錄 PDF 文件，但不會將 PDF 猜成交易。Windows 關機時排程暫停；重新啟動後若已到期，會在 scheduler 下一次檢查時補跑。替換 OAuth client 設定會自動關閉排程。
 
@@ -54,6 +54,12 @@ Gmail OAuth 授權會在執行 API 的 Windows 主機開啟瀏覽器並使用 lo
 
 ## Excel 輸出操作
 
-Excel 自動更新預設關閉。啟用後，每 30 秒比對 SQLite 快照；Backend 啟動時也會立即檢查一次。目標檔案只能是 `.xlsx`，預設為 `data/exports/家庭收支記錄.xlsx`。指定 `FAMILY_FINANCE_HUB_EXCEL_PATH` 時應使用受目前 Windows 使用者控制的本機路徑，不建議放在會同時同步／改寫檔案的雲端目錄。
+Excel 自動更新預設關閉。啟用後，每 30 秒比對 SQLite 快照；Backend 啟動時也會立即檢查一次。目標檔案只能是 `.xlsx`，預設為 `data/exports/家庭收支記錄.xlsx`。指定 `FAMILY_FINANCE_HUB_EXCEL_PATH` 時應使用受目前 Windows 使用者控制的本機路徑，不建議放在會同時同步／改寫檔案的雲端目錄。信用卡 PDF 必須先在文件詳情分析並按確認匯入；待處理或未知版型不會自動出現在有效交易明細。
+
+## 信用卡 PDF 到家庭收支
+
+支援版型的流程固定為：文件收錄 → 本機解鎖 → `BankStatementParser` 解析交易列 → 帳單合計核對 → UI 顯示待確認列 → 使用者確認 → Finance transaction → Excel rebuild。此版本已驗證中國信託版型，並保留受限台新零交易判斷；其他版型會回傳待處理原因，不猜測欄位或金額。重複確認同一帳單會重用既有交易，不新增第二份。
+
+Gmail 來源會把郵件提示交給解鎖流程；若文件只有本機來源，UI 可輸入不含實際密碼的規則提示。實際身分證、生日與組合密碼只從 Windows Credential Manager／本機記憶體使用，不寫入 SQLite、log 或 Excel。Gmail scheduler 目前收錄附件，仍需在文件詳情完成確認，不把收件視為自動入帳。
 
 應用程式只覆蓋自己建立且帶有 ownership marker 的工作簿。若目標已有其他檔案，會顯示 `unowned_workbook` 並停止；請移動該檔案或改用新路徑。使用 Excel 開啟導致寫入失敗時會保留上一版並定時重試。直接編輯專用工作簿後，系統會偵測輸出 SHA-256 不一致、暫停下載，並在下一次更新以 SQLite 內容重建。

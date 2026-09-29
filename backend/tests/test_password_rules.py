@@ -8,6 +8,7 @@ from sqlalchemy import select
 from family_finance_hub.database import Base, make_engine, make_session_factory
 from family_finance_hub.models import AIProviderProfile, DocumentSecurityProfile, PasswordRuleRecord, SecretProfile
 from family_finance_hub.security.password_rules.composer import PasswordComposer
+from family_finance_hub.security.password_rules.explicit import ExplicitPasswordRuleParser
 from family_finance_hub.security.password_rules.extractor import PasswordInstructionContext, PasswordInstructionExtractor
 from family_finance_hub.security.password_rules.groq_responses import GroqResponsesInterpreter
 from family_finance_hub.security.password_rules.openai_responses import OpenAIResponsesInterpreter
@@ -29,6 +30,52 @@ class MemorySecretStore:
 
     def delete(self, reference):
         self.values.pop(reference, None)
+
+
+@pytest.mark.parametrize(
+    ("instruction", "expected_case"),
+    [
+        ("附件檔案開啟密碼為您的身分證字號（英文字母為大寫）", "upper"),
+        ("PDF 密码：身份证号码，英文字母使用小写", "lower"),
+        ("Password: your national ID number", "preserve"),
+    ],
+)
+def test_explicit_rule_parser_accepts_only_full_national_id_instructions(
+    instruction, expected_case,
+):
+    rule = ExplicitPasswordRuleParser().parse(instruction)
+
+    assert rule is not None
+    assert rule.status == "resolved"
+    assert len(rule.candidates) == 1
+    assert rule.candidates[0].parts[0].source == "national_id"
+    assert rule.candidates[0].parts[0].transform == "full"
+    assert rule.candidates[0].parts[0].case == expected_case
+
+
+def test_explicit_rule_parser_accepts_explicit_customer_type_alternatives():
+    rule = ExplicitPasswordRuleParser().parse(
+        "附件預設密碼：本國籍客戶預設密碼為身分證字號（英文字母大寫）；"
+        "外籍客戶預設密碼為西元生日8碼YYYYMMDD。"
+    )
+
+    assert rule is not None
+    assert rule.status == "ambiguous"
+    assert [candidate.parts[0].source for candidate in rule.candidates] == [
+        "national_id", "birthday",
+    ]
+    assert rule.candidates[0].parts[0].case == "upper"
+    assert rule.candidates[1].parts[0].date_format == "YYYYMMDD"
+
+
+@pytest.mark.parametrize("instruction", [
+    "附件已加密，請輸入密碼開啟。",
+    "密碼為身分證末四碼。",
+    "密碼為身分證字號加上出生年月日。",
+    "請注意密碼英文字母需區分大小寫。",
+])
+def test_explicit_rule_parser_rejects_missing_partial_or_combined_formats(instruction):
+    assert ExplicitPasswordRuleParser().parse(instruction) is None
 
 
 def make_rule(transform="suffix", count=4, date_format="YYYYMMDD", separator=""):

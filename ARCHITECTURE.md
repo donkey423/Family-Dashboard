@@ -131,7 +131,7 @@ Gmail query
 - SHA-256
 - optional local persistence state
 
-目前不保存 sender、subject 或郵件本文。同步預設搜尋 `in:anywhere has:attachment {filename:pdf filename:csv}`，涵蓋可存取的全部郵件，包含垃圾郵件與封存郵件，不設日期範圍。PDF 附件先以共用 Document 收錄；沒有真實銀行格式 parser 前，不從 PDF 臆測/建立財務交易。
+目前不保存 sender、subject 或郵件本文。同步預設搜尋 `in:anywhere has:attachment {filename:pdf filename:csv}`，涵蓋可存取的全部郵件，包含垃圾郵件與封存郵件，不設日期範圍。PDF 附件先以共用 Document 收錄；只有已驗證版型經文件詳情分析、帳單合計核對並由使用者確認後，才建立 Finance transaction。
 
 若使用者選擇「保存到家庭文件匣」，application service 才將該 attachment 寫入 `StoragePort`，並為同一 Document 新增本機來源記錄；不覆寫 Gmail remote source。
 
@@ -163,7 +163,7 @@ Trigger --------+-- Scheduler: 每 30 分鐘
 
 1. **Manual sync**：UI/API 可手動觸發；合成 Gmail client 已驗證 query、remote reference、attachment bytes、CSV persistence、重複同步與續跑。
 2. **Incremental sync**：保存 Gmail history cursor/state，只處理新加入郵件；若 cursor 過期則受控 full sync，超過每批上限會保存 page token 續跑。
-3. **Scheduler third**：已提供本機 opt-in scheduler；設定預設關閉，使用者完成唯讀 OAuth 後可明確啟用，每 30 分鐘呼叫同一個 `GmailSyncUseCase`。手動/排程觸發共用同步鎖；scheduler 不自行實作 Gmail 搜尋、附件解析或 Finance 寫入。真實 PDF 交易解析尚未完成，因此排程只將 PDF 收錄為 Documents，不會建立猜測交易。
+3. **Scheduler third**：已提供本機 opt-in scheduler；設定預設關閉，使用者完成唯讀 OAuth 後可明確啟用，每 30 分鐘呼叫同一個 `GmailSyncUseCase`。手動/排程觸發共用同步鎖；scheduler 不自行實作 Gmail 搜尋、附件解析或 Finance 寫入。現階段排程只將 PDF 收錄為 Documents；Statement 分析與確認匯入仍由文件詳情流程執行，避免新郵件因未知版型直接入帳。
 4. **Push optional**：只有產品真的需要近即時更新時，才導入 Gmail Push / Pub/Sub；Push 仍只是一種 trigger。
 
 Windows 關機時 scheduler 不執行，這是 local-first 架構的預期行為。重新開機後會補跑已到期的排程，由 incremental sync 補抓關機期間的新信，因此不要求主機 24 小時常駐。OAuth 設定被替換時會自動停用排程，須重新授權並再次明確啟用。
@@ -207,7 +207,7 @@ Gmail 暫時不可用、權限失效或原始信件遭刪除時，remote-only do
 
 Password-protected PDF processor 可以對 memory/temporary bytes 解密與解析，不要求永久落地。PDF 密碼、OAuth token、refresh token、身分證字號、生日與其他 secret 不得存入一般 SQLite table、log、repository 或明文設定檔；Windows 整合採 Credential Manager/SecretStore。
 
-密碼流程採「**AI 只理解規則，敏感資料只在本機組合**」：
+密碼流程採「**先確認來源郵件的明確格式；AI 只理解其餘規則；敏感資料只在本機組合**」：
 
 ```text
 Gmail subject/body/sender + attachment filename + readable metadata
@@ -216,7 +216,8 @@ Gmail subject/body/sender + attachment filename + readable metadata
         PasswordInstructionExtractor
                     |
                     v
-       known verified PasswordRule?
+      explicit local rule or known
+          verified PasswordRule?
              |               |
             yes             no
              |               v
@@ -262,11 +263,13 @@ Gmail subject/body/sender + attachment filename + readable metadata
 
 密碼規則優先從 Gmail subject/body、sender、附件檔名與未加密可讀 metadata 取得。若規則文字只存在於「必須先解密才能看到」的 PDF 頁面，系統無法靠該 PDF 自己推導密碼，必須改用郵件說明或人工補充。
 
-對 Gmail 來源 PDF，只有初次 PDF 處理回報需要密碼時，Backend 才即時取得來源郵件的 subject/from 與純文字/HTML body；不將郵件資料保存至 SQLite。Extractor 遮罩後才交由 AI；本機上傳文件則可由使用者在預覽視窗輸入說明。
+對 Gmail 來源 PDF，只有初次 PDF 處理回報需要密碼時，Backend 才即時取得來源郵件的 subject/from 與純文字/HTML body；不將郵件資料保存至 SQLite。Gmail 文件只採用來源郵件的提示，不允許預覽表單的手動文字覆蓋；本機上傳文件才可由使用者在預覽視窗輸入說明。Extractor 會先遮罩敏感值，再交給後續規則解析。
+
+遮罩後的提示若明確表示「完整身分證字號」及英文字母大小寫，`ExplicitPasswordRuleParser` 會在本機產生單一受限 DSL 規則，不需要 AI。若同一提示明確區分本國籍使用完整身分證、外籍使用西元生日 `YYYYMMDD`，parser 會產生且只產生這兩個候選，依提示順序交給 PDF processor，成功後只保存實際命中的單一規則。只說「請輸入密碼」、只說大小寫、要求證號局部或多欄位組合時，不會被這條快速路徑猜測；改用已成功驗證的規則，或在允許時交給 AI 解讀。所有明確候選仍無法解鎖時直接回報密碼不符，不擴張其他排列。
 
 #### PasswordRuleInterpreter
 
-AI 只接收遮罩後的「密碼說明文字」及必要的非敏感 context；預設個人解鎖流程只傳文件類型。**不得把真實身分證字號、生日、PDF 密碼或完整帳單內容送給 AI 來算密碼**。AI 輸出受 schema 約束的 `PasswordRule`，不輸出可執行 Python/JavaScript，也不可由系統對 AI 回傳內容使用 `eval`。設定 AI key 後，開啟加密 PDF 的預覽會自動允許此分析；使用者可在預覽視窗關閉後重試。
+只有本機明確規則與已驗證 cache 都無法決定格式時，AI 才接收遮罩後的「密碼說明文字」及必要的非敏感 context；預設個人解鎖流程只傳文件類型。**不得把真實身分證字號、生日、PDF 密碼或完整帳單內容送給 AI 來算密碼**。AI 輸出受 schema 約束的 `PasswordRule`，不輸出可執行 Python/JavaScript，也不可由系統對 AI 回傳內容使用 `eval`。設定 AI key 後，開啟加密 PDF 的預覽會自動允許此分析；使用者可在預覽視窗關閉後重試。
 
 PasswordRule DSL 第一版只允許白名單操作，例如：
 
@@ -277,7 +280,7 @@ PasswordRule DSL 第一版只允許白名單操作，例如：
 
 若說明不充分，AI 必須回傳 ambiguous/multiple-candidates，而不是自行大量猜測。系統只允許少量 deterministic candidates，預設最多 3 個；不得把此功能做成 brute-force engine。
 
-成功開啟 PDF 後，預設個人解鎖流程保存與遮罩提示指紋關聯的已驗證 PasswordRule，之後優先重用；提示改變或規則失效時才再次呼叫 AI。不要求使用者建立銀行、機構、寄件者或家庭成員設定。舊的明確指定 profile/sender 匹配 API 保留相容性。
+成功開啟 PDF 後，預設個人解鎖流程保存與遮罩提示指紋關聯的已驗證 PasswordRule；多個明確候選只保存成功的候選，之後優先重用。提示改變或規則失效時才重新判斷，不要求使用者建立銀行、機構、寄件者或家庭成員設定。舊的明確指定 profile/sender 匹配 API 保留相容性。
 
 #### SecretStore / PasswordComposer
 

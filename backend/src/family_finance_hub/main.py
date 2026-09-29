@@ -1,16 +1,17 @@
 from contextlib import asynccontextmanager
 import asyncio
+import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, cast as typing_cast
 from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import String, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -24,6 +25,7 @@ from .application.pdf_processing import (
     PdfPreviewUnsupportedDocument,
     PdfPreviewUseCase,
 )
+from .application.statement_import import StatementAnalysisCommand, StatementImportError, StatementImportUseCase
 from .config import Settings
 from .database import Base, make_engine, make_session_factory
 from .documents.service import DocumentService
@@ -32,10 +34,12 @@ from .documents.processors.pdf import PdfDocumentProcessor
 from .documents.processors.ports import DocumentProcessingError
 from .finance.service import FinanceCsvImportService
 from .finance.queries import active_transaction_filter, transaction_totals
+from .finance.statements.contracts import BankStatementParser, StatementData
+from .finance.statements.taiwan_credit_cards import TaiwanCreditCardStatementParser
 from .exports.ports import WorkbookWriter
 from .exports.service import WorkbookExportBusy, WorkbookExportService
 from .exports.xlsx import XlsxWorkbookWriter
-from .models import AIProviderProfile, Document, DocumentSourceRecord, FinanceTransaction, GmailConnection, ImportJob, utc_now
+from .models import AIProviderProfile, Document, DocumentSourceRecord, FinanceTransaction, GmailConnection, ImportJob, Statement, StatementAccount, utc_now
 from .documents.sources import DocumentSourceRegistry, LocalFileDocumentSource
 from .documents.sources.ports import DocumentSourceUnavailable
 from .models import DocumentSecurityProfile, PasswordRuleRecord, SecretProfile
@@ -89,6 +93,44 @@ class PdfPreviewInput(PasswordRuleAnalysisInput):
     allow_ai_analysis: bool = False
 
 
+class StatementAnalysisInput(PasswordRuleAnalysisInput):
+    allow_ai_analysis: bool = False
+    statement_account_id: str | None = Field(default=None, max_length=36)
+
+
+class StatementConfirmInput(BaseModel):
+    review_version: int = Field(ge=1)
+
+
+class StatementAccountInput(BaseModel):
+    bank_id: str = Field(min_length=1, max_length=80)
+    display_name: str = Field(min_length=1, max_length=100)
+    account_hint: str | None = Field(default=None, max_length=80)
+
+    @field_validator("account_hint")
+    @classmethod
+    def account_hint_must_be_masked(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        digits = "".join(character for character in value if character.isdigit())
+        masked = any(marker in value for marker in ("*", "•", "●")) or "xx" in value.casefold()
+        if any(len(run) > 4 for run in re.findall(r"\d+", value)):
+            raise ValueError("帳戶提示只能保存遮罩後資訊")
+        if len(digits) > 4 and not masked:
+            raise ValueError("帳戶提示只能保存遮罩後資訊")
+        return value.strip()
+
+
+class StatementAccountPatch(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=100)
+    account_hint: str | None = Field(default=None, max_length=80)
+
+    @field_validator("account_hint")
+    @classmethod
+    def account_hint_must_be_masked(cls, value: str | None) -> str | None:
+        return StatementAccountInput.account_hint_must_be_masked(value)
+
+
 class GmailOAuthClientInput(BaseModel):
     config: dict[str, Any]
 
@@ -108,6 +150,9 @@ class WorkbookExportInput(BaseModel):
 class DocumentLifecycleInput(BaseModel):
     impact_token: str = Field(pattern=r"^[a-f0-9]{64}$")
     reason: str = Field(default="", max_length=200)
+
+
+_DEFAULT_STATEMENT_PARSER = object()
 
 
 def _month_range(value: str | None) -> tuple[date, date] | None:
@@ -140,6 +185,7 @@ def create_app(
     secret_store: SecretStore | None = None,
     password_interpreter: PasswordRuleInterpreter | None = None,
     pdf_processor: PdfDocumentProcessor | None = None,
+    statement_parser: BankStatementParser | None | object = _DEFAULT_STATEMENT_PARSER,
     gmail_client_factory: Callable[[], GmailClient] | None = None,
     workbook_writer: WorkbookWriter | None = None,
 ) -> FastAPI:
@@ -194,13 +240,24 @@ def create_app(
         get_pdf_secret_store,
         get_pdf_interpreter,
     )
+    active_statement_parser = (
+        TaiwanCreditCardStatementParser()
+        if statement_parser is _DEFAULT_STATEMENT_PARSER
+        else typing_cast(BankStatementParser | None, statement_parser)
+    )
+    statement_import = StatementImportUseCase(pdf_preview, active_statement_parser)
     document_import = ImportDocumentUseCase(documents)
     finance_service = FinanceCsvImportService(documents, document_sources)
     finance_import = ImportFinanceCsvUseCase(finance_service)
     document_lifecycle = DocumentLifecycleUseCase()
     gmail_sync = GmailSyncUseCase(documents, finance_service, config.max_upload_bytes)
     gmail_sync_lock = Lock()
-    workbook_export = WorkbookExportService(session_factory, workbook_writer or XlsxWorkbookWriter(), config.workbook_path)
+    workbook_export = WorkbookExportService(
+        session_factory,
+        workbook_writer or XlsxWorkbookWriter(),
+        config.workbook_path,
+        pdf_transaction_parser_ready=active_statement_parser is not None,
+    )
 
     def get_secret_service() -> SecretProfileService:
         return SecretProfileService(get_secret_store())
@@ -233,10 +290,11 @@ def create_app(
     app.state.settings = config
     app.state.gmail_sync_scheduler = gmail_scheduler
     app.state.workbook_export = workbook_export
+    app.state.statement_import = statement_import
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(config.cors_origins),
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PATCH"],
         allow_headers=["*"],
         expose_headers=["X-FamilyHub-Text-Extraction", "X-FamilyHub-Error"],
     )
@@ -600,6 +658,188 @@ def create_app(
                 "X-FamilyHub-Text-Extraction": processed.ocr_status,
             },
         )
+
+    def _raise_statement_error(error: StatementImportError) -> None:
+        status_codes = {
+            "document_not_found": 404,
+            "statement_not_found": 404,
+            "statement_account_not_found": 404,
+            "unsupported_document": 415,
+            "document_revoked": 409,
+            "statement_not_ready": 409,
+            "statement_review_changed": 409,
+            "statement_period_already_imported": 409,
+            "transaction_identity_conflict": 409,
+            "statement_account_mismatch": 422,
+            "statement_account_required": 422,
+            "statement_account_ambiguous": 422,
+            "statement_identity_missing": 422,
+            "statement_invalid": 422,
+        }
+        raise HTTPException(status_code=status_codes.get(error.code, 503), detail=error.detail) from None
+
+    def _statement_detail_payload(statement: Statement, session: Session, *, include_lines: bool) -> dict:
+        data = None
+        if statement.statement_json:
+            try:
+                data = StatementData.model_validate(statement.statement_json)
+            except ValueError:
+                data = None
+        transaction_count = session.scalar(
+            select(func.count(FinanceTransaction.id)).where(FinanceTransaction.statement_id == statement.id)
+        ) or 0
+        account = session.get(StatementAccount, statement.statement_account_id) if statement.statement_account_id else None
+        payload = {
+            "statement_id": statement.id,
+            "document_id": statement.document_id,
+            "statement_account_id": statement.statement_account_id,
+            "account_name": account.display_name if account else None,
+            "bank_id": statement.bank_id,
+            "format_version": statement.format_version,
+            "parser_id": statement.parser_id,
+            "parser_version": statement.parser_version,
+            "period_start": statement.period_start,
+            "period_end": statement.period_end,
+            "status": statement.status,
+            "reason_code": statement.reason_code,
+            "review_version": statement.review_version,
+            "line_count": len(data.lines) if data else 0,
+            "transaction_count": transaction_count,
+            "reconciliation": data.reconciliation.model_dump(mode="json") if data else None,
+            "created_at": statement.created_at,
+            "updated_at": statement.updated_at,
+            "imported_at": statement.imported_at,
+        }
+        if include_lines and data:
+            payload["lines"] = [line.model_dump(mode="json") for line in data.lines]
+        return payload
+
+    @app.get("/api/statement-accounts")
+    def list_statement_accounts(session: Session = Depends(get_session)):
+        rows = session.scalars(select(StatementAccount).order_by(StatementAccount.display_name, StatementAccount.id)).all()
+        return [{
+            "id": row.id,
+            "bank_id": row.bank_id,
+            "display_name": row.display_name,
+            "account_hint": row.account_hint,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        } for row in rows]
+
+    @app.post("/api/statement-accounts")
+    def create_statement_account(body: StatementAccountInput, session: Session = Depends(get_session)):
+        with session.begin():
+            account = StatementAccount(
+                id=str(uuid4()),
+                bank_id=body.bank_id.strip(),
+                display_name=body.display_name.strip(),
+                account_hint=body.account_hint,
+            )
+            session.add(account)
+        return {
+            "id": account.id,
+            "bank_id": account.bank_id,
+            "display_name": account.display_name,
+            "account_hint": account.account_hint,
+            "created_at": account.created_at,
+            "updated_at": account.updated_at,
+        }
+
+    @app.patch("/api/statement-accounts/{account_id}")
+    def update_statement_account(account_id: str, body: StatementAccountPatch, session: Session = Depends(get_session)):
+        if body.display_name is None and body.account_hint is None:
+            raise HTTPException(status_code=422, detail="至少要提供一個要更新的欄位")
+        with session.begin():
+            account = session.get(StatementAccount, account_id)
+            if account is None:
+                raise HTTPException(status_code=404, detail="找不到帳單帳戶")
+            if body.display_name is not None:
+                account.display_name = body.display_name.strip()
+            if body.account_hint is not None:
+                account.account_hint = body.account_hint
+        return {
+            "id": account.id,
+            "bank_id": account.bank_id,
+            "display_name": account.display_name,
+            "account_hint": account.account_hint,
+            "created_at": account.created_at,
+            "updated_at": account.updated_at,
+        }
+
+    @app.post("/api/documents/{document_id}/statement-analysis")
+    def analyze_statement(
+        document_id: str,
+        body: StatementAnalysisInput,
+        session: Session = Depends(get_session),
+    ):
+        try:
+            return statement_import.analyze(
+                session,
+                document_id,
+                StatementAnalysisCommand(
+                    pdf=PdfPreviewCommand(
+                        document_security_profile_id=body.document_security_profile_id,
+                        subject=body.subject,
+                        body=body.body,
+                        sender=body.sender,
+                        filename=body.filename,
+                        allow_ai_analysis=body.allow_ai_analysis,
+                    ),
+                    statement_account_id=body.statement_account_id,
+                ),
+            )
+        except StatementImportError as error:
+            _raise_statement_error(error)
+        except PdfPreviewDocumentNotFound:
+            raise HTTPException(status_code=404, detail="找不到文件") from None
+        except PdfPreviewProfileNotFound:
+            raise HTTPException(status_code=404, detail="找不到文件解鎖設定") from None
+        except PdfPreviewSecretProfileNotFound:
+            raise HTTPException(status_code=404, detail="找不到文件解鎖安全資料") from None
+        except PdfPreviewUnsupportedDocument:
+            raise HTTPException(status_code=415, detail="目前只支援 PDF 帳單分析") from None
+        except DocumentSourceUnavailable:
+            raise HTTPException(status_code=503, detail="目前無法取得文件來源") from None
+        except DocumentProcessingError as error:
+            messages = {
+                "pdf_password_required": "PDF 需要解鎖資料與郵件中的密碼提示。",
+                "pdf_wrong_password": "目前的密碼規則無法開啟這份 PDF。",
+                "pdf_unsupported_encryption": "此 PDF 使用不支援的加密方式。",
+                "pdf_malformed": "PDF 無法讀取或內容格式不正確。",
+                "pdf_processing_limit": "PDF 超過目前的處理限制。",
+            }
+            raise HTTPException(status_code=422, detail=messages.get(error.code, "PDF 處理失敗")) from None
+        except PasswordRuleInterpreterUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from None
+        except SecretStoreUnavailable:
+            raise HTTPException(status_code=503, detail="Windows 安全資料保管庫目前無法使用") from None
+        except Exception:
+            raise HTTPException(status_code=503, detail="帳單分析處理失敗") from None
+
+    @app.get("/api/statements")
+    def list_statements(
+        status: Literal["pending", "ready", "imported"] | None = Query(default=None),
+        session: Session = Depends(get_session),
+    ):
+        query = select(Statement)
+        if status:
+            query = query.where(Statement.status == status)
+        rows = session.scalars(query.order_by(Statement.created_at.desc(), Statement.id)).all()
+        return [_statement_detail_payload(row, session, include_lines=False) for row in rows]
+
+    @app.post("/api/statements/{statement_id}/confirm")
+    def confirm_statement(statement_id: str, body: StatementConfirmInput, session: Session = Depends(get_session)):
+        try:
+            return statement_import.confirm(session, statement_id, body.review_version)
+        except StatementImportError as error:
+            _raise_statement_error(error)
+
+    @app.get("/api/statements/{statement_id}")
+    def get_statement(statement_id: str, session: Session = Depends(get_session)):
+        statement = session.get(Statement, statement_id)
+        if statement is None:
+            raise HTTPException(status_code=404, detail="找不到帳單分析結果")
+        return _statement_detail_payload(statement, session, include_lines=True)
 
     @app.post("/api/documents")
     async def upload_document(file: UploadFile = File(...), session: Session = Depends(get_session)):

@@ -2,17 +2,17 @@
 
 ## 目前執行入口：信用卡 PDF 到 Excel
 
-2026-09-28 已將 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 改為 Excel 優先的執行規格；版型無關的 Statement 正規化與入帳閘門，以及 2026-09-29 的個人解鎖簡化與單一網址部署已完成，但尚未建立真實銀行 parser。下一個外部關卡仍是 S4 真實銀行解析器。M0-M8 勾選代表既有功能，不代表真實 PDF 入帳；歷史未勾項不自動成為下一個任務。
+2026-09-28 已將 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 改為 Excel 優先的執行規格；版型無關的 Statement 正規化與入帳閘門、個人解鎖簡化、單一網址部署，以及第一個真實中國信託帳單的 parser → Finance → Excel 流程已完成。下一個外部關卡是第二期盲測與更多已授權版型，不是擴建多銀行 framework。M0-M8 勾選代表既有功能；未知銀行、Gmail OAuth 長期授權與全自動確認仍未完成。
 
 - [x] S0：重新確認 Git/隔離環境，重跑測試與 build。
 - [x] S1：Gmail 自訂 query 與預設 cursor 隔離、分頁、失敗重試；FakeGmail 聚焦測試通過。
 - [x] S2：密碼提示 HTML/重疊上下文、遮罩後截斷；測試僅使用合成資料。
 - [x] S3：共用 PDF 解鎖 application use case、唯一安全 profile 匹配及 API 相容性測試。
-- [x] S3F：依 `FREE_AI_PASSWORD_RULE_PLAN.md` 將密碼規則 AI 改為 provider-neutral，第一階段接 Groq Free + `openai/gpt-oss-20b`；verified cache 優先，429/失敗留 pending/manual，不自動 fallback 到付費 provider。程式與合成驗證已完成；真實 Groq key、Groq PDF 解鎖及真實帳單 parser/入帳仍未完成。
-- [ ] S4：通用 Statement 輸出契約/月支出語意與版型無關正規化閘門已有程式（契約+正規化聚焦測試 26 passed）；銀行 parser、兩期逐筆核對及實際對帳式待樣本。
-- [ ] S5：最小 Statement/account 模型、狀態、冪等約束與隔離 migration。
-- [ ] S6：A 分析/帳戶 API、B 原子確認/查詢/撤銷、C 正確 Excel；完成真實 PDF 到 Excel、重跑與恢復驗收。
-- [ ] S7：最小帳戶設定、待處理/核對確認及 Excel 操作介面；不做完整 Dashboard 或分類系統。
+- [x] S3F：依 `FREE_AI_PASSWORD_RULE_PLAN.md` 將密碼規則 AI 改為 provider-neutral，第一階段接 Groq Free + `openai/gpt-oss-20b`；verified cache 優先，429/失敗留 pending/manual，不自動 fallback 到付費 provider。程式與合成驗證已完成；真實 Gmail PDF 已由郵件明示規則在本機解鎖，真實 Groq request及帳單 parser/入帳仍未完成。
+- [ ] S4：通用 Statement 輸出契約/月支出語意與版型無關正規化閘門已有程式；中國信託與受限台新版型已接入，仍需第二期盲測及更多已授權版型。
+- [x] S5：最小 Statement/account 模型、狀態、冪等約束與 `0011_statement_import` migration。
+- [x] S6：分析/帳戶 API、原子確認/查詢、冪等入帳與正確 Excel；已用實際中國信託帳單驗證一筆交易落入 Finance/Excel。
+- [x] S7：最小帳戶自動建立、待處理/核對確認及 Excel 操作介面；本機來源另有不含密碼的郵件規則提示 fallback。
 - [ ] S8：沿用 Gmail 同步/30 分鐘排程，接銀行範圍 PDF-only 與使用者 opt-in 的受控自動入帳；不重寫 History/掃描水位。
 - [ ] S9：固定 Windows 入口、授權後的正式升級與真實端到端驗收。
 
@@ -90,6 +90,7 @@ M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自
 - [x] 建立 `PasswordRuleInterpreter` AI boundary；AI 只接收規則文字與必要非敏感 context，不接收真實身分證字號、生日或實際密碼
 - [x] AI 回傳 ambiguous/multiple-candidates 時不得自行大量排列組合；預設最多產生 3 個 deterministic candidates
 - [x] 建立本機 `PasswordComposer`，由 PasswordRule + SecretStore 組合 candidate；candidate 不可進 DB/log/Job summary
+- [x] Gmail PDF 只採來源郵件提示；明確的完整身分證格式先由本機規則確認，若郵件明確區分本國籍身分證與外籍生日則只嘗試這兩個候選並保存成功規則；未確認格式不嘗試，明確候選全失敗也不改猜其他組合
 - [x] 已成功驗證的 bank/sender/document pattern + PasswordRule 可持久化重用；只有規則缺失、改變或失效時才重新呼叫 AI
 - [x] 支援常見生日格式及台灣民國年格式，但必須由 PasswordRule 明確指定，不以 brute force 猜測
 - [x] 將目前 OpenAI-only provider 改為 Groq Free 優先；沿用 `PasswordRuleInterpreter`、`AIProviderProfile.provider`、SecretStore 與 verified rule cache，不建立通用 AI 平台
@@ -103,6 +104,7 @@ M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自
 - [x] OCR 啟動前檢查設定所需 traineddata；缺少語言時提早回報，保留 PDF 預覽並以合成測試驗證
 - [x] 定義 domain errors：`pdf_password_required`、`pdf_wrong_password`、`pdf_unsupported_encryption`、`pdf_malformed`、`pdf_processing_limit`；抽取狀態以 response header 回報，不回傳文件文字
 - [x] `/content` 保持原始 bytes；另提供 transient decrypted `/preview`，回應使用 `Cache-Control: private, no-store`
+- [x] 以 Gmail 網頁實際下載的多份真實加密信用卡 PDF 驗證：中國信託與台新完成本機下載、郵件明示規則解鎖及文字抽取；永豐與國泰世華在 Gmail PDF 預覽完成解密驗證；驗證用明文輸出未保存
 
 #### M5.2e Gmail source 與手動同步
 
@@ -203,16 +205,17 @@ M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自
 
 ## M8：Gmail 帳單到 Excel 的長期自動化
 
-產品目標為 Gmail 新帳單 → 共用 Documents → 解鎖／解析／核對 → Finance → 專用 Excel 自動更新。Excel 為可重建的輸出；SQLite 保留交易與來源的單一事實來源。先接通可驗證的 CSV 到 Excel，再以真實銀行樣本完成 PDF 入帳，不能把 PDF 收錄當成交易解析成功。
+產品目標為 Gmail 新帳單 → 共用 Documents → 解鎖／解析／核對 → Finance → 專用 Excel 自動更新。Excel 為可重建的輸出；SQLite 保留交易與來源的單一事實來源。Gmail 附件收錄與帳單確認入帳仍分開，避免錯誤版型直接建立交易。
 
 - [x] 專用 Excel 包含月份／幣別摘要、交易與文件待處理狀態，保留穩定來源 ID。
 - [x] 自動偵測已提交資料變更並更新 Excel；重複同步不重複列，撤銷／恢復同步反映。
 - [x] Excel 佔用或寫入失敗保留上一版，定時重試；重啟仍可重建，狀態與錯誤可見；外部修改或替換後停止下載並安全重建。
 - [x] 設定頁提供啟停、立即更新、下載與尚未入帳 PDF 筆數。
-- [ ] 取得第一份真實銀行帳單，在本機驗證日期、幣別、退款、消費／繳款區分及總額核對。
-- [ ] 已驗證 PDF parser 接入共用入帳流程；未知格式／解鎖失敗保留待處理並可重試。
+- [x] 真實 Gmail 網頁下載 PDF 已完成格式提示確認、SecretStore 解鎖及文字抽取驗收。
+- [x] 取得第一份真實銀行帳單，在本機驗證日期、幣別、消費列與帳單合計核對；目前中國信託版型可用，實際帳單已匯入 Finance。
+- [x] 已驗證支援版型的 PDF parser 接入共用入帳流程；未知格式／解鎖失敗／對帳不符保留待處理並可重試。
 - [ ] Windows 常駐／登入啟動與真實 Gmail OAuth 長期有效性驗收。
-- [ ] 真實郵件 → PDF → Finance → Excel 端到端驗收。
+- [ ] 內建 Gmail OAuth → 新郵件 → 自動分析／確認 → Finance → Excel 的長期自動化驗收。
 
 ## 延後項目
 
@@ -225,9 +228,9 @@ M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自
 
 ## 尚待外部條件
 
-- Google Cloud Gmail API / OAuth 桌面用戶端設定與真實帳戶授權尚未執行；本機 UI 已提供設定及授權流程。
+- FamilyHub 內建 Google Cloud Gmail API / OAuth 尚未完成真實帳戶授權；本機 UI 已提供設定及授權流程。本次真實 Gmail 驗收由已登入的 Gmail 網頁手動下載，不等同 scheduler 驗收。
 - Windows 主機尚未確認 Tesseract 執行檔及 `chi_tra`/`eng` 語言資料；OCR pipeline 以合成 provider 完成測試，真實辨識待安裝 runtime 後驗收。
-- 尚無真實信用卡帳單樣本完成銀行專用 PDF 交易解析、密碼規則與金額核對；目前 Gmail CSV 可用通用解析器，PDF 可原始查看/解密預覽及抽取文字，不會臆測 PDF 交易。
+- 真實信用卡帳單已完成郵件密碼提示、PDF 解鎖、文字抽取、第一個中國信託版型的交易解析與帳單合計核對；目前 Gmail CSV 可用通用解析器，未知 PDF 版型不會因成功解鎖就被臆測為交易。
 - Gmail 定時同步程式已完成，但預設關閉；只有完成唯讀授權並由使用者開啟後才會每 30 分鐘同步 CSV 與收錄 PDF 文件。真實帳單 PDF 交易解析仍須另行驗收，不能由 scheduler 取代。
 
 

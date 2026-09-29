@@ -15,6 +15,29 @@ export type SearchResult = {
   transaction_offset: number;
 };
 export type Job = { id: string; document_id: string | null; source_type: string; target_module: string; status: string; summary: string; created_at: string };
+export type StatementLine = { line_index: number; page_number: number | null; source_sequence: string | null; transaction_date: string | null; posting_date: string | null; description: string; transaction_kind: "purchase" | "refund" | "payment" | "fee" | "interest" | "unknown"; amount: string; currency: string };
+export type Statement = {
+  statement_id: string;
+  document_id: string;
+  statement_account_id: string | null;
+  account_name: string | null;
+  bank_id: string;
+  format_version: string;
+  parser_id: string | null;
+  parser_version: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  status: "pending" | "ready" | "imported";
+  reason_code: string | null;
+  review_version: number;
+  line_count: number;
+  transaction_count: number;
+  reconciliation: { status: "not_checked" | "matched" | "mismatch"; basis: string | null; difference: string | null } | null;
+  created_at: string;
+  updated_at: string;
+  imported_at: string | null;
+  lines?: StatementLine[];
+};
 export type DocumentDetail = {
   document: DocumentRow;
   sources: { type: string; availability: string; has_local_copy: boolean; last_verified_at: string | null }[];
@@ -107,6 +130,12 @@ export const api = {
   },
   documents: (state: "active" | "revoked" | "all" = "active") => request<DocumentRow[]>(`/api/documents?state=${state}`),
   documentDetail: (id: string) => request<DocumentDetail>(`/api/documents/${encodeURIComponent(id)}/detail`),
+  statements: () => request<Statement[]>('/api/statements'),
+  statementDetail: (id: string) => request<Statement>(`/api/statements/${encodeURIComponent(id)}`),
+  analyzeStatement: (id: string, input: { allow_ai_analysis?: boolean; subject?: string; body?: string; sender?: string; filename?: string }) =>
+    postJson<Statement>(`/api/documents/${encodeURIComponent(id)}/statement-analysis`, input),
+  confirmStatement: (id: string, review_version: number) =>
+    postJson<{ statement_id: string; document_id: string; status: string; review_version: number; transaction_ids: string[]; transaction_count: number; reused: boolean }>(`/api/statements/${encodeURIComponent(id)}/confirm`, { review_version }),
   importImpact: (id: string) => request<ImportImpact>(`/api/documents/${encodeURIComponent(id)}/import-impact`),
   changeImportState: (id: string, action: "revoke" | "restore", impact_token: string, reason: string) =>
     postJson<ImportImpact & { changed: boolean }>(`/api/documents/${encodeURIComponent(id)}/${action}`, { impact_token, reason }),

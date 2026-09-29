@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..finance.queries import active_transaction_filter
-from ..models import Document, FinanceTransaction, ImportJob, WorkbookExportState, utc_now
+from ..models import Document, FinanceTransaction, ImportJob, Statement, StatementAccount, WorkbookExportState, utc_now
 from .ports import ExportDocument, ExportTransaction, WorkbookOwnershipError, WorkbookSnapshot, WorkbookWriter
 
 EXPORT_ID = "excel"
@@ -31,11 +31,28 @@ class WorkbookExportBusy(Exception):
 
 def read_snapshot(session: Session) -> WorkbookSnapshot:
     transactions = tuple(
-        ExportTransaction(row.id, row.source_document_id, row.transaction_date,
-                          row.description, row.amount, row.currency, filename)
-        for row, filename in session.execute(
-            select(FinanceTransaction, Document.filename)
+        ExportTransaction(
+            row.id,
+            row.source_document_id,
+            row.transaction_date,
+            row.description,
+            row.amount,
+            row.currency,
+            filename,
+            statement_id=statement.id if statement else None,
+            posting_date=row.posting_date,
+            transaction_kind=row.transaction_kind,
+            statement_account=account_name,
+            statement_period_start=statement.period_start if statement else None,
+            statement_period_end=statement.period_end if statement else None,
+            source_type="credit_card_statement" if statement else "csv",
+            statement_line_index=row.statement_line_index,
+        )
+        for row, filename, statement, account_name in session.execute(
+            select(FinanceTransaction, Document.filename, Statement, StatementAccount.display_name)
             .join(Document, FinanceTransaction.source_document_id == Document.id)
+            .outerjoin(Statement, FinanceTransaction.statement_id == Statement.id)
+            .outerjoin(StatementAccount, Statement.statement_account_id == StatementAccount.id)
             .where(active_transaction_filter())
             .order_by(FinanceTransaction.transaction_date, FinanceTransaction.id)
         )
@@ -43,9 +60,10 @@ def read_snapshot(session: Session) -> WorkbookSnapshot:
     counts = dict(session.execute(select(
         FinanceTransaction.source_document_id, func.count(FinanceTransaction.id),
     ).group_by(FinanceTransaction.source_document_id)).all())
+    statement_statuses = dict(session.execute(select(Statement.document_id, Statement.status)).all())
     documents = tuple(
         ExportDocument(row.id, row.filename,
-                       "revoked" if row.revoked_at else "active" if counts.get(row.id) else "pending",
+                       "revoked" if row.revoked_at else "active" if counts.get(row.id) or statement_statuses.get(row.id) == "imported" else "pending",
                        counts.get(row.id, 0))
         for row in session.scalars(select(Document).order_by(Document.id))
     )
@@ -53,10 +71,18 @@ def read_snapshot(session: Session) -> WorkbookSnapshot:
 
 
 class WorkbookExportService:
-    def __init__(self, session_factory: sessionmaker, writer: WorkbookWriter, destination: Path):
+    def __init__(
+        self,
+        session_factory: sessionmaker,
+        writer: WorkbookWriter,
+        destination: Path,
+        *,
+        pdf_transaction_parser_ready: bool = False,
+    ):
         self.session_factory = session_factory
         self.writer = writer
         self.destination = destination.resolve()
+        self.pdf_transaction_parser_ready = pdf_transaction_parser_ready
         if self.destination.suffix.lower() != ".xlsx":
             raise ValueError("Excel output path must end in .xlsx")
         self.lock = Lock()
@@ -84,7 +110,7 @@ class WorkbookExportService:
                 "pending_pdf_documents": pending_pdfs,
                 "needs_update": not output_matches or state is None or state.snapshot_hash != current_hash or state.status == "failed",
                 "check_interval_seconds": POLL_SECONDS,
-                "pdf_transaction_parser_ready": False,
+                "pdf_transaction_parser_ready": self.pdf_transaction_parser_ready,
             }
 
     def configure(self, enabled: bool) -> dict:
