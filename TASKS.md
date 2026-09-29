@@ -2,7 +2,7 @@
 
 ## 目前執行入口：信用卡 PDF 到 Excel
 
-2026-09-29 最新 `main` 已包含 Groq provider 實作與免費 API 文件；版型無關 Statement 正規化與入帳閘門也已存在，但尚未建立真實銀行 parser。產品主 blocker 仍是 S4；在需要自動解鎖真實加密 PDF 前，先完成 S3F-B runtime activation，並優先補 S3F-C 安全切換。M0-M8 勾選代表既有功能，不代表真實 PDF 入帳；歷史未勾項不自動成為下一個任務。
+2026-09-29 最新 `main` 已包含 Groq provider 實作與免費 API 文件；版型無關 Statement 正規化與入帳閘門也已存在，但尚未建立真實銀行 parser。產品主 blocker 仍是 S4；在需要自動解鎖真實加密 PDF 前，先完成 S3F-C 安全切換，再做 S3F-B runtime activation。M0-M8 勾選代表既有功能，不代表真實 PDF 入帳；歷史未勾項不自動成為下一個任務。
 
 - [x] S0：重新確認 Git/隔離環境，重跑測試與 build。
 - [x] S1：Gmail 自訂 query 與預設 cursor 隔離、分頁、失敗重試；FakeGmail 聚焦測試通過。
