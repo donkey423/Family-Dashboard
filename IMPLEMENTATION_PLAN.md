@@ -24,16 +24,16 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 | 項目 | 已觀察狀態 | 不可誤認為 |
 | --- | --- | --- |
-| Git | 接手時本機 master 為 `001ca5d`、`origin/main` 為 `4f9bfb5`；工作區有先前未提交的程式與文件修改 | 已同步最新遠端，或可以 reset |
+| Git | 2026-09-29 GitHub `main` 已包含 Groq provider 實作 `eeb6883`；使用者回報 push 後 `Everything up-to-date` 且 local working tree 乾淨 | 後續模型仍應在開始前重查 `git status` / HEAD，不可把歷史的 `001ca5d`/`4f9bfb5` 狀態當現在 |
 | S1-S3 | Gmail 自訂查詢隔離、提示上下文/遮罩、共用 PDF 解鎖用例已有程式與合成測試 | 需要全部重寫 |
 | S4 | `finance/statements/contracts.py` 與 `finance/statements/normalization.py` 已有純契約、月支出語意、穩定列 hash 及 pending 閘門；契約+正規化聚焦測試 26 passed | 已有任何一家銀行的交易解析器 |
 | PDF | 來源讀取、本機解密、文字抽取/預覽，OCR 有介面及 adapter | 已建立 Finance 交易 |
 | Gmail | 手動/排程共用同步；每 30 分鐘排程需 opt-in；PDF 收錄、CSV 可入帳 | PDF 可自動入帳 |
 | SQLite | FinanceTransaction、來源、工作及撤銷已存在，尚無 Statement/StatementAccount | 可把 PDF 列塞入 CSV 流程就完成 |
 | Excel | 已有快照、背景檢查、ownership marker、原子替換及佔用重試 | 已正確區分信用卡退款、繳款與收入 |
-| 驗證 | 前輪基線 128 passed/build 成功；後續聚焦 74 passed，皆為隔離合成資料 | 本次文件修改跑過程式測試，或通過真實銀行驗收 |
+| 驗證 | Groq provider 實作後完整 backend 187 passed、frontend production build 成功；Groq/OpenAI dispatch 等以合成資料覆蓋 | 已完成真實 Groq runtime activation、真實 PDF 解鎖或銀行 parser 驗收 |
 
-`ARCHITECTURE_REVIEW_BRIEF.md` 是背景，不是刪除授權。checkout 缺檔時可唯讀查看本機已有的 `4f9bfb5` 版本，不自行 merge/reset。執行規格以本文件為準，進度以 TASKS/HANDOFF 為準。
+`ARCHITECTURE_REVIEW_BRIEF.md` 是背景，不是刪除授權；其原始分析基準較早，現在必須以最新 `main` 實作、TASKS/HANDOFF 與本文件為準。開始前先重查 Git，不自行 reset/force-push。
 
 ## 3. 保留與延後
 
@@ -54,7 +54,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 ## 4. 執行方法與檔案地圖
 
-順序：S0 → 核實 S1/S2/S3 → S4 → S5 → S6A/S6B/S6C → S7 → S8 → S9。
+順序：S0 → 核實 S1/S2/S3 → 核實 S3F-A → 完成/驗收 S3F-B（需要真實自動解鎖前）並優先補 S3F-C → S4 → S5 → S6A/S6B/S6C → S7 → S8 → S9。
 
 1. 每包先讀程式/測試、列修改檔案、補失敗案例，再修改；不同時展開後面數包。
 2. 每包完成 focused tests，更新 TASKS/HANDOFF，再接下一包。S0/S6/S7/S9 跑完整 backend suite 與 frontend build；schema 另跑隔離 migration tests。
@@ -128,7 +128,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 **目的：** 將目前 OpenAI-only 的密碼提示解析改成免費 API 優先；完整規格見 [FREE_AI_PASSWORD_RULE_PLAN.md](FREE_AI_PASSWORD_RULE_PLAN.md)。
 
-**目前狀態（2026-09-29）：** provider-neutral 程式、Groq adapter、設定 API/UI 與安全邊界已完成；合成測試及 frontend build 已通過。實際服務仍使用已保存的 OpenAI profile，尚未保存 Groq key，因此 Groq 真實 request 與真實 PDF 解鎖仍未驗收。這次實際 Gmail PDF 已完成文件收錄及 SHA-256 重複收錄驗證，但 AI 預覽因現存 OpenAI 額度不足停止，沒有建立交易；不得把這次結果視為 parser 或 Excel 入帳完成。
+**目前狀態（2026-09-29）：** provider-neutral 程式、Groq adapter、設定 API/UI 與安全邊界已由 `eeb6883` 完成並合併 `main`；完整 backend 187 passed、frontend build 成功。最後一次 runtime smoke check 仍使用已保存的 OpenAI profile，尚未完成 Groq runtime activation，因此真實 Groq request 與真實 PDF 解鎖仍未驗收。這次實際 Gmail PDF 已完成文件收錄及 SHA-256 重複收錄驗證，但 AI 預覽因現存 OpenAI 額度不足停止，沒有建立交易；不得把這次結果視為 parser 或 Excel 入帳完成。
 
 - 第一階段接 Groq Free，預設 `openai/gpt-oss-20b`；實作前重新查 Groq 官方 Free Plan、model list 與 Structured Outputs 支援。
 - 沿用 `PasswordRuleInterpreter`、`PasswordRuleService` verified cache、`SecretStore` 與 `PasswordComposer`；只把 provider config、adapter、UI 改成 provider-neutral，不新增 migration 或通用 AI 平台。
@@ -136,7 +136,15 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 - Groq 401/403/429/timeout/5xx 或 schema failure 均 fail closed，留 pending/manual；禁止自動 fallback 到可能付費的 OpenAI。OpenAI 只有使用者明確選擇時使用。
 - 驗收包含 synthetic prompt、payload 脫敏、provider dispatch、verified cache、不自動 fallback 及前端 production build。
 
-S3F 是小型前置改善，不得延誤 S4 第一家真實銀行 parser。
+**S3F 剩餘工作：**
+
+- **S3F-B Runtime activation**：本機明確啟用 Groq，保存後確認 Active Provider/Model，先以 synthetic prompt 呼叫真實 Groq；第二次相同提示必須命中 cache，不再 remote call。
+- **S3F-C Safe switch hardening**：新增 `/api/security/ai-provider/test` 或等價 preflight；新 provider 設定驗證失敗時，舊 active credential 必須完整保留。
+- 將 provider 失敗轉成穩定 reason code；429/網路/schema/model 問題只留 pending/manual，不可偷偷改呼叫 OpenAI。
+- Recommended/Default/Active Provider 必須分開：Groq 是建議與新設定預設，runtime 只認已保存 Active Provider。
+- Groq Responses API 目前官方仍標示 beta；`openai/gpt-oss-20b` 支援 strict Structured Outputs，但實際相容性以 synthetic smoke test 為準。
+
+S3F 是小型前置改善，不得擴張成 multi-provider 平台。S4 仍是產品主 blocker；若真實 S4 樣本需要自動密碼解鎖，先完成 S3F-B，再進行該樣本驗收。
 
 ## 8. S4：第一家銀行真實解析器
 
@@ -379,4 +387,4 @@ Alembic heads 只讀 migration 定義；schema 驗證沿用 `test_migrations.py`
 
 ## 18. 給 Luna max 的啟動指示
 
-> 請開始實作「家庭收支記錄」。先讀 `AGENTS.md`、`README.md`、`HANDOFF.md`、`TASKS.md`、`IMPLEMENTATION_PLAN.md`，檢查 Git 並保留所有既有修改。目標是信用卡 PDF 正確到 SQLite/Excel，不是擴建家庭平台。重跑 S0，核實已有 S1-S3 與 Statement contract，從真正未完成的 S4 接續。依 S0-S9 每包連續完成、驗證、交接再繼續；S6 必須先交付正確 Excel，不做完整 Dashboard、分類或同步引擎重寫。parser 需要一家銀行兩期授權樣本，缺樣本不得猜格式/假稱通過。使用隔離資料/fake provider，不讀聊天秘密，不自行操作正式 DB、啟用外部服務/排程、改網路或 commit/push/merge/reset。遇必要外部關卡才停並列缺件，不要完成一個可繼續的工作包就停下來。
+> 請開始實作「家庭收支記錄」。先讀 `AGENTS.md`、`README.md`、`HANDOFF.md`、`TASKS.md`、`IMPLEMENTATION_PLAN.md`、`FREE_AI_PASSWORD_RULE_PLAN.md`，並重新確認 Git HEAD/status。`main` 已包含 `eeb6883` 的 Groq 程式，禁止重做或覆蓋。先核實 S1-S3、S3F-A 與 Statement contract；如果 runtime 尚未切 Groq，先完成 S3F-B synthetic activation，並優先補 S3F-C safe-switch preflight；之後從真正未完成的 S4 接續。目標是信用卡 PDF 正確到 SQLite/Excel，不是擴建家庭平台。S6 必須先交付正確 Excel，不做完整 Dashboard、分類或同步引擎重寫。parser 需要一家銀行兩期授權樣本，缺樣本不得猜格式/假稱通過。使用隔離資料/fake provider，不讀聊天秘密，不自行操作正式 DB、啟用外部服務/排程或改網路；Git 寫入依使用者當次授權。遇必要外部關卡才停並列缺件。
