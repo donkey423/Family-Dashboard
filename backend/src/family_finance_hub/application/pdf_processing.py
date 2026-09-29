@@ -31,6 +31,7 @@ from ..security.password_rules import PasswordComposer, PasswordInstructionConte
 from ..security.password_rules.ports import PasswordRuleInterpreter
 from ..security.password_rules.service import PasswordRuleService
 from ..security.secrets.ports import SecretStore
+from ..security.secrets.service import PERSONAL_UNLOCK_ID
 
 
 ProfileT = TypeVar("ProfileT")
@@ -179,7 +180,7 @@ class PdfPreviewUseCase:
             profile = (
                 session.get(DocumentSecurityProfile, command.document_security_profile_id)
                 if command.document_security_profile_id
-                else None
+                else session.get(DocumentSecurityProfile, PERSONAL_UNLOCK_ID)
             )
             if command.document_security_profile_id and profile is None:
                 raise PdfPreviewProfileNotFound
@@ -236,6 +237,8 @@ class PdfPreviewUseCase:
             secret_store = self.secret_store_factory()
             national_id = secret_store.get(secret_profile.national_id_credential_ref)
             birthday = secret_store.get(secret_profile.birthday_credential_ref)
+            if not national_id and not birthday:
+                raise DocumentProcessingError("pdf_password_required", "尚未保存可用的解鎖資料") from None
             instruction = self.instruction_extractor.extract(
                 PasswordInstructionContext(
                     "\n".join(filter(None, (
@@ -253,7 +256,11 @@ class PdfPreviewUseCase:
             )
             if not instruction:
                 raise initial_error
-            context = {"institution": profile.institution, "document_type": "PDF statement"}
+            context = (
+                {"document_type": "PDF"}
+                if profile.id == PERSONAL_UNLOCK_ID
+                else {"institution": profile.institution, "document_type": "PDF statement"}
+            )
             fingerprint = self.password_rules.fingerprint(instruction, context)
             rule = self.password_rules.get_verified(session, profile.id, fingerprint)
             session.commit()

@@ -2,7 +2,7 @@
 
 家庭收支記錄以 Windows 家用電腦為主機，近期目標是將信用卡 PDF 解鎖、解析與核對後，更新每月支出 Excel。SQLite 保留可追溯資料；Web 用於設定、核對確認與處理例外，完整 Dashboard 不是交付前置。
 
-**目前狀態：** 已有文件匣、通用 CSV 匯入、總覽/搜尋/工作紀錄、Gmail 同步、加密 PDF 預覽及專用 Excel 輸出；但銀行專用 PDF 交易 parser 尚未完成，不能宣稱信用卡 PDF 已自動入帳。Excel 優先的逐步實作與驗收見 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)，下列操作說明描述現有功能。
+**目前狀態：** 已有文件匣、通用 CSV 匯入、總覽/搜尋/工作紀錄、Gmail 同步、個人資料輔助的加密 PDF 預覽及專用 Excel 輸出；解鎖設定不再要求銀行或家庭成員。銀行專用 PDF 交易 parser 尚未完成，不能宣稱信用卡 PDF 已自動入帳。Excel 優先的逐步實作與驗收見 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)，下列操作說明描述現有功能。
 
 ## 開發環境
 
@@ -35,7 +35,22 @@ npm --cache .npm-cache install
 npm run dev -- --host 127.0.0.1
 ```
 
-開啟 Vite 顯示的網址。預設 API 為 `http://127.0.0.1:8000`。設定 `VITE_API_BASE_URL` 可指定其他 API 位址。
+開啟 Vite 顯示的網址。開發時 Vite 會將同網域的 `/api` 轉送到 `http://127.0.0.1:8000`；設定 `VITE_API_BASE_URL` 可覆寫 API 位址。
+
+## 此 Windows 主機的網站網址
+
+目前此主機的 Tailscale Serve 將私有 HTTPS 網址轉送至 `localhost:3000`，此入口目前由家庭收支記錄使用；它不是未來所有新專案各自的網址。要讓本專案的網頁與 API 使用同一網址，先在 repository 根目錄建置前端，再啟動單一服務：
+
+```powershell
+npm --prefix frontend run build
+.\scripts\start_server.ps1 -DatabasePath data/family-finance-hub-live.db
+```
+
+`data/family-finance-hub-live.db` 是此主機由舊版資料庫的線上一致性快照升級而來的新版資料庫；舊 `data/family-finance-hub.db` 保留未改動，不可直接用新版程式啟動。啟動腳本不會自動執行 migration。其他新安裝環境應先依上方步驟建立資料庫並升級至 Alembic head，再用預設的 `data/family-finance-hub.db` 啟動。
+
+本站僅限同一 Tailscale 網路的已授權裝置，不是公開網站。Windows 必須開機且服務正在執行；此主機已設定使用者登入時自動啟動。請只用新的 Tailscale 網址操作，其他舊開發連接埠可能仍指向舊資料庫，兩者不會自動同步。部署細節見 [操作與部署](docs/operations.md)。
+
+新 Web 專案的手機預覽應按全域 Codex 指引，使用未占用的本機連接埠及獨立的 Tailscale Serve HTTPS 埠，並實測新專案畫面。此主機的全域 `register-mobile-preview.ps1` 可在新專案啟動後註冊其私有網址；已以兩個隔離測試服務驗證可同時使用不同埠且不改動本站的根網址。家庭收支記錄持續占用 `3000` 時，其他專案不會自動出現在本站網址，也不應為了預覽而停掉本專案。各專案須自行保持其服務執行。
 
 ## CSV 格式
 
@@ -59,11 +74,11 @@ npm run dev -- --host 127.0.0.1
 
 在「設定」頁匯入 Google Cloud 的 Gmail API OAuth 桌面應用程式 JSON，然後按「連接 Google 帳戶」及「立即同步 Gmail」。同步使用唯讀權限；預設查詢 `in:anywhere has:attachment {filename:pdf filename:csv}`，不限制日期。垃圾郵件/垃圾桶的完整涵蓋仍待補強與驗收，不能只憑查詢字串宣稱全部掃描完成。初次同步超過單次上限時，再按一次同步即可接續。OAuth 設定與 token 僅放 Windows Credential Manager。連線後可手動同步；定時同步需另外勾選啟用，預設關閉，每 30 分鐘同步一次。Windows 關機時不會執行，重新啟動後會補跑已到期的同步。替換 OAuth 設定會關閉定時同步，需重新授權及手動啟用。
 
-Gmail CSV 會使用通用欄位解析匯入交易；解析失敗的 CSV 仍會保存在共用文件匣並留下失敗紀錄，不會阻止後續郵件同步。PDF 會先進共用文件匣，不會把抽取文字猜成交易。查看加密 PDF 時，可建立家庭成員及文件解鎖設定；系統可即時讀取該 Gmail 郵件的主旨、寄件者與文字本文，僅在記憶體中擷取並遮罩密碼規則。勾選允許 AI 後，AI 僅會收到遮罩後的規則文字；身分證字號、生日及實際密碼都留在本機 Credential Manager/本機記憶體。非 Gmail 文件可在預覽視窗手動輸入郵件密碼說明。解密預覽不會改寫原始 PDF。
+Gmail CSV 會使用通用欄位解析匯入交易；解析失敗的 CSV 仍會保存在共用文件匣並留下失敗紀錄，不會阻止後續郵件同步。PDF 會先進共用文件匣，不會把抽取文字猜成交易。要查看加密 PDF，先到「設定 → 文件解鎖」保存身分證字號、出生日期或其中一項，不需要填銀行、機構或家庭成員。系統會即時讀取 Gmail 郵件的主旨、寄件者與文字本文，擷取並遮罩密碼提示；非 Gmail 文件可在預覽視窗手動提供提示。已設定 AI key 時，開啟加密 PDF 會嘗試讓 AI 解讀遮罩後的提示，再由本機依規則組合最多三個候選密碼。身分證字號、生日及實際密碼不送給 AI，只留在 Windows Credential Manager/本機記憶體；解密預覽不改寫原始 PDF。
 
 PDF 內嵌文字不足時，系統才會嘗試使用本機 OCR；PDFium 會在記憶體中渲染，Tesseract 透過標準輸入處理影像，不建立臨時帳單影像。OCR 需要另外安裝 Tesseract 及 `chi_tra`、`eng` 語言資料；亦可用 `FAMILY_FINANCE_HUB_TESSERACT` 指向執行檔，並以 `FAMILY_FINANCE_HUB_OCR_LANG` 指定語言。執行 OCR 前會檢查設定所需的語言資料；引擎尚未就緒或缺少語言資料時仍可檢視 PDF，介面會分別顯示狀態。OCR 文字只在此次處理的記憶體中使用，不寫入資料庫；銀行專用 PDF 交易 parser 尚未實作。
 
-AI API key 為可選設定，只在需要 AI 協助解讀密碼規則時使用；未設定或未勾選 AI 時，不呼叫 AI。定時同步只會處理 CSV 與建立 PDF 文件來源，不會將 PDF 自動解析為財務交易。
+AI API key 在「設定 → 進階設定」保存，屬可選功能。設定後，開啟有密碼且有可用提示的 PDF 可能呼叫 AI 並產生 API 用量；預覽視窗可關閉 AI 後重試。未設定 key 時不呼叫 AI。若提示只藏在尚未解鎖的 PDF 內，仍需由郵件或使用者提供提示。定時同步只會處理 CSV 與建立 PDF 文件來源，不會將 PDF 自動解析為財務交易。
 
 ## Excel 自動更新
 

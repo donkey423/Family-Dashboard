@@ -12,6 +12,7 @@
 - `backend/src/family_finance_hub`：FastAPI、application use cases、domain services、ports 與 adapters。
 - `backend/tests`：後端自動化測試。
 - `frontend/src`：React/TypeScript Web UI。
+- `scripts/start_server.ps1`：建置前端後，在 `127.0.0.1:3000` 同時提供 Web 與 API；此主機的登入排程指定 `data/family-finance-hub-live.db`。
 
 ## 邊界與限制
 
@@ -27,9 +28,11 @@
 - 文件撤銷／恢復由 `DocumentLifecycleUseCase` 原子更新並留下工作紀錄。Finance 列表、搜尋、統計需共用有效文件條件；任何匯入來源不得自動恢復已撤銷的相同 SHA-256 文件。新增模組需遵守文件有效狀態並提供本模組的影響預覽。
 - Domain/Application 不直接依賴 Windows filesystem、FastAPI request objects 或供應商 SDK。
 - SQLAlchemy/Alembic 是 SQLite schema 持久化路徑；migration 不可由生產程式啟動時靜默取代。
+- 此主機的舊 `data/family-finance-hub.db` 是不相容 revision，保留作原始資料；新網址只用 `data/family-finance-hub-live.db`。兩者不自動同步，禁止直接對舊檔執行新版 migration 或讓新版服務寫入它。
 - 不記錄文件內容、PDF 密碼、secret、OAuth token、身分證字號、生日或完整敏感資料。M5.2 必須使用 Windows Credential Manager/SecretStore；AI 只解析密碼規則文字，不得接收真實身分證字號、生日或實際密碼。
+- 目前文件解鎖 UI 只收身分證字號及/或生日；內部固定個人 profile 沿用既有 schema，不能把銀行、機構或家庭成員設定重新變成使用者前置步驟。保存 AI key 後，加密 PDF 預覽可分析遮罩提示並在本機組合密碼；不得把這當作 PDF 交易自動入帳。
 - 新增模組應新增自己的 domain/service/schema migration，避免直接操作其他模組資料。
-- 進度以 TASKS.md 與 HANDOFF.md 為準：M5 共用流程、M6 撤銷／恢復、M7.1-M7.5 使用體驗改善及 M8 的 Excel 自動投影已實作；銀行 PDF 交易解析、正式資料庫升級與外部環境驗收仍未完成。不得把文件收錄、PDF 解密／抽取文字或合成測試當成真實帳單自動入帳驗收。
+- 進度以 TASKS.md 與 HANDOFF.md 為準：M5 共用流程、M6 撤銷／恢復、M7.1-M7.5 使用體驗改善及 M8 的 Excel 自動投影已實作；此主機既有正式 DB 已升至 `0010_workbook_export`，但銀行 PDF 交易解析及實體裝置/真實帳單驗收仍未完成。不得把文件收錄、PDF 解密／抽取文字或合成測試當成真實帳單自動入帳驗收。
 - 近期產品方向以 `ARCHITECTURE_REVIEW_BRIEF.md` 為 review gate：核心目標收斂到每月信用卡帳單自動分析。高階審查完成前，不新增非核心平台能力，也不得把 brief 中的候選簡化直接視為已批准的刪除/重構。
 - Excel 是 SQLite 已提交交易的可重建投影，不是資料來源。只能覆蓋帶應用程式 ownership marker 的專用工作簿；外部修改、檔案佔用與輸出 hash 不一致必須保留可見狀態，不得靜默覆蓋未知檔案或把 Excel 反向匯入 Finance。
 - M5.2 密碼流程必須使用 versioned PasswordRule DSL；禁止直接執行/eval LLM 產生的程式碼，禁止以大量排列組合暴力猜密碼。

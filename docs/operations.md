@@ -6,7 +6,11 @@
 
 可選 OCR 依賴以 `python -m pip install -e "backend[ocr]"` 安裝；Tesseract OCR 執行檔及繁體中文/英文語言資料需另外安裝。可用 `FAMILY_FINANCE_HUB_TESSERACT` 指定執行檔，`FAMILY_FINANCE_HUB_OCR_LANG` 指定語言，預設為 `chi_tra+eng`。OCR 僅在 PDF 文字抽取不足時啟動，先以 `tesseract --list-langs` 確認所需語言資料，再開始渲染；最多處理 20 頁、每頁限制約 8 百萬像素，總逾時 120 秒。缺少引擎或語言資料時，UI 會顯示不同狀態且不阻止 PDF 預覽。PDF 渲染及 OCR 內容只在記憶體處理，不保存辨識文字或臨時頁面影像。
 
-開發時兩個服務預設綁定 `127.0.0.1`。要從家庭其他裝置連線，需在 API 視窗設定 Web UI 的來源與 Tailscale IP：
+開發時兩個服務預設綁定 `127.0.0.1`，Vite 會將 `/api` 轉送到本機的 API。此 Windows 主機的常用入口是先執行 `npm --prefix frontend run build`，再執行 `.\scripts\start_server.ps1 -DatabasePath data/family-finance-hub-live.db`，由單一 FastAPI 服務在 `127.0.0.1:3000` 提供靜態網頁及 `/api`。Tailscale Serve 已將此主機的私有 HTTPS 網址轉送到 `localhost:3000`；不要為手機預覽改綁 `0.0.0.0` 或重設既有 Serve。
+
+`data/family-finance-hub-live.db` 是這台主機的新版資料庫。舊 `data/family-finance-hub.db` 仍是舊 revision `0003_gmail_sync_state`，不要將新版 API 或 Alembic 直接指向舊檔。升級前的一致性資料庫備份 `data/backups/2026-09-29-pre-deploy/family-finance-hub-online.db` 與文件備份保存在本機，不進 Git。舊開發連接埠可能仍寫入舊資料庫，請只用新網址操作；兩份資料庫不會自動同步。此主機的 `FamilyFinanceHub` 排程使用目前 Windows 使用者的互動式登入，不會保存密碼；登出或關機後需再次登入才能服務。排程已經由手動觸發測試，但尚未實際重開機驗證。
+
+若不用 Tailscale Serve，而是要直接連到開發用的 Vite/API 連接埠，才需在 API 視窗設定 Web UI 的來源與 Tailscale IP：
 
 ```powershell
 $env:FAMILY_FINANCE_HUB_CORS_ORIGINS = "http://<Windows-Tailscale-IP>:5173"

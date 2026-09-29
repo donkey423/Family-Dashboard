@@ -27,6 +27,7 @@ from family_finance_hub.models import (
 from family_finance_hub.security.password_rules import PasswordInstructionContext, PasswordInstructionExtractor
 from family_finance_hub.security.password_rules.schema import PasswordRule
 from family_finance_hub.security.password_rules.service import PasswordRuleService
+from family_finance_hub.security.secrets.service import PERSONAL_UNLOCK_ID
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,67 @@ def _resolved_password_rule():
             "separator": "",
         }],
     })
+
+
+def test_gmail_password_hint_unlocks_with_personal_identity_without_sender_profile():
+    original_pdf = _encrypted_pdf("678919840302")
+    source_registry = DocumentSourceRegistry((MemoryDocumentSource(original_pdf),))
+    store = MemorySecretStore({"personal:id": "A123456789", "personal:birthday": "1984-03-02"})
+    extractor = PasswordInstructionExtractor()
+    rules = PasswordRuleService()
+    message = MemoryMessageContextSource()
+    engine = make_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+    use_case = PdfPreviewUseCase(
+        source_registry, message, PdfDocumentProcessor(), extractor, rules,
+        lambda: store, lambda session: pytest.fail("verified rule should avoid AI"),
+    )
+
+    try:
+        with factory() as session:
+            document = Document(
+                id="personal-gmail-document", sha256=sha256(original_pdf).hexdigest(),
+                filename="statement.pdf", content_type="application/pdf", size_bytes=len(original_pdf),
+            )
+            document.sources.extend([
+                DocumentSourceRecord(
+                    id="personal-memory-source", source_type="memory_pdf", source_key="memory:personal",
+                    availability_status="available",
+                ),
+                DocumentSourceRecord(
+                    id="personal-gmail-source", source_type="gmail_attachment", source_key="gmail:personal",
+                    source_reference={"message_id": "personal-message"}, availability_status="available",
+                ),
+            ])
+            session.add_all([
+                document,
+                SecretProfile(
+                    id=PERSONAL_UNLOCK_ID, display_name="Personal unlock",
+                    national_id_credential_ref="personal:id", birthday_credential_ref="personal:birthday",
+                ),
+                DocumentSecurityProfile(
+                    id=PERSONAL_UNLOCK_ID, display_name="Personal unlock",
+                    institution="Generic", secret_profile_id=PERSONAL_UNLOCK_ID,
+                ),
+            ])
+            session.flush()
+            context = message.read_message_context({})
+            instruction = extractor.extract(PasswordInstructionContext(
+                context.subject, context.body, context.sender, document.filename,
+            ), store.values.values())
+            rules.save_verified(session, PERSONAL_UNLOCK_ID, rules.fingerprint(
+                instruction, {"document_type": "PDF"},
+            ), _resolved_password_rule())
+            session.commit()
+
+            result = use_case.execute(session, document.id, PdfPreviewCommand())
+
+            assert result.processed.was_encrypted
+            assert not PdfReader(BytesIO(result.processed.preview_bytes)).is_encrypted
+            assert set(store.get_calls) == {"personal:id", "personal:birthday"}
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.parametrize(("password", "opens"), [

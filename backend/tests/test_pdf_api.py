@@ -104,6 +104,73 @@ def make_profiles(client):
     return secret.json(), secure.json()
 
 
+def single_value_rule(source):
+    part = (
+        {"source": "national_id", "transform": "suffix", "start": None, "length": 4, "date_format": None, "case": "upper"}
+        if source == "national_id"
+        else {"source": "birthday", "transform": "date_format", "start": None, "length": None, "date_format": "YYMMDD", "case": "preserve"}
+    )
+    return PasswordRule.model_validate({
+        "version": 1, "status": "resolved", "candidates": [{"parts": [part], "separator": ""}],
+    })
+
+
+@pytest.mark.parametrize(
+    ("identity", "source", "password", "instruction"),
+    [
+        ({"national_id": "A123456789"}, "national_id", "6789", "密碼為身分證末四碼"),
+        ({"birthday": "1984-03-02"}, "birthday", "840302", "密碼為生日 YYMMDD"),
+    ],
+)
+def test_personal_unlock_requires_no_member_or_institution(tmp_path, identity, source, password, instruction):
+    secret_store = MemorySecretStore()
+    interpreter = FakeInterpreter(single_value_rule(source))
+    client, settings = make_client(tmp_path, secret_store, interpreter)
+    original_pdf = make_encrypted_pdf(password)
+
+    with client:
+        saved = client.put("/api/security/personal-unlock", json=identity)
+        assert saved.status_code == 200
+        assert saved.json() == {
+            "has_national_id": "national_id" in identity,
+            "has_birthday": "birthday" in identity,
+        }
+        assert client.get("/api/security/personal-unlock").json() == saved.json()
+        uploaded = client.post("/api/documents", files={
+            "file": ("synthetic.pdf", original_pdf, "application/pdf"),
+        })
+        url = f"/api/documents/{uploaded.json()['id']}/preview"
+        body = f"{instruction}\n測試資料：{next(iter(identity.values()))}"
+        preview = client.post(url, json={"body": body, "allow_ai_analysis": True})
+        assert preview.status_code == 200
+        assert not PdfReader(BytesIO(preview.content)).is_encrypted
+        assert client.get(f"/api/documents/{uploaded.json()['id']}/content").content == original_pdf
+        assert len(interpreter.calls) == 1
+        assert interpreter.calls[0][1] == {"document_type": "PDF"}
+        assert next(iter(identity.values())) not in interpreter.calls[0][0]
+        reused = client.post(url, json={"body": body, "allow_ai_analysis": False})
+        assert reused.status_code == 200
+        assert len(interpreter.calls) == 1
+
+    for value in identity.values():
+        assert value not in saved.text
+        assert value.encode() not in (tmp_path / "test.db").read_bytes()
+    make_engine(settings.database_url).dispose()
+
+
+def test_personal_unlock_updates_only_supplied_field_and_rejects_empty_input(tmp_path):
+    store = MemorySecretStore()
+    client, _ = make_client(tmp_path, store)
+    with client:
+        assert client.put("/api/security/personal-unlock", json={}).status_code == 422
+        assert client.put("/api/security/personal-unlock", json={"national_id": "A123456789"}).status_code == 200
+        updated = client.put("/api/security/personal-unlock", json={"birthday": "1984-03-02"})
+        assert updated.status_code == 200
+        assert updated.json() == {"has_national_id": True, "has_birthday": True}
+        assert "A123456789" in store.values.values()
+        assert "1984-03-02" in store.values.values()
+
+
 def test_ai_provider_key_is_kept_in_secret_store_only(tmp_path):
     secret_store = MemorySecretStore()
     client, settings = make_client(tmp_path, secret_store)

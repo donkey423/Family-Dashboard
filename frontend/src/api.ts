@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
 export type DocumentSource = { type: string; availability: string };
 export type DocumentRow = { id: string; filename: string; content_type: string; size_bytes: number; created_at: string; revoked_at: string | null; revocation_reason: string | null; sources?: DocumentSource[] };
@@ -26,6 +26,7 @@ export type Dashboard = { transaction_count: number; currency_totals: CurrencyTo
 export type ImportImpact = Dashboard & { document_id: string; filename: string; revoked_at: string | null; revocation_reason: string | null; impact_token: string };
 export type SecretProfile = { id: string; display_name: string; has_credentials: boolean };
 export type DocumentSecurityProfile = { id: string; display_name: string; institution: string; sender_pattern: string | null; secret_profile_id: string };
+export type PersonalUnlockStatus = { has_national_id: boolean; has_birthday: boolean };
 export type GmailStatus = { configured: boolean; authorized: boolean; scope: string | null; last_sync_status: string; last_successful_sync: string | null; last_error_summary: string | null; full_sync_in_progress: boolean; auto_sync_enabled: boolean; next_sync_at: string | null; sync_interval_minutes: number };
 
 export class ApiError extends Error {
@@ -130,8 +131,13 @@ export const api = {
     return request<{ id?: string; document_id?: string; duplicate?: boolean; created_transactions?: number; skipped_revoked?: boolean }>(finance ? "/api/finance/import-csv" : "/api/documents", { method: "POST", body });
   },
   saveLocal: (id: string) => postJson<{ id: string; saved_locally: boolean }>(`/api/documents/${encodeURIComponent(id)}/save-local`, {}),
-  preview: (id: string, input: { document_security_profile_id: string; subject: string; body: string; allow_ai_analysis: boolean }) =>
+  preview: (id: string, input: { subject: string; body: string; allow_ai_analysis: boolean }) =>
     requestBlob(`/api/documents/${encodeURIComponent(id)}/preview`, input),
+  personalUnlock: () => request<PersonalUnlockStatus>("/api/security/personal-unlock"),
+  savePersonalUnlock: (input: { national_id?: string; birthday?: string }) =>
+    request<PersonalUnlockStatus>("/api/security/personal-unlock", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+    }),
   secretProfiles: () => request<SecretProfile[]>("/api/security/profiles"),
   createSecretProfile: (input: { display_name: string; national_id: string; birthday: string }) =>
     postJson<SecretProfile>("/api/security/profiles", input),

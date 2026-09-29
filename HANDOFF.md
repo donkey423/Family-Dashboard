@@ -2,16 +2,20 @@
 
 ## 目前接手入口
 
+2026-09-29 文件解鎖操作已簡化：設定頁只需保存身分證字號及/或生日，系統內部建立固定個人 profile；開啟加密 PDF 時，若有 AI key 與可用的 Gmail/手動提示，AI 僅解析遮罩規則，由本機使用 SecretStore 值組合密碼。舊銀行/成員 profile API 保留相容，但不是新 UI 的前置。聚焦測試 45 passed、backend 全套 173 passed（2 個既有棄用警告）、frontend build 成功。既有 `FamilyFinanceHub` 排程已受控重啟；本機與私有 HTTPS 首頁及新 API 回傳 200，私有網址的新版設定頁已用瀏覽器檢查。實體 MacBook/手機未驗收。這只完成 PDF 解鎖體驗，未完成銀行 PDF 交易 parser 或 PDF→Excel 自動入帳，未使用真實身分資料或正式帳單驗收。
+
 近期目標已收斂為「信用卡 PDF 解鎖、解析、核對後更新每月支出 Excel」。Web 只補設定、核對確認及例外處理，不先擴充平台或完整 Dashboard。2026-09-28 已依本機程式更新 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 的 S0-S9 詳細工作包、檔案落點、驗收數值及 Luna max 啟動指示；本輪接續實作了版型無關的 Statement 正規化與入帳閘門，但尚未建立銀行專用 parser。
 
 前輪 S1-S3 已完成補強及隔離合成測試；S4 現在已有版型無關的 Statement 契約、月支出語意與正規化閘門，銀行 parser 仍需樣本。接手收到開始指示後重驗基線，再從真正未完成處繼續，不重做已有功能、不把規格當程式完成。
 
-- 審查時本機 `master` 為 `488cee7`，落後 `origin/main` 一個僅修改文件的提交；沒有合併/重設。遠端的 `ARCHITECTURE_REVIEW_BRIEF.md` 已閱讀，該檔當時尚不在本機 checkout。未來同步文件時須保留本計畫的審查結論，不回退成「尚未審查」。
+- 本機 `master` 已包含 `ARCHITECTURE_REVIEW_BRIEF.md`。Tailscale Serve 既有設定為私有 HTTPS → `localhost:3000`，網頁與 API 現由同一 FastAPI 服務提供；個人解鎖及單一服務部署已在此主機驗證。此主機使用 `data/family-finance-hub-live.db`，由舊資料庫的一致性快照升級至 `0010_workbook_export`；原始舊 DB 與 `data/backups/2026-09-29-pre-deploy/` 保留。先前 19 份文件、17 筆交易、23 筆工作紀錄及 19 筆文件來源均經核對。舊 DB 不可直接用新版程式啟動。
+- `FamilyFinanceHub` Windows 排程在使用者登入後啟動 `scripts/start_server.ps1 -DatabasePath data/family-finance-hub-live.db`，目前由手動觸發的排程執行中。Tailscale HTTPS 首頁與 `/api/dashboard` 均驗證成功；重新開機後的自動觸發及實體 iPhone 尚未驗證。其他舊開發連接埠可能仍寫入舊 DB，兩者不自動同步，應只用新的 Tailscale 網址操作。
+- 此主機的跨專案手機預覽工具位於全域 Codex 設定，不屬於本 repository。2026-09-29 以兩個只回傳測試文字的服務驗證 `3001 -> HTTPS 8443`、`3002 -> HTTPS 8444` 可並行、重複註冊保持原路由、錯誤首頁文字與覆蓋 `443` 均被拒絕；測試路由及服務已移除。最後再驗證 Serve 僅剩 `443 -> localhost:3000`、本站 `/api/health` 回傳 200。未以實體手機驗收，也未替尚不存在的新專案預先建立網址。
 - 前輪 S0 基線：backend 128 passed、2 個既有棄用警告，frontend production build 成功，Alembic head 為 `0010_workbook_export`。變更後聚焦測試見下方；不是本次文件修改重跑的結果。接手 S0 與 S6/S7/S9 各有完整 backend/build 關卡。
 - 固定取捨：S4 一家銀行 parser → S5 最小模型 → S6 原子入帳與正確 Excel → S7 最小設定/待處理 → S8 沿用 Gmail 的受控自動入帳 → S9 固定 Windows 入口。保留 Documents 1:N、SecretStore、撤銷/恢復及 Excel 安全投影；不擴充 DSL/OCR/domain。
 - 舊計畫的完整月報/分類、90 天新掃描水位、每日新排程與移除 History 不再是本輪要求。現有 Gmail 引擎/30 分鐘 opt-in 排程及 Excel 背景檢查先沿用；Excel 從選配改為主要交付，不代表現有輸出已具正確信用卡語意。
 - 外部關卡：S4 至少兩個期別的真實樣本及逐筆核對；S6 人工確認的真實入帳；S8/S9 才在授權下做 Gmail/正式環境驗收。缺件不可猜測，不回填聊天中的個人秘密，不以合成測試代替外部驗收。
-- 下一步：S4 需使用者指定銀行，並提供兩個期別的本機 PDF 樣本（或在明確授權的私有資料夾指定路徑）；一份用於 parser 開發，另一份只作未參與調整的驗證。原始文件不進 repo、聊天或外部 AI；可先提供版面與欄位保留、個資/卡號已替換的合成副本。收到前不建立臆測 parser，也不進行依賴樣本契約的 S5 schema。正式 DB、真實 Gmail、秘密、排程與網路設定本輪均未操作。
+- 下一步：S4 仍需兩個期別的授權本機 PDF 樣本；一份用於 parser 開發，另一份只作未參與調整的驗證。原始文件不進 repo、聊天或外部 AI；可先提供版面與欄位保留、個資/卡號已替換的合成副本。收到前不建立臆測 parser，也不進行依賴樣本契約的 S5 schema。本次只重啟既有排程、驗證私有網站；未修改正式 DB schema、真實 Gmail、秘密或 Tailscale 路由。
 
 ## 目前狀態
 
@@ -43,9 +47,9 @@ S4 新增 `finance/statements/contracts.py`：銀行 parser 的純輸入/輸出�
 - 新增資料與入帳：統一入口區分只收錄文件、CSV 建立交易及 Gmail 同步；文件詳情集中顯示來源、有效狀態、關聯交易與匯入歷史。PDF 收錄仍明示尚未建立交易。
 - 來源追溯：交易與 Jobs 只有在有 `source_document_id`／`document_id` 時提供文件連結；文件詳情可回看本機／遠端來源及所有關聯處理結果。
 - 月份／幣別總覽：首頁預設本月，Dashboard 由資料庫依月份與幣別聚合；不同幣別不相加，連往交易頁會保留同一組條件，空月份顯示明確空狀態。
-- 設定已依「連線服務／家庭成員／文件解鎖／進階設定」分組，Gmail 預設在第一組；使用者可見名稱統一為「文件解鎖設定」，未更動既有資料識別或 schema。
+- 設定目前依「文件解鎖／連線服務／進階設定」分組，預設顯示個人解鎖資料；不再要求使用者建立銀行或家庭成員設定。舊 profile schema/API 保留相容。
 - PDF 開啟後會先自動預覽；只有需要密碼或密碼規則錯誤時才展開解鎖設定。來源不可用、需要密碼、密碼不符及 OCR 未就緒都有獨立提示，且明示預覽不會建立交易。
-- PDF 與撤銷／恢復對話框已補焦點移入、Tab 循環、Escape 關閉及回到觸發按鈕；自動預覽仍固定不呼叫 AI、不啟用 Gmail 同步、不保存遠端附件。
+- PDF 與撤銷／恢復對話框已補焦點移入、Tab 循環、Escape 關閉及回到觸發按鈕；若已設定 AI key，加密 PDF 預覽可分析遮罩後提示（預覽視窗可關閉）；不啟用 Gmail 同步、不保存遠端附件。
 - M7.5 已完成：主要字級層級與多幣別摘要、手機交易兩行排列、單排導覽、長內容縮排／換行及共用 `EmptyState`／`TransactionTable` 元件已整理。
 - 待處理：M7 前端行為測試基礎設施與更大規模長檔名／失敗狀態矩陣，銀行 PDF parser 也仍未完成。
 
@@ -71,6 +75,7 @@ M8 第一階段已完成專用 Excel 輸出、背景重試與設定介面；新�
 
 ## 本輪程式驗證
 
+- 2026-09-29 部署修正：Backend `167 passed`（2 個既有相依套件棄用警告）；Frontend `npm --prefix frontend run build` 成功；`git diff --check` 通過。舊資料庫以 SQLite online backup 複製，先在副本演練、再將新站專用 DB 升至 `0010_workbook_export`；`quick_check=ok`、外鍵錯誤 0，保留 19 文件、17 交易、23 工作紀錄，並建立 19 文件來源。單一服務的 `/`、`/api/health`、`/api/dashboard`、`/api/documents`、`/api/jobs` 測試成功。Tailscale HTTPS 首頁與 Dashboard API 均為 200；瀏覽器顯示總覽和資料，console error 為空。`FamilyFinanceHub` 排程手動觸發後保持 Running，重開機/實體手機尚未驗證。
 - 2026-09-28 Statement 聚焦測試：`.\.venv\Scripts\python.exe -m pytest backend/tests/test_statement_contracts.py backend/tests/test_statement_normalization.py -q -p no:cacheprovider`，26 passed；僅使用合成資料，覆蓋契約、月報語意、穩定列 hash、合法重複列、未知/缺日期/未核對/不平衡的 pending 閘門。
 - 2026-09-28 Backend 全套回歸：`.\.venv\Scripts\python.exe -m pytest backend/tests -q -p no:cacheprovider --basetemp backend/.test-tmp/statement-normalization-final`，167 passed、2 個既有 FastAPI TestClient／Starlette anyio 相依套件 deprecation warnings。
 - 2026-09-28 Frontend production build：`npm --prefix frontend run build` 成功；本輪沒有修改前端程式。
@@ -115,7 +120,7 @@ M8 第一階段已完成專用 Excel 輸出、背景重試與設定介面；新�
 
 ## 正式使用與外部驗收
 
-正式使用撤銷與 Excel 投影前，先停止 API、成對備份正式 DB/storage，確認資料庫位址後升級至目前 head `0010_workbook_export` 並重新啟動。此步尚未執行；操作方式見 `docs/operations.md`。
+此主機已使用成對備份後升級至 `0010_workbook_export` 的 `data/family-finance-hub-live.db`；舊 DB 仍保留且不可直接用新版程式啟動。其他主機若尚未升級，仍須先停止 API、成對備份 DB/storage、確認位址後依 `docs/operations.md` 操作。
 
 1. OCR 為條件式待辦，不是下一步前置：僅當 S4 真實帳單證明文字抽取不足，才安裝/驗收 Tesseract 及 `chi_tra`/`eng` traineddata。缺語言資料的提早檢查已有合成測試，真實 runtime 尚未驗收；近期順序依 S0-S9，不先擴充 OCR。
 2. 由使用者設定 Google Cloud OAuth 桌面 client 並在家庭主機互動授權；以真實台灣信用卡帳單在本機核對解密和 OCR 結果，不把帳單放入 repository。

@@ -199,6 +199,31 @@ def test_password_composer_uses_explicit_roc_date_format_and_never_expands_candi
 
 
 @pytest.mark.parametrize(
+    ("source", "values", "expected"),
+    [
+        ("national_id", {"national": "A123456789"}, "6789"),
+        ("birthday", {"birthday": "1984-03-02"}, "840302"),
+    ],
+)
+def test_password_composer_uses_only_the_secret_named_by_the_rule(source, values, expected):
+    part = (
+        {"source": "national_id", "transform": "suffix", "start": None, "length": 4, "date_format": None, "case": "upper"}
+        if source == "national_id"
+        else {"source": "birthday", "transform": "date_format", "start": None, "length": None, "date_format": "YYMMDD", "case": "preserve"}
+    )
+    rule = PasswordRule.model_validate({
+        "version": 1, "status": "resolved", "candidates": [{"parts": [part], "separator": ""}],
+    })
+
+    candidates, indexes = PasswordComposer(MemorySecretStore(values)).compose_with_rule_indexes(
+        rule, "national", "birthday",
+    )
+
+    assert candidates == (expected,)
+    assert indexes == (0,)
+
+
+@pytest.mark.parametrize(
     ("filtered_entries", "expected_candidates", "expected_indexes"),
     [
         ("duplicate", ("A12319840302", "678919840302"), (0, 2)),

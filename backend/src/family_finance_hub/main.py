@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 import asyncio
 from datetime import date, datetime, timezone
+from pathlib import Path
 from threading import Lock
 from typing import Any, Callable, Literal
 from urllib.parse import quote
@@ -8,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import String, case, cast, func, or_, select
 from sqlalchemy.orm import Session
@@ -38,7 +40,7 @@ from .documents.sources import DocumentSourceRegistry, LocalFileDocumentSource
 from .documents.sources.ports import DocumentSourceUnavailable
 from .models import DocumentSecurityProfile, PasswordRuleRecord, SecretProfile
 from .security.secrets import KeyringSecretStore, SecretStore, SecretStoreUnavailable
-from .security.secrets.service import SecretProfileService
+from .security.secrets.service import PERSONAL_UNLOCK_ID, SecretProfileService
 from .security.password_rules import PasswordInstructionContext, PasswordInstructionExtractor
 from .security.password_rules.ports import PasswordRuleInterpreter, PasswordRuleInterpreterUnavailable
 from .security.password_rules.provider_service import AIProviderService
@@ -55,6 +57,11 @@ class SecretProfileInput(BaseModel):
     display_name: str = Field(min_length=1, max_length=100)
     national_id: str = Field(min_length=1, max_length=64)
     birthday: date
+
+
+class PersonalUnlockInput(BaseModel):
+    national_id: str | None = Field(default=None, max_length=64)
+    birthday: date | None = None
 
 
 class DocumentSecurityProfileInput(BaseModel):
@@ -283,6 +290,17 @@ def create_app(
             for row in session.query(SecretProfile).order_by(SecretProfile.created_at.desc()).all()
         ]
 
+    @app.get("/api/security/personal-unlock")
+    def get_personal_unlock(session: Session = Depends(get_session)):
+        profile = session.get(SecretProfile, PERSONAL_UNLOCK_ID)
+        if profile is None:
+            return {"has_national_id": False, "has_birthday": False}
+        try:
+            national_id, birthday = get_secret_service().get_values(profile)
+        except SecretStoreUnavailable:
+            raise HTTPException(status_code=503, detail="Windows 安全資料保管庫目前無法使用") from None
+        return {"has_national_id": bool(national_id), "has_birthday": bool(birthday)}
+
     @app.get("/api/gmail/status")
     def gmail_status(session: Session = Depends(get_session)):
         from .models import GmailSyncState
@@ -399,6 +417,20 @@ def create_app(
             raise HTTPException(status_code=503, detail="無法安全保存資料，請稍後重試") from None
         return {"id": profile.id, "display_name": profile.display_name, "has_credentials": True}
 
+    @app.put("/api/security/personal-unlock")
+    def save_personal_unlock(body: PersonalUnlockInput, session: Session = Depends(get_session)):
+        try:
+            service = get_secret_service()
+            profile = service.save_personal_unlock(session, body.national_id, body.birthday)
+            national_id, birthday = service.get_values(profile)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from None
+        except SecretStoreUnavailable:
+            raise HTTPException(status_code=503, detail="Windows 安全資料保管庫目前無法使用") from None
+        except Exception:
+            raise HTTPException(status_code=503, detail="無法安全保存解鎖資料") from None
+        return {"has_national_id": bool(national_id), "has_birthday": bool(birthday)}
+
     @app.get("/api/security/ai-provider")
     def get_ai_provider(session: Session = Depends(get_session)):
         profile = session.get(AIProviderProfile, "openai")
@@ -456,11 +488,10 @@ def create_app(
 
     @app.post("/api/security/password-rules/analyze")
     def analyze_password_rule(body: PasswordRuleAnalysisInput, session: Session = Depends(get_session)):
-        if not body.document_security_profile_id:
-            raise HTTPException(status_code=422, detail="請先選擇文件解鎖設定")
-        profile = session.get(DocumentSecurityProfile, body.document_security_profile_id)
+        profile_id = body.document_security_profile_id or PERSONAL_UNLOCK_ID
+        profile = session.get(DocumentSecurityProfile, profile_id)
         if profile is None:
-            raise HTTPException(status_code=404, detail="找不到文件解鎖設定")
+            raise HTTPException(status_code=422, detail="請先保存個人解鎖資料")
         secret_profile = session.get(SecretProfile, profile.secret_profile_id)
         if secret_profile is None:
             raise HTTPException(status_code=404, detail="找不到家庭成員安全資料")
@@ -472,7 +503,11 @@ def create_app(
             )
             if not instruction:
                 raise HTTPException(status_code=422, detail="郵件中找不到可辨識的密碼規則說明")
-            context = {"institution": profile.institution, "document_type": "PDF statement"}
+            context = (
+                {"document_type": "PDF"}
+                if profile.id == PERSONAL_UNLOCK_ID
+                else {"institution": profile.institution, "document_type": "PDF statement"}
+            )
             fingerprint = password_rules.fingerprint(instruction, context)
             rule = password_rules.get_verified(session, profile.id, fingerprint)
             reused = rule is not None
@@ -532,7 +567,7 @@ def create_app(
             ) from None
         except DocumentProcessingError as error:
             messages = {
-                "pdf_password_required": "PDF 需要密碼規則，請選擇文件解鎖設定並提供郵件說明。",
+                "pdf_password_required": "PDF 需要解鎖資料與郵件中的密碼提示。請至設定保存身分資料後重試。",
                 "pdf_wrong_password": "目前的密碼規則無法開啟這份 PDF。",
                 "pdf_unsupported_encryption": "此 PDF 使用不支援的加密方式。",
                 "pdf_malformed": "PDF 無法讀取或內容格式不正確。",
@@ -820,6 +855,10 @@ def create_app(
     def list_jobs(session: Session = Depends(get_session)):
         rows = session.scalars(select(ImportJob).order_by(ImportJob.created_at.desc()).limit(100)).all()
         return [{"id": row.id, "document_id": row.document_id, "source_type": row.source_type, "target_module": row.target_module, "status": row.status, "summary": row.summary, "created_at": row.created_at} for row in rows]
+
+    frontend_dist = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+    if frontend_dist.is_dir():
+        app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
 
     return app
 

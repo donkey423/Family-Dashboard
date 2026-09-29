@@ -96,7 +96,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 - 原始 PDF/抽取全文/秘密不進 Git、log、聊天或外部 AI。可存產品需要的結構化交易，不把全文塞入 raw_json。
 - AI 只限既有 opt-in 的遮罩密碼說明分析；不加交易 AI fallback，不用模型產生金額補平核對。
-- 寄件者只能選候選 profile，不是銀行身分/帳戶所有權證明；成功解鎖也不是可入帳證明。
+- 寄件者只作 PDF 來源線索，不是銀行身分/帳戶所有權證明；個人解鎖不要求選 profile，成功解鎖也不是可入帳證明。
 - 同日同店同金額可以是兩筆真交易，保留列序號/頁碼，不用描述+日期+金額去重。
 - 撤銷沿用軟撤銷，保留來源；一般同步不得自動恢復已撤銷文件。
 
@@ -118,7 +118,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 | --- | --- | --- |
 | S1 Gmail 範圍 | 自訂 q 走 message search；不借 history 抓範圍外郵件；自訂 A/B 不改預設 cursor；分頁改 q 有衝突；失敗頁不跳過 | `integrations/gmail/sync.py`、`test_gmail_sync.py` |
 | S2 密碼上下文 | 關鍵行前後語意上下文；HTML row/cell/inline 空白及重疊行保序；先遮罩再截斷；不送全文/未確認安全資料 | `security/password_rules/extractor.py`、`test_password_rules.py`、`test_pdf_api.py` |
-| S3 共用解鎖 | PdfPreviewUseCase；sender 精確 email/domain 唯一匹配；歧義不遍歷秘密；手動選擇優先；verified rule 安全重用；AI 關閉零呼叫 | `application/pdf_processing.py`、`test_pdf_processing.py`、`test_pdf_processor.py`、`test_pdf_api.py` |
+| S3 共用解鎖 | PdfPreviewUseCase 預設使用個人解鎖資料，不要求銀行/成員；舊 sender 精確匹配及手動 profile 保留相容；verified rule 安全重用；AI 關閉零呼叫 | `application/pdf_processing.py`、`test_pdf_processing.py`、`test_pdf_processor.py`、`test_pdf_api.py` |
 
 保留 /content 原始 bytes、/preview no-store 與錯誤契約。自動化直接呼叫 application，不用 HTTP 呼叫自己。sender_pattern 不變任意 regex，密碼 DSL 不新增指令或暴力候選。
 
@@ -156,7 +156,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 | 資料 | 最小內容/限制 |
 | --- | --- |
-| StatementAccount | 隨機 ID、bank ID、別名、解鎖 profile reference、必要遮罩線索。代表帳單帳戶，不是一張實體卡，也不等同 SecretProfile |
+| StatementAccount | 隨機 ID、由已驗證 parser 確認的 bank ID、別名、必要遮罩線索。代表帳單帳戶，不是一張實體卡，也不等同解鎖資料；不要求使用者建立銀行/成員解鎖 profile |
 | Statement | 唯一 document_id、可空 account/period、parser ID/version、結構化草稿/核對摘要、review_version、狀態/reason_code、處理持有識別/時間 |
 | FinanceTransaction 擴充 | nullable statement_id、posting_date、transaction_kind、statement_line_index；CSV 保持原樣，不回填臆測帳戶 |
 
@@ -182,7 +182,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 1. 沿用 S3 共用來源/解鎖及 S4 parser；短 transaction 取得處理權，transaction 外讀來源/解鎖/解析，再短 transaction 存草稿。新增的寫入 transaction 不包 HTTP/AI/PDF/OCR。保留來源讀取的內容 SHA-256 一致性檢查，不能把內容已變的 bytes 當成原 Document 入帳。
 2. Document 已存在仍可重試 pending/failed，不需再上傳；ready 重解析增加 review_version，使舊確認失效。imported 不覆寫，已撤銷不處理。
-3. 最小帳戶 API 提供列表/建立/修正綁定，不要求改 DB。比對 bank/profile/遮罩線索，不僅以末四碼推定。
+3. 最小帳戶 API 提供列表/建立/修正綁定，不要求改 DB。以已驗證 parser 的銀行身分和遮罩線索核對，不以解鎖 profile 或末四碼單獨推定。
 4. 有 imported 資料的 account 不得任意改 bank/身份綁定重寫歷史；別名可改，衝突綁定回明確錯誤，不做帳戶合併平台。
 
 建議 route，新增前先確認沒有同責任入口：
@@ -227,7 +227,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 **目標：** 不需終端呼叫 API，不重做 Dashboard。
 **修改：** 既有設定、ExcelExportSettings、文件詳情/對話框及必要 API client/type。
 
-1. 沿用 Gmail、SecretStore/解鎖、Excel 設定；新增最小帳單帳戶綁定，只要別名、銀行、既有 profile、必要遮罩線索。
+1. 沿用 Gmail、個人解鎖、Excel 設定；新增最小帳單帳戶綁定，只顯示 parser 已確認的銀行/遮罩線索與可選別名，不要求使用者手填銀行、機構、家庭成員或解鎖 profile。
 2. 一個「待處理帳單」入口，顯示來源/期別/原因/下一步，可選帳戶、補解鎖、分析重試、核對確認、看原件、撤銷。不建第二套文件匣/Jobs。
 3. 確認畫面列筆數/期間/幣別/消費/退款/繳款/費用/利息/差額/來源；只有 ready 可確認。409 重載，不沿用舊確認。
 4. Excel 區顯示上次成功更新、檔案狀態、待處理數、立即更新/下載；檔案佔用提示關閉 Excel 後重試，不把已入帳顯示成整批失敗。

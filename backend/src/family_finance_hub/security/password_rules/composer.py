@@ -29,16 +29,19 @@ class PasswordComposer:
             return (), ()
         national_id = self.secret_store.get(national_id_reference)
         birthday_text = self.secret_store.get(birthday_reference)
-        if not national_id or not birthday_text:
-            return (), ()
-        try:
-            birthday = date.fromisoformat(birthday_text)
-        except ValueError:
-            return (), ()
-        values = {"national_id": national_id, "birthday": birthday}
+        values: dict[str, str | date] = {}
+        if national_id:
+            values["national_id"] = national_id
+        if birthday_text:
+            try:
+                values["birthday"] = date.fromisoformat(birthday_text)
+            except ValueError:
+                pass
         candidates: list[str] = []
         rule_indexes: list[int] = []
         for rule_index, candidate in enumerate(rule.candidates[:3]):
+            if any(part.source not in values for part in candidate.parts):
+                continue
             value = self._compose_candidate(candidate, values)
             if value and value not in candidates:
                 candidates.append(value)

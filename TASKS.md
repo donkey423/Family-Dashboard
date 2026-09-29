@@ -2,7 +2,7 @@
 
 ## 目前執行入口：信用卡 PDF 到 Excel
 
-2026-09-28 已將 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 改為 Excel 優先的執行規格；本輪接續完成版型無關的 Statement 正規化與入帳閘門，但尚未建立真實銀行 parser。前輪 S1-S3 已補完，下一個外部關卡仍是 S4 真實銀行解析器。M0-M8 勾選代表既有功能，不代表真實 PDF 入帳；歷史未勾項不自動成為下一個任務。
+2026-09-28 已將 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 改為 Excel 優先的執行規格；版型無關的 Statement 正規化與入帳閘門，以及 2026-09-29 的個人解鎖簡化與單一網址部署已完成，但尚未建立真實銀行 parser。下一個外部關卡仍是 S4 真實銀行解析器。M0-M8 勾選代表既有功能，不代表真實 PDF 入帳；歷史未勾項不自動成為下一個任務。
 
 - [x] S0：重新確認 Git/隔離環境，重跑測試與 build。
 - [x] S1：Gmail 自訂 query 與預設 cursor 隔離、分頁、失敗重試；FakeGmail 聚焦測試通過。
@@ -80,6 +80,7 @@ M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自
 - [x] 身分證字號、生日、PDF 密碼、OAuth token/refresh token 不得存一般 SQLite、log、repo 或 plaintext config
 - [x] SQLite 僅保存 `secret_profile_id` / `credential_ref` 等非秘密 reference
 - [x] 建立家庭成員 secret profile 與銀行/卡別文件安全 profile 關聯；秘密資料不複製進 document metadata
+- [x] 簡化目前 UI 為一份個人解鎖資料：只填身分證字號及/或生日，內部沿用 profile schema，無須輸入銀行或家庭成員；舊 API 保留相容
 
 #### M5.2c Password Rule pipeline
 
@@ -178,10 +179,10 @@ M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自
 
 ### M7.4 設定與 PDF 預覽
 
-- [x] 設定依「連線服務／家庭成員／文件解鎖／進階設定」分組導覽，避免手機需滑過全部表單才能找到 Gmail。
-- [x] 使用者可見的「安全 profile」改為「文件解鎖設定」等一致名稱；不為文案改動重命名既有資料識別或 schema。
+- [x] 設定依「文件解鎖／連線服務／進階設定」分組；目前解鎖頁只收身分證字號及/或生日，不要求銀行、機構或家庭成員。
+- [x] 舊 profile API/schema 保留相容，新的個人解鎖 API 只回傳欄位是否已保存，不回傳原值。
 - [x] 一般 PDF 開啟即預覽，需要密碼時才展開解鎖設定；錯誤區分需要密碼、密碼錯誤、來源不可用與 OCR 未就緒。預覽成功不代表財務入帳。
-- [x] AI 規則解析維持明確 opt-in，真實秘密只在本機組合；自動預覽不得暗中呼叫 AI、啟用同步或永久保存遠端附件。
+- [x] 保存 AI key 後，開啟需要密碼且有提示的 PDF 會自動分析遮罩提示；預覽中可關閉 AI 重試。真實秘密只在本機組合，預覽不啟用同步或永久保存遠端附件。
 - [x] PDF 與撤銷／恢復對話框統一鍵盤行為：開啟時移入焦點、Tab 留在對話框、Escape 關閉並回到觸發按鈕。保留撤銷影響確認與過期預覽保護。
 
 ### M7.5 排版與共用介面
@@ -236,7 +237,7 @@ M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自
 - [ ] 確認近期唯一核心產品流程：Gmail 信用卡帳單 → 安全解鎖 → BankStatementParser → Finance → 月份 Dashboard → optional Excel。
 - [ ] P0：以第一份真實信用卡帳單完成 bank-specific parser 與 statement total reconciliation。
 - [ ] P0：評估 PasswordInstructionExtractor 改為密碼關鍵行的上下文視窗擷取。
-- [ ] P0：評估用 `sender_pattern` 自動選 bank/document security profile，降低每月人工操作。
+- [x] P0：新個人解鎖流程已移除每月人工選 bank/document security profile 的需要；舊 sender 匹配僅供相容，不作為新 UI 前置。
 - [ ] 決定 Gmail 日常同步保留 History API incremental state，或收斂為最近 60~90 天 idempotent re-scan。
 - [ ] 決定 Gmail 30 分鐘 scheduler 是否改成 startup + daily + manual。
 - [ ] 決定 Excel 30 秒 projection worker / UI polling 是否改成交易變更事件驅動 + 手動 rebuild。

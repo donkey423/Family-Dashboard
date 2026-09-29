@@ -260,13 +260,13 @@ Gmail subject/body/sender + attachment filename + readable metadata
 
 #### PasswordInstructionExtractor
 
-密碼規則優先從 Gmail subject/body、sender、附件檔名與未加密可讀 metadata 取得。若規則文字只存在於「必須先解密才能看到」的 PDF 頁面，系統無法靠該 PDF 自己推導密碼，必須改用郵件說明、已知 bank profile 或人工補充。
+密碼規則優先從 Gmail subject/body、sender、附件檔名與未加密可讀 metadata 取得。若規則文字只存在於「必須先解密才能看到」的 PDF 頁面，系統無法靠該 PDF 自己推導密碼，必須改用郵件說明或人工補充。
 
 對 Gmail 來源 PDF，只有初次 PDF 處理回報需要密碼時，Backend 才即時取得來源郵件的 subject/from 與純文字/HTML body；不將郵件資料保存至 SQLite。Extractor 遮罩後才交由 AI；本機上傳文件則可由使用者在預覽視窗輸入說明。
 
 #### PasswordRuleInterpreter
 
-AI 只接收「密碼說明文字」及必要的非敏感 context，例如銀行名稱或文件類型；**不得把真實身分證字號、生日、PDF 密碼或完整帳單內容送給 AI 來算密碼**。AI 輸出受 schema 約束的 `PasswordRule`，不輸出可執行 Python/JavaScript，也不可由系統對 AI 回傳內容使用 `eval`。
+AI 只接收遮罩後的「密碼說明文字」及必要的非敏感 context；預設個人解鎖流程只傳文件類型。**不得把真實身分證字號、生日、PDF 密碼或完整帳單內容送給 AI 來算密碼**。AI 輸出受 schema 約束的 `PasswordRule`，不輸出可執行 Python/JavaScript，也不可由系統對 AI 回傳內容使用 `eval`。設定 AI key 後，開啟加密 PDF 的預覽會自動允許此分析；使用者可在預覽視窗關閉後重試。
 
 PasswordRule DSL 第一版只允許白名單操作，例如：
 
@@ -277,17 +277,17 @@ PasswordRule DSL 第一版只允許白名單操作，例如：
 
 若說明不充分，AI 必須回傳 ambiguous/multiple-candidates，而不是自行大量猜測。系統只允許少量 deterministic candidates，預設最多 3 個；不得把此功能做成 brute-force engine。
 
-成功開啟某銀行/卡別後，應保存「已驗證的 PasswordRule 與 bank/sender/document pattern」，之後優先重用；只有規則不存在、已驗證規則失效或說明文字改變時才再次呼叫 AI。
+成功開啟 PDF 後，預設個人解鎖流程保存與遮罩提示指紋關聯的已驗證 PasswordRule，之後優先重用；提示改變或規則失效時才再次呼叫 AI。不要求使用者建立銀行、機構、寄件者或家庭成員設定。舊的明確指定 profile/sender 匹配 API 保留相容性。
 
 #### SecretStore / PasswordComposer
 
-`SecretStore` 是獨立 port，已由 Windows `keyring`/Credential Manager adapter 實作，且會拒絕不安全或 Null backend。SQLite 的 `secret_profiles` 與 `document_security_profiles` 僅保存不透明 `credential_ref`、顯示名稱與銀行/寄件者關聯；不得保存實際身分證字號、生日或組合後密碼。profile API 不回傳秘密值。
+`SecretStore` 是獨立 port，已由 Windows `keyring`/Credential Manager adapter 實作，且會拒絕不安全或 Null backend。新 UI 只保存個人身分證字號及/或生日；內部建立固定的個人 SecretProfile/DocumentSecurityProfile，沿用既有 schema，但不要求輸入銀行或成員。SQLite 只保存不透明 `credential_ref` 與非秘密 metadata；不得保存實際身分證字號、生日或組合後密碼。`GET /api/security/personal-unlock` 只回傳兩項是否已保存，不回傳原值。舊 profile API 保留供既有資料相容。
 
-`PasswordComposer` 是 deterministic 本機程式，只接受已驗證 PasswordRule 與 SecretStore 取出的值，輸出短生命週期 candidate password。candidate 不寫入 DB、log、Job summary 或一般 exception message。
+`PasswordComposer` 是 deterministic 本機程式，只接受已驗證 PasswordRule 與 SecretStore 取出的值；只用規則實際需要且已保存的欄位，輸出短生命週期 candidate password。candidate 不寫入 DB、log、Job summary 或一般 exception message。
 
 #### PDF processor 邊界
 
-目前 `DocumentProcessor.process(request: ProcessingRequest)` 已使用 `ProcessingContext` 傳遞 filename、content type、document security profile ID 與非秘密 metadata。`PasswordAwarePdfProcessor` 另接受只在本機記憶體存在的 `password_candidates`；共用 `PdfPreviewUseCase` 協調來源、profile、SecretStore、規則與處理器，不把秘密放進 context、DB、log 或 API response。後續 Statement 入帳沿用此 application 流程，不再建立第二套解鎖流程。
+目前 `DocumentProcessor.process(request: ProcessingRequest)` 已使用 `ProcessingContext` 傳遞 filename、content type、document security profile ID 與非秘密 metadata。`PasswordAwarePdfProcessor` 另接受只在本機記憶體存在的 `password_candidates`；共用 `PdfPreviewUseCase` 預設使用內部個人 profile，協調來源、SecretStore、規則與處理器，不把秘密放進 context、DB、log 或 API response。後續 Statement 入帳沿用此 application 流程，不再建立第二套解鎖流程。
 
 第一版 PDF stack 以 `pypdf[crypto]` 處理 encryption detection、in-memory decrypt 與 text extraction；只有真實銀行 PDF 驗證出現相容性問題時才增加 pikepdf/qpdf fallback。OCR 只在成功解密後且文字抽取不足時啟用，不對所有 PDF 預設執行。通用 `OcrProvider` port 目前有本機 Tesseract adapter，以 PDFium 記憶體渲染並透過 stdin 傳送頁面影像；每份文件最多 20 頁、每頁最多約 8 百萬像素，總逾時 120 秒。Tesseract executable 及 `chi_tra`/`eng` traineddata 需在 Windows 主機另行安裝；無引擎或 OCR 失敗不阻止 PDF 預覽。
 

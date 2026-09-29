@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, type Dashboard, type DocumentDetail, type DocumentRow, type Job, type Transaction, type SecretProfile, type DocumentSecurityProfile, type GmailStatus, type TransactionPage, type ImportImpact, type SearchResult } from "./api";
+import { api, ApiError, type Dashboard, type DocumentDetail, type DocumentRow, type Job, type Transaction, type PersonalUnlockStatus, type GmailStatus, type TransactionPage, type ImportImpact, type SearchResult } from "./api";
 import { ImportLifecycleDialog } from "./ImportLifecycleDialog";
 import { useDialogFocus } from "./useDialogFocus";
 import { EmptyState } from "./EmptyState";
@@ -7,7 +7,7 @@ import { TransactionTable } from "./TransactionTable";
 import { ExcelExportSettings } from "./ExcelExportSettings";
 
 type View = "overview" | "documents" | "transactions" | "activity" | "settings" | "search";
-type SettingsGroup = "connections" | "members" | "unlock" | "advanced";
+type SettingsGroup = "connections" | "unlock" | "advanced";
 type SearchOffsets = { document: number; transaction: number };
 type RouteState = { view: View; query: string; searchOffsets: SearchOffsets; month: string; currency: string };
 const SEARCH_PAGE_SIZE = 10;
@@ -30,9 +30,8 @@ const viewDescriptions: Record<View, string> = {
   search: "從已收錄的文件與有效交易中查找資料。",
 };
 const settingsGroups: { id: SettingsGroup; label: string; description: string }[] = [
+  { id: "unlock", label: "文件解鎖", description: "身分資料與 PDF 密碼" },
   { id: "connections", label: "連線服務", description: "Gmail 與 Excel 自動更新" },
-  { id: "members", label: "家庭成員", description: "本機安全資料保管" },
-  { id: "unlock", label: "文件解鎖", description: "PDF 密碼規則與成員關聯" },
   { id: "advanced", label: "進階設定", description: "選用的 AI 規則辨識" },
 ];
 function parseOffset(value: string | null) {
@@ -496,23 +495,21 @@ function DocumentDetailDialog({ documentId, onClose, onPreview, onSaveLocal, onC
 }
 
 function SettingsView({ report, onRefresh }: { report: (message: string, error?: string) => void; onRefresh: () => Promise<void> }) {
-  const [secretProfiles, setSecretProfiles] = useState<SecretProfile[]>([]);
-  const [documentProfiles, setDocumentProfiles] = useState<DocumentSecurityProfile[]>([]);
+  const [personalUnlock, setPersonalUnlock] = useState<PersonalUnlockStatus | null>(null);
   const [gmail, setGmail] = useState<GmailStatus | null>(null);
   const [ai, setAi] = useState<{ configured: boolean; provider: string | null; model: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [secret, setSecret] = useState({ display_name: "", national_id: "", birthday: "" });
-  const [documentProfile, setDocumentProfile] = useState({ display_name: "", institution: "", sender_pattern: "", secret_profile_id: "" });
+  const [secret, setSecret] = useState({ national_id: "", birthday: "" });
   const [aiConfig, setAiConfig] = useState({ api_key: "", model: "gpt-4.1-mini" });
-  const [activeGroup, setActiveGroup] = useState<SettingsGroup>("connections");
+  const [activeGroup, setActiveGroup] = useState<SettingsGroup>("unlock");
 
   const load = useCallback(async () => {
     try {
-      const [members, secureProfiles, gmailStatus, aiStatus] = await Promise.all([
-        api.secretProfiles(), api.documentSecurityProfiles(), api.gmailStatus(), api.aiProvider(),
+      const [unlockStatus, gmailStatus, aiStatus] = await Promise.all([
+        api.personalUnlock(), api.gmailStatus(), api.aiProvider(),
       ]);
-      setSecretProfiles(members); setDocumentProfiles(secureProfiles); setGmail(gmailStatus); setAi(aiStatus); setError("");
+      setPersonalUnlock(unlockStatus); setGmail(gmailStatus); setAi(aiStatus); setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "無法讀取設定");
     }
@@ -523,20 +520,14 @@ function SettingsView({ report, onRefresh }: { report: (message: string, error?:
   async function createSecret(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError("");
     try {
-      await api.createSecretProfile(secret);
-      setSecret({ display_name: "", national_id: "", birthday: "" });
-      await load(); report("家庭成員資料已安全保存到 Windows Credential Manager");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "無法保存家庭成員資料"); }
-    finally { setBusy(false); }
-  }
-
-  async function createDocumentProfile(event: React.FormEvent) {
-    event.preventDefault(); setBusy(true); setError("");
-    try {
-      await api.createDocumentSecurityProfile({ ...documentProfile, sender_pattern: documentProfile.sender_pattern || null });
-      setDocumentProfile({ display_name: "", institution: "", sender_pattern: "", secret_profile_id: "" });
-      await load(); report("文件解鎖設定已建立");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "無法建立文件解鎖設定"); }
+      const result = await api.savePersonalUnlock({
+        ...(secret.national_id.trim() ? { national_id: secret.national_id.trim() } : {}),
+        ...(secret.birthday ? { birthday: secret.birthday } : {}),
+      });
+      setPersonalUnlock(result);
+      setSecret({ national_id: "", birthday: "" });
+      report("解鎖資料已安全保存到 Windows Credential Manager");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "無法保存解鎖資料"); }
     finally { setBusy(false); }
   }
 
@@ -546,7 +537,7 @@ function SettingsView({ report, onRefresh }: { report: (message: string, error?:
       const result = await api.configureAiProvider(aiConfig);
       setAiConfig((current) => ({ ...current, api_key: "" }));
       setAi({ configured: result.configured, provider: "openai", model: result.model });
-      report("AI 設定已保存；只有預覽時勾選允許 AI 才會分析遮罩後的密碼說明");
+      report("AI 設定已保存；開啟加密 PDF 時會分析遮罩後的密碼提示");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "無法保存 AI 設定"); }
     finally { setBusy(false); }
   }
@@ -601,31 +592,18 @@ function SettingsView({ report, onRefresh }: { report: (message: string, error?:
       </button>)}
     </nav>
     <div className="settings-layout">
-      {activeGroup === "members" && <section className="settings-section" id="settings-panel-members" role="tabpanel" aria-labelledby="settings-tab-members" tabIndex={-1}>
-        <div className="settings-heading"><div><p className="eyebrow">本機保管</p><h2>家庭成員資料</h2><p>身分證字號與生日只存於 Windows 安全資料保管庫。</p></div></div>
-        <form className="settings-form" onSubmit={(event) => void createSecret(event)}>
-          <label>顯示名稱<input required maxLength={100} value={secret.display_name} onChange={(event) => setSecret({ ...secret, display_name: event.target.value })} /></label>
-          <label>身分證字號<input required type="password" autoComplete="off" maxLength={64} value={secret.national_id} onChange={(event) => setSecret({ ...secret, national_id: event.target.value })} /></label>
-          <label>出生日期<input required type="date" value={secret.birthday} onChange={(event) => setSecret({ ...secret, birthday: event.target.value })} /></label>
-          <button className="button primary" disabled={busy || !secret.display_name || !secret.national_id || !secret.birthday}>安全保存</button>
-        </form>
-        <ul className="settings-list">{secretProfiles.map((profile) => <li key={profile.id}><strong>{profile.display_name}</strong><span>身分資料已保管</span></li>)}</ul>
-      </section>}
-
       {activeGroup === "unlock" && <section className="settings-section" id="settings-panel-unlock" role="tabpanel" aria-labelledby="settings-tab-unlock" tabIndex={-1}>
-        <div className="settings-heading"><div><p className="eyebrow">文件規則</p><h2>文件解鎖設定</h2><p>將 PDF 密碼規則與對應家庭成員資料連結；實際密碼只在本機組合。</p></div></div>
-        <form className="settings-form" onSubmit={(event) => void createDocumentProfile(event)}>
-          <label>設定名稱<input required maxLength={100} value={documentProfile.display_name} onChange={(event) => setDocumentProfile({ ...documentProfile, display_name: event.target.value })} /></label>
-          <label>銀行或機構<input required maxLength={100} value={documentProfile.institution} onChange={(event) => setDocumentProfile({ ...documentProfile, institution: event.target.value })} /></label>
-          <label>寄件者比對文字（選填）<input maxLength={255} value={documentProfile.sender_pattern} onChange={(event) => setDocumentProfile({ ...documentProfile, sender_pattern: event.target.value })} /></label>
-          <label>家庭成員<select required value={documentProfile.secret_profile_id} onChange={(event) => setDocumentProfile({ ...documentProfile, secret_profile_id: event.target.value })}><option value="">選擇成員</option>{secretProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.display_name}</option>)}</select></label>
-          <button className="button primary" disabled={busy || secretProfiles.length === 0}>建立解鎖設定</button>
+        <div className="settings-heading"><div><p className="eyebrow">本機保管</p><h2>文件解鎖</h2><p>只需保存身分證字號、出生日期，或其中一項。系統依郵件提示在本機組合密碼。</p></div><span className={personalUnlock?.has_national_id || personalUnlock?.has_birthday ? "connection-state ready" : "connection-state"}>{personalUnlock?.has_national_id || personalUnlock?.has_birthday ? "已保存" : "未設定"}</span></div>
+        <form className="settings-form" onSubmit={(event) => void createSecret(event)}>
+          <label>身分證字號<input type="password" autoComplete="off" maxLength={64} value={secret.national_id} onChange={(event) => setSecret({ ...secret, national_id: event.target.value })} placeholder={personalUnlock?.has_national_id ? "已保存；留白不變" : "輸入身分證字號"} /></label>
+          <label>出生日期<input type="date" value={secret.birthday} onChange={(event) => setSecret({ ...secret, birthday: event.target.value })} /></label>
+          <button className="button primary" disabled={busy || (!secret.national_id.trim() && !secret.birthday)}>安全保存</button>
         </form>
-        <ul className="settings-list">{documentProfiles.map((profile) => <li key={profile.id}><strong>{profile.display_name}</strong><span>{profile.institution}</span></li>)}</ul>
+        <p className="settings-note">身分證：{personalUnlock?.has_national_id ? "已保存" : "未保存"} · 生日：{personalUnlock?.has_birthday ? "已保存" : "未保存"}。留白的欄位不會覆蓋已保存資料；原始值不會從伺服器回傳。</p>
       </section>}
 
       {activeGroup === "advanced" && <section className="settings-section" id="settings-panel-advanced" role="tabpanel" aria-labelledby="settings-tab-advanced" tabIndex={-1}>
-        <div className="settings-heading"><div><p className="eyebrow">可選服務</p><h2>AI 密碼規則辨識</h2><p>AI 只收到遮罩後的密碼說明文字，不會收到身分證、生日或組合密碼。</p></div><span className={ai?.configured ? "connection-state ready" : "connection-state"}>{ai?.configured ? `已設定 · ${ai.model}` : "未設定"}</span></div>
+        <div className="settings-heading"><div><p className="eyebrow">可選服務</p><h2>AI 密碼規則辨識</h2><p>保存 API key 後，開啟加密 PDF 時會自動分析遮罩後的郵件提示；可能產生 API 用量。身分資料與組合密碼不會送出。</p></div><span className={ai?.configured ? "connection-state ready" : "connection-state"}>{ai?.configured ? `已設定 · ${ai.model}` : "未設定"}</span></div>
         <form className="settings-form settings-form-two" onSubmit={(event) => void saveAi(event)}>
           <label>OpenAI API key<input required type="password" autoComplete="new-password" value={aiConfig.api_key} onChange={(event) => setAiConfig({ ...aiConfig, api_key: event.target.value })} placeholder={ai?.configured ? "已設定；輸入新 key 可更新" : "sk-..."} /></label>
           <label>模型<input required maxLength={120} value={aiConfig.model} onChange={(event) => setAiConfig({ ...aiConfig, model: event.target.value })} /></label>
@@ -649,8 +627,8 @@ const unlockErrorCodes = new Set(["pdf_password_required", "pdf_wrong_password"]
 
 function previewFailure(reason: unknown) {
   if (reason instanceof ApiError) {
-    if (reason.code === "pdf_password_required") return { code: reason.code, message: "這份 PDF 需要文件解鎖設定。請選擇設定，並提供郵件中的密碼規則後再試。" };
-    if (reason.code === "pdf_wrong_password") return { code: reason.code, message: "目前的文件解鎖設定無法開啟這份 PDF，請檢查規則或改用其他設定。" };
+    if (reason.code === "pdf_password_required") return { code: reason.code, message: "尚無可用的解鎖資料或密碼提示。請在設定保存身分資料；若不是 Gmail 文件，請貼上郵件中的密碼提示。" };
+    if (reason.code === "pdf_wrong_password") return { code: reason.code, message: "郵件提示組成的密碼無法開啟這份 PDF。請核對提示與已保存的資料。" };
     if (reason.code === "document_source_unavailable") return { code: reason.code, message: "目前無法取得這份文件的來源；若是 Gmail 附件，請先保存本機副本或重新同步。" };
     return { code: reason.code ?? "preview_failed", message: reason.message };
   }
@@ -659,11 +637,10 @@ function previewFailure(reason: unknown) {
 
 function PdfPreviewDialog({ document, onClose }: { document: DocumentRow; onClose: () => void }) {
   const dialog = useRef<HTMLElement>(null);
-  const [profiles, setProfiles] = useState<DocumentSecurityProfile[]>([]);
-  const [profileId, setProfileId] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [allowAi, setAllowAi] = useState(false);
+  const [aiConfigured, setAiConfigured] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [errorCode, setErrorCode] = useState("");
@@ -679,21 +656,24 @@ function PdfPreviewDialog({ document, onClose }: { document: DocumentRow; onClos
     if (initialPreviewDocument.current === document.id) return;
     initialPreviewDocument.current = document.id;
     let active = true;
-    void api.documentSecurityProfiles().then((items) => { if (active) setProfiles(items); }).catch(() => { if (active) setProfiles([]); });
-    void requestPreview();
+    void api.aiProvider().then((status) => {
+      if (!active) return;
+      setAiConfigured(status.configured);
+      setAllowAi(status.configured);
+      void requestPreview(status.configured);
+    }).catch(() => { if (active) void requestPreview(false); });
     return () => { active = false; };
   }, [document.id]);
   useEffect(() => () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); }, [pdfUrl]);
 
-  async function requestPreview() {
+  async function requestPreview(useAi = allowAi) {
     const requestId = ++previewRequest.current;
     setBusy(true); setError(""); setErrorCode("");
     try {
       const result = await api.preview(document.id, {
-        document_security_profile_id: profileId,
         subject,
         body,
-        allow_ai_analysis: allowAi,
+        allow_ai_analysis: useAi,
       });
       if (requestId !== previewRequest.current) return;
       const nextUrl = URL.createObjectURL(result.blob);
@@ -719,17 +699,16 @@ function PdfPreviewDialog({ document, onClose }: { document: DocumentRow; onClos
       <header className="preview-header"><div><p className="eyebrow">文件預覽</p><h2 id="preview-title">{document.filename}</h2></div><button className="icon-button" data-dialog-initial-focus aria-label="關閉預覽" title="關閉預覽" onClick={onClose}>×</button></header>
       <div className="preview-body">
         <form className="preview-controls" onSubmit={preview}>
-          <div className="preview-status"><p className="eyebrow">預覽狀態</p><strong>{busy ? "正在準備 PDF" : pdfUrl ? "PDF 已載入" : needsUnlock ? "需要文件解鎖設定" : "尚未取得預覽"}</strong><p>這裡只檢視文件，不會建立財務交易。</p></div>
+          <div className="preview-status"><p className="eyebrow">預覽狀態</p><strong>{busy ? "正在準備 PDF" : pdfUrl ? "PDF 已載入" : needsUnlock ? "需要解鎖資料" : "尚未取得預覽"}</strong><p>這裡只檢視文件，不會建立財務交易。</p></div>
           {error && <div className="notice error" role="alert">{error}</div>}
-          {!unlockOpen && <button type="button" className="small-action preview-unlock-toggle" disabled={busy} onClick={() => setUnlockOpen(true)}>{needsUnlock ? "顯示文件解鎖設定" : "顯示解鎖設定"}</button>}
+          {!unlockOpen && <button type="button" className="small-action preview-unlock-toggle" disabled={busy} onClick={() => setUnlockOpen(true)}>{needsUnlock ? "查看解鎖提示" : "顯示解鎖選項"}</button>}
           {unlockOpen && <div className="preview-unlock-form">
-            <div className="preview-section-heading"><strong>文件解鎖設定</strong><button type="button" className="text-button" onClick={() => setUnlockOpen(false)}>收起</button></div>
-            <label>文件解鎖設定<select value={profileId} onChange={(event) => setProfileId(event.target.value)}><option value="">不使用解鎖資料</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.display_name} · {profile.institution}</option>)}</select></label>
+            <div className="preview-section-heading"><strong>解鎖提示</strong><button type="button" className="text-button" onClick={() => setUnlockOpen(false)}>收起</button></div>
             <label>郵件主旨（選填）<input maxLength={500} value={subject} onChange={(event) => setSubject(event.target.value)} /></label>
-            <label>密碼規則說明<textarea rows={8} maxLength={20_000} value={body} onChange={(event) => setBody(event.target.value)} placeholder="例如：密碼為身分證末四碼加出生日期 YYYYMMDD" /></label>
-            <label className="check-row"><input type="checkbox" checked={allowAi} onChange={(event) => setAllowAi(event.target.checked)} /><span>允許 AI 分析遮罩後的規則文字</span></label>
+            <label>密碼提示（非 Gmail 文件才需要）<textarea rows={8} maxLength={20_000} value={body} onChange={(event) => setBody(event.target.value)} placeholder="例如：密碼為身分證末四碼加出生日期 YYYYMMDD" /></label>
+            <label className="check-row"><input type="checkbox" checked={allowAi} disabled={!aiConfigured} onChange={(event) => setAllowAi(event.target.checked)} /><span>使用 AI 辨識遮罩後的提示{!aiConfigured ? "（請先在設定保存 API key）" : ""}</span></label>
             <button className="button primary" disabled={busy}>{busy ? "正在處理…" : "重新產生預覽"}</button>
-            <p className="settings-note">解密只在本機暫存處理；原始 PDF 不變。AI 必須明確勾選才會分析遮罩後的規則文字。</p>
+            <p className="settings-note">Gmail 文件會讀取原郵件提示；解密只在本機處理，原始 PDF 不變。AI 不會收到身分資料或實際密碼。</p>
           </div>}
           {error && !needsUnlock && <button type="button" className="small-action" disabled={busy} onClick={() => void requestPreview()}>重試預覽</button>}
           {pdfUrl && <p className="settings-note">預覽成功不代表已建立財務交易；PDF 仍只是共用文件。</p>}
@@ -739,7 +718,7 @@ function PdfPreviewDialog({ document, onClose }: { document: DocumentRow; onClos
           {extractionStatus === "partial" && <div className="notice info" role="status">OCR 只完成部分頁面，但仍可檢視完整 PDF。</div>}
           {extractionStatus === "insufficient" && <div className="notice info" role="status">OCR 未取得足夠文字，但仍可檢視 PDF 頁面。</div>}
         </form>
-        <div className="pdf-stage">{pdfUrl ? <iframe title={`PDF 預覽：${document.filename}`} src={pdfUrl} /> : <EmptyState title={busy ? "正在準備預覽" : needsUnlock ? "需要文件解鎖設定" : "尚未取得預覽"} detail={needsUnlock ? "請在左側完成解鎖設定；預覽不會自動建立交易。" : "文件預覽會顯示在這裡。"} />}</div>
+        <div className="pdf-stage">{pdfUrl ? <iframe title={`PDF 預覽：${document.filename}`} src={pdfUrl} /> : <EmptyState title={busy ? "正在準備預覽" : needsUnlock ? "需要解鎖資料" : "尚未取得預覽"} detail={needsUnlock ? "請到設定保存身分資料，或在左側補充郵件提示；預覽不會建立交易。" : "文件預覽會顯示在這裡。"} />}</div>
       </div>
     </section>
   </div>;
