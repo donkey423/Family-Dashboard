@@ -27,6 +27,8 @@ export type ImportImpact = Dashboard & { document_id: string; filename: string; 
 export type SecretProfile = { id: string; display_name: string; has_credentials: boolean };
 export type DocumentSecurityProfile = { id: string; display_name: string; institution: string; sender_pattern: string | null; secret_profile_id: string };
 export type PersonalUnlockStatus = { has_national_id: boolean; has_birthday: boolean };
+export type AiProvider = "groq" | "openai";
+export type AiProviderStatus = { configured: boolean; provider: AiProvider | null; model: string | null };
 export type GmailStatus = { configured: boolean; authorized: boolean; scope: string | null; last_sync_status: string; last_successful_sync: string | null; last_error_summary: string | null; full_sync_in_progress: boolean; auto_sync_enabled: boolean; next_sync_at: string | null; sync_interval_minutes: number };
 
 export class ApiError extends Error {
@@ -144,8 +146,8 @@ export const api = {
   documentSecurityProfiles: () => request<DocumentSecurityProfile[]>("/api/security/document-profiles"),
   createDocumentSecurityProfile: (input: Omit<DocumentSecurityProfile, "id">) =>
     postJson<DocumentSecurityProfile>("/api/security/document-profiles", input),
-  aiProvider: () => request<{ configured: boolean; provider: string | null; model: string | null }>("/api/security/ai-provider"),
-  configureAiProvider: (input: { api_key: string; model: string }) => postJson<{ configured: boolean; model: string }>("/api/security/ai-provider", input),
+  aiProvider: () => request<AiProviderStatus>("/api/security/ai-provider"),
+  configureAiProvider: (input: { provider: AiProvider; api_key: string; model: string }) => postJson<{ configured: boolean; provider: AiProvider; model: string }>("/api/security/ai-provider", input),
   gmailStatus: () => request<GmailStatus>("/api/gmail/status"),
   configureGmail: (config: Record<string, unknown>) => postJson<{ configured: boolean }>("/api/gmail/oauth-client", { config }),
   authorizeGmail: () => postJson<{ authorized: boolean; scope: string }>("/api/gmail/authorize", {}),

@@ -8,6 +8,7 @@
 - [x] S1：Gmail 自訂 query 與預設 cursor 隔離、分頁、失敗重試；FakeGmail 聚焦測試通過。
 - [x] S2：密碼提示 HTML/重疊上下文、遮罩後截斷；測試僅使用合成資料。
 - [x] S3：共用 PDF 解鎖 application use case、唯一安全 profile 匹配及 API 相容性測試。
+- [x] S3F：依 `FREE_AI_PASSWORD_RULE_PLAN.md` 將密碼規則 AI 改為 provider-neutral，第一階段接 Groq Free + `openai/gpt-oss-20b`；verified cache 優先，429/失敗留 pending/manual，不自動 fallback 到付費 provider。程式與合成驗證已完成；真實 Groq key、Groq PDF 解鎖及真實帳單 parser/入帳仍未完成。
 - [ ] S4：通用 Statement 輸出契約/月支出語意與版型無關正規化閘門已有程式（契約+正規化聚焦測試 26 passed）；銀行 parser、兩期逐筆核對及實際對帳式待樣本。
 - [ ] S5：最小 Statement/account 模型、狀態、冪等約束與隔離 migration。
 - [ ] S6：A 分析/帳戶 API、B 原子確認/查詢/撤銷、C 正確 Excel；完成真實 PDF 到 Excel、重跑與恢復驗收。
@@ -91,6 +92,7 @@ M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自
 - [x] 建立本機 `PasswordComposer`，由 PasswordRule + SecretStore 組合 candidate；candidate 不可進 DB/log/Job summary
 - [x] 已成功驗證的 bank/sender/document pattern + PasswordRule 可持久化重用；只有規則缺失、改變或失效時才重新呼叫 AI
 - [x] 支援常見生日格式及台灣民國年格式，但必須由 PasswordRule 明確指定，不以 brute force 猜測
+- [x] 將目前 OpenAI-only provider 改為 Groq Free 優先；沿用 `PasswordRuleInterpreter`、`AIProviderProfile.provider`、SecretStore 與 verified rule cache，不建立通用 AI 平台
 
 #### M5.2d PDF processor
 

@@ -72,6 +72,7 @@ class DocumentSecurityProfileInput(BaseModel):
 
 
 class AIProviderInput(BaseModel):
+    provider: Literal["groq", "openai"] = "openai"
     api_key: str = Field(min_length=1, max_length=500)
     model: str = Field(min_length=1, max_length=120)
 
@@ -443,7 +444,12 @@ def create_app(
     @app.post("/api/security/ai-provider", status_code=201)
     def configure_ai_provider(body: AIProviderInput, session: Session = Depends(get_session)):
         try:
-            profile = AIProviderService(get_secret_store()).configure(session, body.api_key, body.model)
+            profile = AIProviderService(get_secret_store()).configure(
+                session,
+                body.api_key,
+                body.model,
+                provider=body.provider,
+            )
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except HTTPException:

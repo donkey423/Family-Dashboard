@@ -197,6 +197,27 @@ def test_ai_provider_key_is_kept_in_secret_store_only(tmp_path):
     engine.dispose()
 
 
+def test_ai_provider_api_accepts_groq_without_returning_key(tmp_path):
+    secret_store = MemorySecretStore()
+    client, _ = make_client(tmp_path, secret_store)
+    api_key = "gsk-synthetic-only-not-real"
+
+    with client:
+        response = client.post(
+            "/api/security/ai-provider",
+            json={"provider": "groq", "api_key": api_key, "model": "openai/gpt-oss-20b"},
+        )
+        assert response.status_code == 201
+        assert response.json() == {
+            "configured": True,
+            "provider": "groq",
+            "model": "openai/gpt-oss-20b",
+        }
+        assert api_key not in response.text
+        assert client.get("/api/security/ai-provider").json()["provider"] == "groq"
+    assert api_key in secret_store.values.values()
+
+
 def test_pdf_preview_uses_ai_rules_locally_and_persists_only_verified_rule(tmp_path):
     secret_store = MemorySecretStore()
     interpreter = FakeInterpreter(ambiguous_rule())

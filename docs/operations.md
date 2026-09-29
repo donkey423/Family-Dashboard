@@ -42,7 +42,11 @@ npm run dev -- --host <Windows-Tailscale-IP>
 
 ## 秘密管理
 
-家庭成員身分資料、OpenAI API key 與 Gmail OAuth client/token 均透過 Windows Credential Manager 保存；SQLite 只存隨機 credential reference。不要將 secrets 寫入普通 SQLite table、log、`.env`、repository 或明文設定檔。若 Windows Credential Manager 不可用，相關設定/操作會失敗，不會降級至明文儲存。
+家庭成員身分資料、Groq/OpenAI API key 與 Gmail OAuth client/token 均透過 Windows Credential Manager 保存；SQLite 只存隨機 credential reference。不要將 secrets 寫入普通 SQLite table、log、`.env`、repository 或明文設定檔。若 Windows Credential Manager 不可用，相關設定/操作會失敗，不會降級至明文儲存。
+
+AI 密碼規則設定可在「設定 → 進階設定」選擇 Groq（免費優先）或 OpenAI。Groq 目前使用 `openai/gpt-oss-20b` 與 Responses JSON Schema；Groq Responses 不接受 `store`，程式不會送出。只有遮罩後的密碼提示與必要非敏感 context 會送出，provider 失敗/429 會保留待處理，不會自動切換到可能付費的 provider。免費額度、模型及 Structured Outputs 支援需以供應商當下官方文件為準。
+
+切換 provider 後必須按保存；設定頁的 Groq 預設值只提供新設定的預填，不會自動改寫既有的 Windows Credential Manager profile。可用設定頁重新讀取的實際 provider/model 確認目前服務使用哪一條路徑。2026-09-29 的現場服務仍是既有 OpenAI profile；Groq adapter 已部署於程式但尚未保存 Groq key。這次授權 Gmail 網頁下載的 PDF 已完成本機收錄與重複 bytes 去重，AI 預覽因 OpenAI 額度不足停止且沒有建立交易；要驗證 Groq，需先在本機保存 key，再用合成提示測試。
 
 Gmail OAuth 授權會在執行 API 的 Windows 主機開啟瀏覽器並使用 loopback callback，因此首次連線需要互動式桌面 session。授權完成後可手動同步；定時同步預設關閉，必須在 UI 明確啟用後才每 30 分鐘觸發一次，並且只呼叫既有 Gmail sync use case。它可匯入通用 CSV 與收錄 PDF 文件，但不會將 PDF 猜成交易。Windows 關機時排程暫停；重新啟動後若已到期，會在 scheduler 下一次檢查時補跑。替換 OAuth client 設定會自動關閉排程。
 

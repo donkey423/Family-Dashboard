@@ -6,10 +6,13 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 from family_finance_hub.database import Base, make_engine, make_session_factory
-from family_finance_hub.models import DocumentSecurityProfile, PasswordRuleRecord, SecretProfile
+from family_finance_hub.models import AIProviderProfile, DocumentSecurityProfile, PasswordRuleRecord, SecretProfile
 from family_finance_hub.security.password_rules.composer import PasswordComposer
 from family_finance_hub.security.password_rules.extractor import PasswordInstructionContext, PasswordInstructionExtractor
+from family_finance_hub.security.password_rules.groq_responses import GroqResponsesInterpreter
 from family_finance_hub.security.password_rules.openai_responses import OpenAIResponsesInterpreter
+from family_finance_hub.security.password_rules.ports import PasswordRuleInterpreterUnavailable
+from family_finance_hub.security.password_rules.provider_service import AIProviderService
 from family_finance_hub.security.password_rules.schema import PasswordRule
 from family_finance_hub.security.password_rules.service import PasswordRuleService
 
@@ -20,6 +23,12 @@ class MemorySecretStore:
 
     def get(self, reference):
         return self.values.get(reference)
+
+    def set(self, reference, value):
+        self.values[reference] = value
+
+    def delete(self, reference):
+        self.values.pop(reference, None)
 
 
 def make_rule(transform="suffix", count=4, date_format="YYYYMMDD", separator=""):
@@ -371,3 +380,150 @@ def test_openai_adapter_sends_only_rule_context_and_disables_response_storage(mo
     assert "national_id_value" not in user_text
     assert "birthday_value" not in user_text
     assert "sk-test-secret" not in json.dumps(captured["payload"])
+
+
+def test_groq_adapter_uses_responses_schema_without_unsupported_storage(monkeypatch):
+    captured = {}
+    rule_json = make_rule().model_dump(mode="json")
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps({"output_text": json.dumps(rule_json)}).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        captured["payload"] = json.loads(request.data)
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("family_finance_hub.security.password_rules.openai_responses.urlopen", fake_urlopen)
+    result = GroqResponsesInterpreter("gsk-test-secret", "openai/gpt-oss-20b").interpret(
+        "身分證末四碼加出生日期 YYYYMMDD",
+        {"document_type": "PDF statement"},
+    )
+
+    assert result == PasswordRule.model_validate(rule_json)
+    assert captured["request"].full_url == "https://api.groq.com/openai/v1/responses"
+    assert captured["payload"]["model"] == "openai/gpt-oss-20b"
+    assert "store" not in captured["payload"]
+    assert captured["payload"]["text"]["format"]["strict"] is True
+    assert "gsk-test-secret" not in json.dumps(captured["payload"])
+
+
+@pytest.mark.parametrize(
+    ("provider", "interpreter_type"),
+    [("groq", GroqResponsesInterpreter), ("openai", OpenAIResponsesInterpreter)],
+)
+def test_ai_provider_service_dispatches_configured_provider(tmp_path, provider, interpreter_type):
+    engine = make_engine(f"sqlite:///{(tmp_path / f'{provider}.db').as_posix()}")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+    store = MemorySecretStore({"secret-ref": "test-api-key"})
+
+    with factory.begin() as session:
+        session.add(AIProviderProfile(
+            id="openai",
+            provider=provider,
+            model="openai/gpt-oss-20b" if provider == "groq" else "gpt-4.1-mini",
+            api_key_credential_ref="secret-ref",
+        ))
+
+    with factory() as session:
+        interpreter = AIProviderService(store).interpreter(session)
+        assert isinstance(interpreter, interpreter_type)
+    engine.dispose()
+
+
+def test_ai_provider_service_keeps_legacy_profile_id_when_switching_to_groq(tmp_path):
+    engine = make_engine(f"sqlite:///{(tmp_path / 'configure.db').as_posix()}")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+    store = MemorySecretStore({"old-ref": "old-key"})
+
+    with factory() as session:
+        profile = AIProviderService(store).configure(
+            session,
+            "gsk-test-key",
+            "openai/gpt-oss-20b",
+            provider="groq",
+        )
+        assert profile.id == "openai"
+        assert profile.provider == "groq"
+        assert profile.model == "openai/gpt-oss-20b"
+
+    with factory() as session:
+        stored = session.get(AIProviderProfile, "openai")
+        assert stored.provider == "groq"
+        assert store.get(stored.api_key_credential_ref) == "gsk-test-key"
+    engine.dispose()
+
+
+def test_ai_provider_service_rejects_unknown_provider(tmp_path):
+    engine = make_engine(f"sqlite:///{(tmp_path / 'invalid-provider.db').as_posix()}")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+
+    with factory() as session:
+        with pytest.raises(ValueError, match="只支援 Groq 或 OpenAI"):
+            AIProviderService(MemorySecretStore({})).configure(
+                session,
+                "test-key",
+                "test-model",
+                provider="unknown",
+            )
+    engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (400, "AI 請求格式不被目前模型接受"),
+        (401, "AI API key 無效"),
+        (403, "AI API key 沒有使用此模型的權限"),
+        (429, "AI API 回應 429"),
+        (500, "AI 密碼規則服務目前無法使用"),
+    ],
+)
+def test_openai_adapter_reports_safe_http_failure(monkeypatch, status, expected):
+    from io import BytesIO
+    from urllib.error import HTTPError
+
+    from family_finance_hub.security.password_rules.ports import PasswordRuleInterpreterUnavailable
+
+    def fake_urlopen(request, timeout):
+        raise HTTPError(request.full_url, status, "private upstream details", {}, BytesIO(b"private response"))
+
+    monkeypatch.setattr("family_finance_hub.security.password_rules.openai_responses.urlopen", fake_urlopen)
+    with pytest.raises(PasswordRuleInterpreterUnavailable) as exc:
+        OpenAIResponsesInterpreter("sk-test-secret", "configured-model").interpret(
+            "身分證末四碼", {"document_type": "PDF"}
+        )
+    assert expected in str(exc.value)
+    assert "private" not in str(exc.value)
+    assert "sk-test-secret" not in str(exc.value)
+
+
+@pytest.mark.parametrize("error_code", ["insufficient_quota", "credit_balance_exhausted", "project_spend_limit_exceeded"])
+def test_openai_adapter_identifies_quota_without_exposing_upstream_body(monkeypatch, error_code):
+    from io import BytesIO
+    from urllib.error import HTTPError
+
+    from family_finance_hub.security.password_rules.ports import PasswordRuleInterpreterUnavailable
+
+    def fake_urlopen(request, timeout):
+        body = json.dumps({"error": {"code": error_code, "message": "private upstream details"}}).encode()
+        raise HTTPError(request.full_url, 429, "private upstream details", {}, BytesIO(body))
+
+    monkeypatch.setattr("family_finance_hub.security.password_rules.openai_responses.urlopen", fake_urlopen)
+    with pytest.raises(PasswordRuleInterpreterUnavailable) as exc:
+        OpenAIResponsesInterpreter("sk-test-secret", "configured-model").interpret(
+            "身分證末四碼", {"document_type": "PDF"}
+        )
+    assert "OpenAI API 額度不足" in str(exc.value)
+    assert "private" not in str(exc.value)

@@ -24,7 +24,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 | 項目 | 已觀察狀態 | 不可誤認為 |
 | --- | --- | --- |
-| Git | 本機 master 為 488cee7，追蹤 origin/main 顯示落後文件提交 4ca61b1；有未提交程式與文件 | 已同步最新遠端，或可以 reset |
+| Git | 接手時本機 master 為 `001ca5d`、`origin/main` 為 `4f9bfb5`；工作區有先前未提交的程式與文件修改 | 已同步最新遠端，或可以 reset |
 | S1-S3 | Gmail 自訂查詢隔離、提示上下文/遮罩、共用 PDF 解鎖用例已有程式與合成測試 | 需要全部重寫 |
 | S4 | `finance/statements/contracts.py` 與 `finance/statements/normalization.py` 已有純契約、月支出語意、穩定列 hash 及 pending 閘門；契約+正規化聚焦測試 26 passed | 已有任何一家銀行的交易解析器 |
 | PDF | 來源讀取、本機解密、文字抽取/預覽，OCR 有介面及 adapter | 已建立 Finance 交易 |
@@ -33,7 +33,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 | Excel | 已有快照、背景檢查、ownership marker、原子替換及佔用重試 | 已正確區分信用卡退款、繳款與收入 |
 | 驗證 | 前輪基線 128 passed/build 成功；後續聚焦 74 passed，皆為隔離合成資料 | 本次文件修改跑過程式測試，或通過真實銀行驗收 |
 
-`ARCHITECTURE_REVIEW_BRIEF.md` 是背景，不是刪除授權。checkout 缺檔時可唯讀查看本機已有的 4ca61b1 版本，不自行 merge/reset。執行規格以本文件為準，進度以 TASKS/HANDOFF 為準。
+`ARCHITECTURE_REVIEW_BRIEF.md` 是背景，不是刪除授權。checkout 缺檔時可唯讀查看本機已有的 `4f9bfb5` 版本，不自行 merge/reset。執行規格以本文件為準，進度以 TASKS/HANDOFF 為準。
 
 ## 3. 保留與延後
 
@@ -123,6 +123,20 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 保留 /content 原始 bytes、/preview no-store 與錯誤契約。自動化直接呼叫 application，不用 HTTP 呼叫自己。sender_pattern 不變任意 regex，密碼 DSL 不新增指令或暴力候選。
 
 **完成：** 現有測試通過；發現缺口只補缺口，不把已完成步驟拆成新平台里程碑。
+
+## 7.1 S3F：免費 AI 密碼規則 Provider
+
+**目的：** 將目前 OpenAI-only 的密碼提示解析改成免費 API 優先；完整規格見 [FREE_AI_PASSWORD_RULE_PLAN.md](FREE_AI_PASSWORD_RULE_PLAN.md)。
+
+**目前狀態（2026-09-29）：** provider-neutral 程式、Groq adapter、設定 API/UI 與安全邊界已完成；合成測試及 frontend build 已通過。實際服務仍使用已保存的 OpenAI profile，尚未保存 Groq key，因此 Groq 真實 request 與真實 PDF 解鎖仍未驗收。這次實際 Gmail PDF 已完成文件收錄及 SHA-256 重複收錄驗證，但 AI 預覽因現存 OpenAI 額度不足停止，沒有建立交易；不得把這次結果視為 parser 或 Excel 入帳完成。
+
+- 第一階段接 Groq Free，預設 `openai/gpt-oss-20b`；實作前重新查 Groq 官方 Free Plan、model list 與 Structured Outputs 支援。
+- 沿用 `PasswordRuleInterpreter`、`PasswordRuleService` verified cache、`SecretStore` 與 `PasswordComposer`；只把 provider config、adapter、UI 改成 provider-neutral，不新增 migration 或通用 AI 平台。
+- Groq adapter 使用 Responses JSON Schema；因 Groq 不支援 `store`，不可送出該欄位。真實身分證、生日、組合密碼及帳單全文不得出站。
+- Groq 401/403/429/timeout/5xx 或 schema failure 均 fail closed，留 pending/manual；禁止自動 fallback 到可能付費的 OpenAI。OpenAI 只有使用者明確選擇時使用。
+- 驗收包含 synthetic prompt、payload 脫敏、provider dispatch、verified cache、不自動 fallback 及前端 production build。
+
+S3F 是小型前置改善，不得延誤 S4 第一家真實銀行 parser。
 
 ## 8. S4：第一家銀行真實解析器
 

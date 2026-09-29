@@ -1,8 +1,20 @@
 # 交接
 
+## 2026-09-29 免費 AI provider 與真實流程狀態
+
+- 已完成第一階段 provider-neutral 實作：Groq Free 預設 `openai/gpt-oss-20b`、既有 OpenAI 相容路徑、設定 API/UI provider 選擇，以及不送 `store` 的 Groq Responses payload。兩者共用既有 `PasswordRule` DSL、遮罩後提示、verified rule cache、SecretStore 與本機 PasswordComposer。
+- Groq 失敗、429、schema/網路錯誤會留在 pending/manual 路徑，不會自動呼叫可能付費的 OpenAI；API key 不進 repo、SQLite、log 或前端持久化。這次完整驗證為 backend 187 passed、frontend production build 成功，另有 2 個既有相依套件棄用警告。
+- 目前服務的已保存 profile 仍是 `openai` / `gpt-4.1-mini`，Groq adapter 雖已在工作區，Groq key 尚未保存。設定頁的 Groq 預設不會自動改寫既有 SecretStore profile，必須在本機明確保存 Groq key。
+- 本次已從使用者授權的 Gmail 網頁下載一份信用卡 PDF，收錄到 FamilyHub 文件匣；同一 bytes 再次收錄回報 `duplicate=true`。FamilyHub 內建 Gmail OAuth 仍未授權，所以這次不是內建 Gmail scheduler 的驗收。
+- 該 PDF 的 AI 預覽實際使用既有 OpenAI profile，因額度不足停止；系統沒有自動切 Groq，也沒有建立 Finance transaction。結果是文件已收錄但仍未解鎖、未解析、未入帳，避免誤匯入。
+- 尚未完成：真實 Groq synthetic prompt、Groq 解鎖真實 PDF、銀行專用 PDF transaction parser、逐筆核對及 PDF → Excel 入帳；不要把本次收錄/去重視為帳單解析完成。
+- 下一步：先在本機設定 Groq key，使用合成提示驗證真實 request，再重新跑授權 PDF；完成 S4 樣本與 parser 前，不擴充多銀行 framework，也不把人工解鎖結果當成自動入帳。
+
+本次執行遇到的 Git 分支同步、Windows pytest 暫存權限、runtime provider 未切換、Gmail OAuth 邊界、OpenAI 額度及文件狀態漂移，已逐項記錄在 [EXECUTION_ISSUES.md](EXECUTION_ISSUES.md)。
+
 ## 目前接手入口
 
-2026-09-29 文件解鎖操作已簡化：設定頁只需保存身分證字號及/或生日，系統內部建立固定個人 profile；開啟加密 PDF 時，若有 AI key 與可用的 Gmail/手動提示，AI 僅解析遮罩規則，由本機使用 SecretStore 值組合密碼。舊銀行/成員 profile API 保留相容，但不是新 UI 的前置。聚焦測試 45 passed、backend 全套 173 passed（2 個既有棄用警告）、frontend build 成功。既有 `FamilyFinanceHub` 排程已受控重啟；本機與私有 HTTPS 首頁及新 API 回傳 200，私有網址的新版設定頁已用瀏覽器檢查。實體 MacBook/手機未驗收。這只完成 PDF 解鎖體驗，未完成銀行 PDF 交易 parser 或 PDF→Excel 自動入帳，未使用真實身分資料或正式帳單驗收。
+2026-09-29 文件解鎖操作已簡化：設定頁只需保存身分證字號及/或生日，系統內部建立固定個人 profile；開啟加密 PDF 時，若有 AI key 與可用的 Gmail/手動提示，AI 僅解析遮罩規則，由本機使用 SecretStore 值組合密碼。舊銀行/成員 profile API 保留相容，但不是新 UI 的前置。這次完整 backend 187 passed、frontend build 成功；真實 Gmail PDF 已收錄並驗證重複 bytes 不新增文件，但目前 OpenAI profile 額度不足，沒有建立交易。實體 MacBook/手機未驗收，銀行 PDF transaction parser 與 PDF→Excel 自動入帳仍未完成。
 
 近期目標已收斂為「信用卡 PDF 解鎖、解析、核對後更新每月支出 Excel」。Web 只補設定、核對確認及例外處理，不先擴充平台或完整 Dashboard。2026-09-28 已依本機程式更新 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 的 S0-S9 詳細工作包、檔案落點、驗收數值及 Luna max 啟動指示；本輪接續實作了版型無關的 Statement 正規化與入帳閘門，但尚未建立銀行專用 parser。
 
@@ -15,7 +27,7 @@
 - 固定取捨：S4 一家銀行 parser → S5 最小模型 → S6 原子入帳與正確 Excel → S7 最小設定/待處理 → S8 沿用 Gmail 的受控自動入帳 → S9 固定 Windows 入口。保留 Documents 1:N、SecretStore、撤銷/恢復及 Excel 安全投影；不擴充 DSL/OCR/domain。
 - 舊計畫的完整月報/分類、90 天新掃描水位、每日新排程與移除 History 不再是本輪要求。現有 Gmail 引擎/30 分鐘 opt-in 排程及 Excel 背景檢查先沿用；Excel 從選配改為主要交付，不代表現有輸出已具正確信用卡語意。
 - 外部關卡：S4 至少兩個期別的真實樣本及逐筆核對；S6 人工確認的真實入帳；S8/S9 才在授權下做 Gmail/正式環境驗收。缺件不可猜測，不回填聊天中的個人秘密，不以合成測試代替外部驗收。
-- 下一步：S4 仍需兩個期別的授權本機 PDF 樣本；一份用於 parser 開發，另一份只作未參與調整的驗證。原始文件不進 repo、聊天或外部 AI；可先提供版面與欄位保留、個資/卡號已替換的合成副本。收到前不建立臆測 parser，也不進行依賴樣本契約的 S5 schema。本次只重啟既有排程、驗證私有網站；未修改正式 DB schema、真實 Gmail、秘密或 Tailscale 路由。
+- 下一步：S4 仍需兩個期別的授權本機 PDF 樣本；一份用於 parser 開發，另一份只作未參與調整的驗證。原始文件不進 repo、聊天或外部 AI；可先提供版面與欄位保留、個資/卡號已替換的合成副本。收到前不建立臆測 parser，也不進行依賴樣本契約的 S5 schema。本次未修改正式 DB schema、FamilyHub Gmail OAuth、秘密或 Tailscale 路由；Gmail 網頁下載僅用於文件收錄/去重及預覽錯誤驗證。
 
 ## 目前狀態
 
@@ -27,7 +39,7 @@ PDF 文字抽取不足時才走 `OcrProvider`；目前 Tesseract adapter 會先�
 
 通用 CSV 匯入會拒絕無效日期、非有限/超精度金額、格式不合的幣別與欄位數異常，失敗資料不會留下部分交易。Gmail 先保存 CSV 文件；單份財務解析失敗會保留文件與失敗工作紀錄，並繼續處理後續郵件。完整交易頁提供月份／幣別篩選和分頁；首頁只讀選定期間最近 8 筆，Dashboard 金額由 SQLite 依期間與幣別聚合。Alembic 與 API 共用 `FAMILY_FINANCE_HUB_DATABASE_URL`。
 
-S1 已驗證自訂 Gmail 查詢走 message search、不借用 history 範圍，且保留預設增量 cursor；涵蓋自訂 A/B 查詢、無既有 cursor、分頁中途改查詢及附件暫時失敗重試。S2 已驗證 HTML table row/cell、inline 空白、重疊上下文保序，以及先遮罩再套輸出上限；測試使用合成值。S3 已把 PDF 來源讀取、寄件者唯一匹配、已驗證規則重用、本機密碼組合、解密與文字抽取協調移到可直接測試的 application use case；格式錯誤／多地址不自動匹配，明確手動 profile 優先。測試確認歧義時不讀秘密、匹配失敗不遍歷其他家庭成員秘密、`/content` 保持原始 bytes、`/preview` 維持 no-store。未連線真實 Gmail 或讀取正式資料。
+S1 已驗證自訂 Gmail 查詢走 message search、不借用 history 範圍，且保留預設增量 cursor；涵蓋自訂 A/B 查詢、無既有 cursor、分頁中途改查詢及附件暫時失敗重試。S2 已驗證 HTML table row/cell、inline 空白、重疊上下文保序，以及先遮罩再套輸出上限；測試使用合成值。S3 已把 PDF 來源讀取、寄件者唯一匹配、已驗證規則重用、本機密碼組合、解密與文字抽取協調移到可直接測試的 application use case；格式錯誤／多地址不自動匹配，明確手動 profile 優先。測試確認歧義時不讀秘密、匹配失敗不遍歷其他家庭成員秘密、`/content` 保持原始 bytes、`/preview` 維持 no-store。前輪此處未連線真實 Gmail；本次另完成 Gmail 網頁手動下載與文件收錄/去重，FamilyHub 內建 Gmail OAuth 仍未授權。
 
 S4 新增 `finance/statements/contracts.py`：銀行 parser 的純輸入/輸出型別、帶原因碼的 unsupported 結果、列帳金額符號限制、對帳狀態，以及按消費日期/幣別彙總消費、退款、淨消費、費用、利息與繳款；未知列與缺日期列明確標示，不猜消費。相同行以不同 `line_index` 保留；帳戶線索拒絕長數字串，只接受末四碼或受限遮罩值。另新增 `finance/statements/normalization.py`，以 `statement_id + line_index` 產生穩定 SHA-256 row hash，保留合法相同交易，並只讓 `ready` 結果進入後續入帳；未知列、缺日期、未核對或對帳不符會保留為 `pending` 並帶原因碼。此層不讀 PDF、Gmail、DB 或秘密，也不代表已有銀行專用 parser、真實樣本或銀行核對公式，不能稱解析/入帳完成。
 
@@ -55,13 +67,13 @@ S4 新增 `finance/statements/contracts.py`：銀行 parser 的純輸入/輸出�
 
 下一步依 `IMPLEMENTATION_PLAN.md` 完成 S4：等待銀行名稱及兩期 PDF 樣本，保存在使用者授權的私有位置，或以欄位/版面相同的合成副本提供；一份用來開發，一份盲測。缺樣本期間不推測銀行格式、不建多銀行 framework，也不先建立依賴實際 parser 契約的 Statement schema。前端行為測試隨 S7 需要補強，不為完成舊清單而重排非核心功能，不全面重寫 `App.tsx`。
 
-M7 `2b21333` 與 M8 `488cee7` 均已包含於審查時的遠端 `origin/main`；最新遠端文件提交為 `4ca61b1`。
+M7 `2b21333` 與 M8 `488cee7` 均已包含於審查時的遠端 `origin/main`；本次接手時最新遠端文件提交為 `4f9bfb5`。
 
 ## M8 第一階段：Excel 自動投影已完成
 
 M8 第一階段已完成專用 Excel 輸出、背景重試與設定介面；新目標以 Excel 為主要使用成果，但目前仍須 S6C 補正信用卡退款/繳款分類、自然月摘要及 Statement 狀態。SQLite 仍是唯一事實來源；啟用後會立即並每 30 秒檢查快照與輸出，只有需要更新時才重建應用程式擁有的工作簿，只輸出有效交易，另列待處理 PDF。撤銷/恢復反映在下一次輸出；Excel 佔用時保留舊版並重試；外部修改由 SHA-256 偵測，暫停下載後從 SQLite 重建。手寫內容會被重建覆蓋；下載為當次副本，持續更新的是設定的本機檔。預設路徑為 `data/exports/家庭收支記錄.xlsx`（由 storage_root 上層衍生），可由 `FAMILY_FINANCE_HUB_EXCEL_PATH` 覆寫。
 
-密碼規則另修正候選值去重後規則索引錯位：預覽成功時會保存原始、真正命中的規則，不會因空白或重複候選值記錯規則。尚無經驗證的真實銀行 PDF parser，因此不能宣稱 PDF 已自動入帳。驗證僅使用隔離合成 DB／PDF／Excel，不變更正式資料庫、不連線 Gmail，也不讀取秘密。
+密碼規則另修正候選值去重後規則索引錯位：預覽成功時會保存原始、真正命中的規則，不會因空白或重複候選值記錯規則。尚無經驗證的真實銀行 PDF parser，因此不能宣稱 PDF 已自動入帳。程式測試使用隔離合成 DB／PDF／Excel；本次另以使用者授權的 Gmail 網頁手動下載一份 PDF 做文件收錄/去重及預覽錯誤驗證，沒有建立財務交易。
 
 ## 前一輪文件更新的驗證
 
@@ -75,11 +87,10 @@ M8 第一階段已完成專用 Excel 輸出、背景重試與設定介面；新�
 
 ## 本輪程式驗證
 
-- 2026-09-29 部署修正：Backend `167 passed`（2 個既有相依套件棄用警告）；Frontend `npm --prefix frontend run build` 成功；`git diff --check` 通過。舊資料庫以 SQLite online backup 複製，先在副本演練、再將新站專用 DB 升至 `0010_workbook_export`；`quick_check=ok`、外鍵錯誤 0，保留 19 文件、17 交易、23 工作紀錄，並建立 19 文件來源。單一服務的 `/`、`/api/health`、`/api/dashboard`、`/api/documents`、`/api/jobs` 測試成功。Tailscale HTTPS 首頁與 Dashboard API 均為 200；瀏覽器顯示總覽和資料，console error 為空。`FamilyFinanceHub` 排程手動觸發後保持 Running，重開機/實體手機尚未驗證。
-- 2026-09-28 Statement 聚焦測試：`.\.venv\Scripts\python.exe -m pytest backend/tests/test_statement_contracts.py backend/tests/test_statement_normalization.py -q -p no:cacheprovider`，26 passed；僅使用合成資料，覆蓋契約、月報語意、穩定列 hash、合法重複列、未知/缺日期/未核對/不平衡的 pending 閘門。
-- 2026-09-28 Backend 全套回歸：`.\.venv\Scripts\python.exe -m pytest backend/tests -q -p no:cacheprovider --basetemp backend/.test-tmp/statement-normalization-final`，167 passed、2 個既有 FastAPI TestClient／Starlette anyio 相依套件 deprecation warnings。
-- 2026-09-28 Frontend production build：`npm --prefix frontend run build` 成功；本輪沒有修改前端程式。
-- 本輪未讀取或解密正式帳單內容，未操作正式 DB、Gmail、SecretStore、排程或網路設定；17 份本機 PDF 仍需授權的銀行設定/樣本才能進入 S4 真實 parser 驗收。
+- 2026-09-29 免費 AI provider 實作回歸：`.\.venv\Scripts\python.exe -m pytest backend\tests -q -p no:cacheprovider --basetemp .pytest-tmp\free-ai-status`，187 passed、2 個既有 FastAPI/anyio 相依套件棄用警告。
+- 2026-09-29 Frontend production build：`npm --prefix frontend run build` 成功；`git diff --check` 通過。
+- 合成測試覆蓋 Groq/OpenAI dispatch、legacy profile、遮罩 payload、verified cache、失敗不 fallback、設定 API/UI 與 PDF preview contract；未把真實 Groq key 或真實帳單內容放進測試。
+- 實際服務 smoke check 顯示已保存 provider 仍為 OpenAI；授權 Gmail 網頁下載的 PDF 已收錄，重複 bytes 回報 `duplicate=true`，AI 預覽因 OpenAI 額度不足停止，Finance transaction 維持 0。
 
 ## 目前產品方向的重新審查 Gate
 
@@ -133,6 +144,6 @@ M8 第一階段已完成專用 Excel 輸出、背景重試與設定介面；新�
 ## 安全界線
 
 - 不讀取或回填先前對話裡曾提供的個人秘密；SQLite、log、repository 與 plaintext config 不可存 secrets。身分資料、PDF password、OAuth token 只透過使用者明確操作的本機 SecretStore/Credential Manager。
-- 本次規劃及前輪程式審查未連線 Gmail、未遷移或讀取使用中的資料庫，也未啟用排程或修改防火牆。此處引用的程式測試與 restore rehearsal 僅用合成資料及隔離 SQLite/storage，不據此推定使用者現場未設定 Gmail。
+- 程式測試與 restore rehearsal 僅用合成資料及隔離 SQLite/storage；本次真實 Gmail 操作限於使用者授權的網頁手動下載與本機文件收錄，FamilyHub 內建 Gmail OAuth 仍未設定，不據此宣稱自動同步已完成。
 - 正式升級前先確認 DB 與 storage 路徑，停止 API 並成對備份 DB 和 `data/documents`，再明確執行 migration；禁止刪除/重建舊 DB 或讓 app 靜默升級 schema。
 - 不自動 commit、push 或覆蓋其他既有修改。

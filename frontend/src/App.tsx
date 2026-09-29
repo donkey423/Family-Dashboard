@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, type Dashboard, type DocumentDetail, type DocumentRow, type Job, type Transaction, type PersonalUnlockStatus, type GmailStatus, type TransactionPage, type ImportImpact, type SearchResult } from "./api";
+import { api, ApiError, type AiProvider, type AiProviderStatus, type Dashboard, type DocumentDetail, type DocumentRow, type Job, type Transaction, type PersonalUnlockStatus, type GmailStatus, type TransactionPage, type ImportImpact, type SearchResult } from "./api";
 import { ImportLifecycleDialog } from "./ImportLifecycleDialog";
 import { useDialogFocus } from "./useDialogFocus";
 import { EmptyState } from "./EmptyState";
@@ -497,19 +497,27 @@ function DocumentDetailDialog({ documentId, onClose, onPreview, onSaveLocal, onC
 function SettingsView({ report, onRefresh }: { report: (message: string, error?: string) => void; onRefresh: () => Promise<void> }) {
   const [personalUnlock, setPersonalUnlock] = useState<PersonalUnlockStatus | null>(null);
   const [gmail, setGmail] = useState<GmailStatus | null>(null);
-  const [ai, setAi] = useState<{ configured: boolean; provider: string | null; model: string | null } | null>(null);
+  const [ai, setAi] = useState<AiProviderStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [secret, setSecret] = useState({ national_id: "", birthday: "" });
-  const [aiConfig, setAiConfig] = useState({ api_key: "", model: "gpt-4.1-mini" });
+  const [aiConfig, setAiConfig] = useState<{ provider: AiProvider; api_key: string; model: string }>({ provider: "groq", api_key: "", model: "openai/gpt-oss-20b" });
   const [activeGroup, setActiveGroup] = useState<SettingsGroup>("unlock");
+
+  const defaultModel = (provider: AiProvider) => provider === "groq" ? "openai/gpt-oss-20b" : "gpt-4.1-mini";
 
   const load = useCallback(async () => {
     try {
       const [unlockStatus, gmailStatus, aiStatus] = await Promise.all([
         api.personalUnlock(), api.gmailStatus(), api.aiProvider(),
       ]);
-      setPersonalUnlock(unlockStatus); setGmail(gmailStatus); setAi(aiStatus); setError("");
+      setPersonalUnlock(unlockStatus); setGmail(gmailStatus); setAi(aiStatus);
+      setAiConfig((current) => ({
+        ...current,
+        provider: aiStatus.provider ?? current.provider,
+        model: aiStatus.model ?? defaultModel(aiStatus.provider ?? current.provider),
+      }));
+      setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "無法讀取設定");
     }
@@ -536,7 +544,7 @@ function SettingsView({ report, onRefresh }: { report: (message: string, error?:
     try {
       const result = await api.configureAiProvider(aiConfig);
       setAiConfig((current) => ({ ...current, api_key: "" }));
-      setAi({ configured: result.configured, provider: "openai", model: result.model });
+      setAi({ configured: result.configured, provider: result.provider, model: result.model });
       report("AI 設定已保存；開啟加密 PDF 時會分析遮罩後的密碼提示");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "無法保存 AI 設定"); }
     finally { setBusy(false); }
@@ -605,10 +613,12 @@ function SettingsView({ report, onRefresh }: { report: (message: string, error?:
       {activeGroup === "advanced" && <section className="settings-section" id="settings-panel-advanced" role="tabpanel" aria-labelledby="settings-tab-advanced" tabIndex={-1}>
         <div className="settings-heading"><div><p className="eyebrow">可選服務</p><h2>AI 密碼規則辨識</h2><p>保存 API key 後，開啟加密 PDF 時會自動分析遮罩後的郵件提示；可能產生 API 用量。身分資料與組合密碼不會送出。</p></div><span className={ai?.configured ? "connection-state ready" : "connection-state"}>{ai?.configured ? `已設定 · ${ai.model}` : "未設定"}</span></div>
         <form className="settings-form settings-form-two" onSubmit={(event) => void saveAi(event)}>
-          <label>OpenAI API key<input required type="password" autoComplete="new-password" value={aiConfig.api_key} onChange={(event) => setAiConfig({ ...aiConfig, api_key: event.target.value })} placeholder={ai?.configured ? "已設定；輸入新 key 可更新" : "sk-..."} /></label>
+          <label>Provider<select value={aiConfig.provider} onChange={(event) => { const provider = event.target.value as AiProvider; setAiConfig({ ...aiConfig, provider, model: defaultModel(provider) }); }}><option value="groq">Groq（免費優先）</option><option value="openai">OpenAI（既有相容）</option></select></label>
+          <label>AI API key<input required type="password" autoComplete="new-password" value={aiConfig.api_key} onChange={(event) => setAiConfig({ ...aiConfig, api_key: event.target.value })} placeholder={ai?.configured ? "已設定；輸入新 key 可更新" : aiConfig.provider === "groq" ? "gsk_..." : "sk-..."} /></label>
           <label>模型<input required maxLength={120} value={aiConfig.model} onChange={(event) => setAiConfig({ ...aiConfig, model: event.target.value })} /></label>
           <button className="button secondary" disabled={busy || !aiConfig.api_key}>保存 AI 設定</button>
         </form>
+        <p className="settings-note">Groq 目前提供 Free Plan；額度與支援模型可能由供應商調整。API key 只保存到 Windows Credential Manager，且只會把遮罩後的密碼提示送出。</p>
       </section>}
 
       {activeGroup === "connections" && <section className="settings-section" id="settings-panel-connections" role="tabpanel" aria-labelledby="settings-tab-connections" tabIndex={-1}>

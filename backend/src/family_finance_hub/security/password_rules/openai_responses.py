@@ -8,6 +8,8 @@ from .schema import PasswordRule
 
 class OpenAIResponsesInterpreter:
     endpoint = "https://api.openai.com/v1/responses"
+    provider_name = "OpenAI"
+    include_store = True
 
     def __init__(self, api_key: str, model: str):
         if not api_key.strip() or not model.strip():
@@ -21,7 +23,6 @@ class OpenAIResponsesInterpreter:
         schema = PasswordRule.model_json_schema()
         payload = {
             "model": self.model,
-            "store": False,
             "input": [
                 {
                     "role": "system",
@@ -51,6 +52,8 @@ class OpenAIResponsesInterpreter:
                 },
             },
         }
+        if self.include_store:
+            payload["store"] = False
         request = Request(
             self.endpoint,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -60,7 +63,34 @@ class OpenAIResponsesInterpreter:
         try:
             with urlopen(request, timeout=30) as response:
                 result = json.loads(response.read())
-        except (HTTPError, URLError, TimeoutError, OSError, ValueError):
+        except HTTPError as error:
+            if error.code == 429:
+                try:
+                    error_code = json.loads(error.read(32_768)).get("error", {}).get("code")
+                except (ValueError, OSError, AttributeError):
+                    error_code = None
+                if error_code in {
+                    "insufficient_quota",
+                    "credit_balance_exhausted",
+                    "organization_spend_limit_exceeded",
+                    "project_spend_limit_exceeded",
+                    "organization_usage_limit_exceeded",
+                }:
+                    raise PasswordRuleInterpreterUnavailable(
+                        f"{self.provider_name} API 額度不足，請檢查 API 帳戶的用量設定"
+                    ) from None
+                if error_code in {"rate_limit_exceeded", "slow_down"}:
+                    raise PasswordRuleInterpreterUnavailable("AI 請求過於頻繁，請稍後再試") from None
+                raise PasswordRuleInterpreterUnavailable("AI API 回應 429，請檢查額度與速率限制") from None
+            messages = {
+                400: f"{self.provider_name} 請求格式不被目前模型接受，請檢查模型設定",
+                401: f"{self.provider_name} API key 無效，請在設定重新儲存",
+                403: f"{self.provider_name} API key 沒有使用此模型的權限",
+            }
+            raise PasswordRuleInterpreterUnavailable(
+                messages.get(error.code, "AI 密碼規則服務目前無法使用")
+            ) from None
+        except (URLError, TimeoutError, OSError, ValueError):
             raise PasswordRuleInterpreterUnavailable("AI 密碼規則服務目前無法使用") from None
         finally:
             del request

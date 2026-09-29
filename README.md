@@ -2,7 +2,7 @@
 
 家庭收支記錄以 Windows 家用電腦為主機，近期目標是將信用卡 PDF 解鎖、解析與核對後，更新每月支出 Excel。SQLite 保留可追溯資料；Web 用於設定、核對確認與處理例外，完整 Dashboard 不是交付前置。
 
-**目前狀態：** 已有文件匣、通用 CSV 匯入、總覽/搜尋/工作紀錄、Gmail 同步、個人資料輔助的加密 PDF 預覽及專用 Excel 輸出；解鎖設定不再要求銀行或家庭成員。銀行專用 PDF 交易 parser 尚未完成，不能宣稱信用卡 PDF 已自動入帳。Excel 優先的逐步實作與驗收見 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)，下列操作說明描述現有功能。
+**目前狀態：** 已有文件匣、通用 CSV 匯入、總覽/搜尋/工作紀錄、Gmail 同步、個人資料輔助的加密 PDF 預覽及專用 Excel 輸出；解鎖設定不再要求銀行或家庭成員。密碼規則 provider-neutral/Groq adapter 已完成並通過合成驗證，但目前服務仍使用已保存的 OpenAI profile，尚未保存 Groq key。最近一份授權 Gmail PDF 已完成收錄與 SHA-256 去重，AI 預覽因現存 OpenAI 額度不足停止，沒有建立交易；銀行專用 PDF 交易 parser 尚未完成，不能宣稱信用卡 PDF 已自動入帳。Excel 優先的逐步實作與驗收見 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)，下列操作說明描述現有功能。
 
 ## 開發環境
 
@@ -78,7 +78,7 @@ Gmail CSV 會使用通用欄位解析匯入交易；解析失敗的 CSV 仍會�
 
 PDF 內嵌文字不足時，系統才會嘗試使用本機 OCR；PDFium 會在記憶體中渲染，Tesseract 透過標準輸入處理影像，不建立臨時帳單影像。OCR 需要另外安裝 Tesseract 及 `chi_tra`、`eng` 語言資料；亦可用 `FAMILY_FINANCE_HUB_TESSERACT` 指向執行檔，並以 `FAMILY_FINANCE_HUB_OCR_LANG` 指定語言。執行 OCR 前會檢查設定所需的語言資料；引擎尚未就緒或缺少語言資料時仍可檢視 PDF，介面會分別顯示狀態。OCR 文字只在此次處理的記憶體中使用，不寫入資料庫；銀行專用 PDF 交易 parser 尚未實作。
 
-AI API key 在「設定 → 進階設定」保存，屬可選功能。設定後，開啟有密碼且有可用提示的 PDF 可能呼叫 AI 並產生 API 用量；預覽視窗可關閉 AI 後重試。未設定 key 時不呼叫 AI。若提示只藏在尚未解鎖的 PDF 內，仍需由郵件或使用者提供提示。定時同步只會處理 CSV 與建立 PDF 文件來源，不會將 PDF 自動解析為財務交易。
+AI API key 在「設定 → 進階設定」保存，屬可選功能；目前 UI 預設 Groq Free + `openai/gpt-oss-20b`，也可由使用者明確選擇 OpenAI。UI 的預設值不會自動覆寫既有的已保存 provider，切換後必須明確保存。供應商額度與模型可能調整，不宣稱永久免費。設定後，開啟有密碼且有可用提示的 PDF 可能呼叫 AI 並產生 API 用量；預覽視窗可關閉 AI 後重試。未設定 key 時不呼叫 AI。若提示只藏在尚未解鎖的 PDF 內，仍需由郵件或使用者提供提示。真實身分證、生日、實際 PDF 密碼及帳單全文不會送給 provider；Groq 失敗或 429 不會自動切換到 OpenAI。定時同步只會處理 CSV 與建立 PDF 文件來源，不會將 PDF 自動解析為財務交易。
 
 ## Excel 自動更新
 
@@ -110,3 +110,4 @@ npm run build
 - [Excel 優先實作流程與 Luna max 交接](IMPLEMENTATION_PLAN.md)
 - [維護交接](HANDOFF.md)
 - [操作與部署](docs/operations.md)
+- [執行問題與處理紀錄](EXECUTION_ISSUES.md)
