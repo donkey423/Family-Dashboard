@@ -18,16 +18,20 @@
 
 ## 2026-09-29 免費 AI provider 與真實流程狀態
 
+- GitHub `main` 已包含 Groq 實作 commit `eeb6883`；2026-09-29 使用者已確認本機 push 回覆 `Everything up-to-date` 且工作區乾淨。後續模型不可再把 Groq 描述成「只在本機未提交」。
+
 - 已完成第一階段 provider-neutral 實作：Groq Free 預設 `openai/gpt-oss-20b`、既有 OpenAI 相容路徑、設定 API/UI provider 選擇，以及不送 `store` 的 Groq Responses payload。兩者共用既有 `PasswordRule` DSL、遮罩後提示、verified rule cache、SecretStore 與本機 PasswordComposer。
 - Groq 失敗、429、schema/網路錯誤會留在 pending/manual 路徑，不會自動呼叫可能付費的 OpenAI；API key 不進 repo、SQLite、log 或前端持久化。這次完整驗證為 backend 187 passed、frontend production build 成功，另有 2 個既有相依套件棄用警告。
-- 目前服務的已保存 profile 仍是 `openai` / `gpt-4.1-mini`，Groq adapter 雖已在工作區，Groq key 尚未保存。設定頁的 Groq 預設不會自動改寫既有 SecretStore profile，必須在本機明確保存 Groq key。
+- 最後一次有證據的 runtime smoke check 仍回報 Active Provider=`openai`、Model=`gpt-4.1-mini`。Groq 程式已在 `main`，但 Git 狀態不代表 runtime 已切換；設定頁的 Groq 預設也不會覆寫既有 Active Provider。切換後必須重新讀取 `/api/security/ai-provider` 才能確認真正使用的 provider/model。
 - 本次已從使用者授權的 Gmail 網頁下載一份信用卡 PDF，收錄到 FamilyHub 文件匣；同一 bytes 再次收錄回報 `duplicate=true`。FamilyHub 內建 Gmail OAuth 仍未授權，所以這次不是內建 Gmail scheduler 的驗收。
 - 舊 runtime 第一次允許 AI 的預覽仍因既有 OpenAI profile 額度不足而停止；這是 provider 問題，不是錯誤密碼。確認郵件明示格式後，改以目前 parser 產生的受限規則、關閉 AI，透過 live processor 與 Windows SecretStore 成功解鎖同一份 Gmail 下載 PDF。
-- 真實驗證結果：原始檔確為加密 PDF，解鎖輸出不再加密，共 2 頁，可抽取 7006 個文字字元；verified rule 最後只保留成功的 `national_id` 規則，資料庫未保存身分資料、生日或候選密碼，驗證用明文 PDF 已刪除。下載檔 SHA-256 與文件匣既有來源相同，重複上傳回報 `duplicate=true`。
-- 此次 Gmail 搜尋使用 `in:anywhere`，但下載由已登入的 Gmail 網頁手動完成；FamilyHub 內建 Gmail OAuth/scheduler 仍未授權。live process 啟動早於最新雙候選 parser，故本次先將目前 parser 產生的不含秘密規則寫入 verified cache 再驗證 live 解鎖；動態解析路徑由合成 API 測試覆蓋，待正式 migration/restart 後才算部署完成。
-- 尚未完成：銀行專用 PDF transaction parser、逐筆核對及 PDF → Excel 入帳。Groq 不再是這份明示格式帳單的解鎖前置；完成 S4 parser 前，不擴充多銀行 framework，也不把成功解鎖視為自動入帳。
+- 後續實際驗證已完成：中國信託加密帳單由 parser 解析交易列並核對帳單合計，確認後建立 Finance transaction，再重建 Excel；重複確認回報 `reused=true`。未知銀行版型仍停在待處理，不猜測入帳。
+- 此次 Gmail 搜尋使用 `in:anywhere`，但下載由已登入的 Gmail 網頁手動完成；FamilyHub 內建 Gmail OAuth/scheduler 仍未授權。內建長期流程目前仍只負責收錄附件，分析與確認匯入維持明確使用者操作。
+- 尚未完成：S3F-C safe-switch preflight、S3F-B Groq runtime activation、真實 Groq request、第二期盲測、更多銀行 parser 與 Gmail OAuth 長期授權。Groq 不再是明示格式帳單本機解鎖的前置；後續仍須依 `GROQ_RUNTIME_REVIEW.md` 先完成 provider 安全切換，再驗證真實 Groq。
 
 本次執行遇到的 Git 分支同步、Windows pytest 暫存權限、runtime provider 未切換、Gmail OAuth 邊界、OpenAI 額度及文件狀態漂移，已逐項記錄在 [EXECUTION_ISSUES.md](EXECUTION_ISSUES.md)。
+
+Groq 的最新深度審查與執行規格見 [GROQ_RUNTIME_REVIEW.md](GROQ_RUNTIME_REVIEW.md)；`FREE_AI_PASSWORD_RULE_PLAN.md` 保留 provider 設計與安全邊界。
 
 ## 目前接手入口
 
@@ -84,7 +88,7 @@ S4 新增 `finance/statements/contracts.py`：銀行 parser 的純輸入/輸出�
 
 下一步依 `IMPLEMENTATION_PLAN.md` 完成 S4：等待銀行名稱及兩期 PDF 樣本，保存在使用者授權的私有位置，或以欄位/版面相同的合成副本提供；一份用來開發，一份盲測。缺樣本期間不推測銀行格式、不建多銀行 framework，也不先建立依賴實際 parser 契約的 Statement schema。前端行為測試隨 S7 需要補強，不為完成舊清單而重排非核心功能，不全面重寫 `App.tsx`。
 
-M7 `2b21333` 與 M8 `488cee7` 均已包含於審查時的遠端 `origin/main`；本次接手時最新遠端文件提交為 `4f9bfb5`。
+M7 `2b21333`、M8 `488cee7`、免費 API 文件與 Groq 程式 `eeb6883` 均已包含於目前 `main` 歷史；後續接手只以最新 Git HEAD 為準，不再使用 `4f9bfb5` 當最新遠端。
 
 ## M8 第一階段：Excel 自動投影已完成
 
@@ -152,7 +156,7 @@ M8 第一階段已完成專用 Excel 輸出、背景重試與設定介面；新�
 - 修正 PDF OCR 狀態標頭未透過 CORS 暴露的整合問題；跨來源 API 測試通過，瀏覽器以合成 PDF 驗證「OCR 尚未就緒」提示出現且仍可預覽。
 - Alembic head 為 `0011_statement_import`；`0009_document_revocation` 的既有資料保留、`0010_workbook_export` 與 Statement migration 仍由測試覆蓋。OCR 無 schema migration。
 - `backend/tests/test_backup_restore.py` 以有效／已撤銷兩種合成 DB + documents storage 演練備份／還原，恢復 PDF bytes、Finance transaction、撤銷狀態及工作紀錄；已撤銷交易需明確恢復才重新計入。
-- Tesseract executable 未找到；Tailscale CLI/service 亦未找到，無法做真實 OCR runtime 或 tailnet/Firewall 驗證。
+- Tesseract executable 與 `chi_tra`/`eng` runtime 尚未完成真實 OCR 驗收。較早的「Tailscale CLI/service 未找到」已被後續部署結果取代：Tailscale 私有 HTTPS → `localhost:3000` 已驗證可用；仍待重新開機自動觸發與實體 iPhone/MacBook 驗收。
 
 ## 正式使用與外部驗收
 

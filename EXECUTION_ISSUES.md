@@ -21,7 +21,7 @@
 - **現象：** 接手時本機 `master` 為 `001ca5d`，`origin/main` 已是 `4f9bfb5`；工作區另外有先前未提交的 Groq 程式與文件修改。
 - **風險：** 直接 push 會因遠端不是本機歷史的 fast-forward 而失敗；直接 reset、checkout 或覆蓋又可能遺失既有實作。
 - **處理：** 保留工作區修改，先讀取並以目前程式行為校正文件；完成本地 commit 後再把 `origin/main` 整合進來，最後以明確的 `master:main` 推送。
-- **結論：** 本次以不覆蓋遠端歷史的 merge 方式整合，完成 push 後以本機與 `origin/main` 的 commit hash 相同作為同步完成條件；不可使用 `reset --hard` 或 force push 解決。
+- **結論：** 本次以不覆蓋遠端歷史的 merge 方式整合；Groq 實作 `eeb6883` 已進入 `main`。使用者之後再次 push 得到 `Everything up-to-date` 且回報 local working tree 乾淨。不可再把「Groq 仍只存在本機未提交」當目前狀態。
 
 ### 2.2 Git 權限與 Credential Manager 行為
 
@@ -48,7 +48,7 @@
 - **現象：** 程式與設定頁已加入 Groq，UI 預設為 Groq + `openai/gpt-oss-20b`；但現場服務 API 仍回報已保存的 `openai` / `gpt-4.1-mini` profile。
 - **原因：** UI 預設值只是新設定的預填，不能為了切換 provider 自動覆寫 Windows Credential Manager 中既有的 profile。這是避免無提示改變外部 API 用量與秘密設定的安全行為。
 - **處理：** 文件明確寫出「必須在設定頁選擇 Groq、輸入 key、按保存」，並保留 OpenAI 只有使用者明確選擇時才可用的路徑。
-- **目前限制：** 尚未保存真實 Groq key，因此尚未宣稱真實 Groq request 已成功；`groq_adapter_in_worktree=true` 只代表程式存在，不代表 runtime 已切換。
+- **目前限制：** Groq 程式已在 `main`，但最後一次有證據的 runtime 仍是 OpenAI。只有完成 safe-switch、重新讀取 Active Provider，並跑過真實 synthetic Groq request，才可宣稱 runtime 已切換。
 
 ### 2.5 內建 Gmail OAuth 與 Gmail 網頁操作不是同一條連線
 
@@ -94,6 +94,30 @@
 - **現象：** 新版工作簿已包含信用卡交易欄位，完整 backend suite 仍有 3 個既有 `test_xlsx_writer.py` assertion 使用舊工作表順序／欄數。
 - **處理：** 沒有為了讓測試通過而回退新的 Statement 欄位；保留失敗證據，後續獨立同步 writer 測試契約。
 - **結果：** 已將測試契約同步至信用卡專用工作表與 15 欄交易明細；完整 backend suite 重新通過。
+### 2.12 Groq 程式已合併，但 runtime 尚未等同 Groq
+
+- **現象：** Groq adapter、provider API/UI 與合成測試都已在 `main`，但最後一次有證據的 runtime smoke check 仍使用 OpenAI / `gpt-4.1-mini`。
+- **原因：** UI 的 Groq 預設只是 Recommended / new-setup Default；真正 runtime 由 backend 的 Active Provider + Windows SecretStore credential 決定。
+- **規則：** 只有重新讀取 `/api/security/ai-provider` 並完成真實 synthetic Groq request，才可宣稱 runtime 已切 Groq。
+
+### 2.13 Provider 切換缺少 preflight
+
+- **現象：** `AIProviderService.configure()` 會保存新設定、更新 DB profile，之後清理舊 credential，但不先驗證新 provider/model。
+- **風險：** credential 輸入錯誤、模型下架、權限不足或 Structured Output 不相容，都可能到第一次真實 request 才發現。
+- **處理方向：** 先增加固定 synthetic prompt 的 Test Connection / preflight，不讀 Gmail/個資、不保存新設定；只有 preflight 成功才切換 Active Provider。失敗時舊 provider 保持可用。
+- **範圍：** 仍維持單一 Active Provider；不做自動 fallback chain。
+
+### 2.14 AI provider status 可能誤報 configured
+
+- **現象：** `GET /api/security/ai-provider` 目前只檢查 DB profile 是否存在；若 DB row 還在但 Windows SecretStore credential 遺失，UI 仍可能顯示已設定。
+- **風險：** 使用者在真正解鎖 PDF 時才發現 provider 不可用。
+- **處理方向：** status API 應安全區分 profile 存在與 credential 可用，例如增加 `credential_available`，但絕不回傳 credential 本身。SecretStore 整體不可用時應明確 fail closed。
+
+### 2.15 Provider UI 狀態不夠明確
+
+- **現象：** 設定頁狀態徽章目前主要顯示 model，沒有直接寫出 Active Provider。
+- **風險：** 容易把「表單預設 Groq」誤認為「目前正在使用 Groq」。
+- **處理方向：** 顯示「目前使用：Provider · Model」，並拆成「測試連線」與「保存並切換」兩個動作。
 
 ## 3. 最終驗證結果
 
@@ -102,7 +126,8 @@
 | Backend tests | 通過 | 207 passed；2 個既有 FastAPI/anyio 相依套件棄用警告 |
 | Frontend build | 通過 | `npm --prefix frontend run build` |
 | Git diff check | 通過 | 未發現 whitespace error |
-| Groq provider code path | 通過合成驗證 | 真實 key 尚未保存 |
+| Groq provider code path | 通過合成驗證 | 真實 runtime activation 尚未完成；不得由 UI 預設推定 |
+| Provider safe switch | 未完成 | Test Connection/preflight、credential health status、Active Provider 顯示待補 |
 | Gmail PDF 文件收錄 | 通過 | 使用 Gmail 網頁手動下載，不是內建 OAuth scheduler |
 | SHA-256 重複收錄 | 通過 | 第二次收錄 `duplicate=true` |
 | PDF 本機解鎖 | 通過 | 真實 Gmail 下載加密 PDF；郵件明示規則、AI 關閉 |

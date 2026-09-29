@@ -2,13 +2,18 @@
 
 ## 目前執行入口：信用卡 PDF 到 Excel
 
-2026-09-28 已將 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 改為 Excel 優先的執行規格；版型無關的 Statement 正規化與入帳閘門、個人解鎖簡化、單一網址部署，以及第一個真實中國信託帳單的 parser → Finance → Excel 流程已完成。下一個外部關卡是第二期盲測與更多已授權版型，不是擴建多銀行 framework。M0-M8 勾選代表既有功能；未知銀行、Gmail OAuth 長期授權與全自動確認仍未完成。
+2026-09-29 已將 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 改為 Excel 優先的執行規格；版型無關的 Statement 正規化與入帳閘門、個人解鎖簡化、單一網址部署，以及第一個真實中國信託帳單的 parser → Finance → Excel 流程已完成。Groq provider 程式與免費 API 文件也已合併，但 safe-switch/runtime activation 尚未完成。下一個外部關卡是第二期盲測、更多已授權版型與 Groq 執行驗證，不是擴建多銀行 framework。未知銀行、Gmail OAuth 長期授權與全自動確認仍未完成。
 
 - [x] S0：重新確認 Git/隔離環境，重跑測試與 build。
 - [x] S1：Gmail 自訂 query 與預設 cursor 隔離、分頁、失敗重試；FakeGmail 聚焦測試通過。
 - [x] S2：密碼提示 HTML/重疊上下文、遮罩後截斷；測試僅使用合成資料。
 - [x] S3：共用 PDF 解鎖 application use case、唯一安全 profile 匹配及 API 相容性測試。
-- [x] S3F：依 `FREE_AI_PASSWORD_RULE_PLAN.md` 將密碼規則 AI 改為 provider-neutral，第一階段接 Groq Free + `openai/gpt-oss-20b`；verified cache 優先，429/失敗留 pending/manual，不自動 fallback 到付費 provider。程式與合成驗證已完成；真實 Gmail PDF 已由郵件明示規則在本機解鎖，真實 Groq request及帳單 parser/入帳仍未完成。
+- [x] S3F-A：Groq/OpenAI provider-neutral 程式、Groq Responses adapter、設定 API/UI、安全邊界與合成測試已完成；實作 commit `eeb6883` 已合併至 `main`。
+- [ ] S3F-C：Safe switch hardening——增加 provider test/preflight；新 provider 設定未驗證成功前不得替換舊 Active Provider，並補穩定 provider error reason codes。禁止自動 fallback 到 OpenAI。
+  - Status API 必須區分「DB profile 存在」與「credential 可用」，但不得回傳 credential。
+  - UI 明確顯示目前 Active Provider + Model，並拆成「測試連線」與「保存並切換」。
+  - 深度審查、實作落點與測試矩陣見 `GROQ_RUNTIME_REVIEW.md`。
+- [ ] S3F-B：Runtime activation——S3F-C 完成後，在本機明確啟用 Groq，確認 Active Provider/Model=`groq`/`openai/gpt-oss-20b`，用 synthetic prompt 驗證真實 Groq response，再確認相同提示命中 verified cache 而不重打 API。
 - [ ] S4：通用 Statement 輸出契約/月支出語意與版型無關正規化閘門已有程式；中國信託與受限台新版型已接入，仍需第二期盲測及更多已授權版型。
 - [x] S5：最小 Statement/account 模型、狀態、冪等約束與 `0011_statement_import` migration。
 - [x] S6：分析/帳戶 API、原子確認/查詢、冪等入帳與正確 Excel；已用實際中國信託帳單驗證一筆交易落入 Finance/Excel。

@@ -9,7 +9,8 @@
 - `HANDOFF.md`：當前可驗證狀態、下一步與風險。
 - `IMPLEMENTATION_PLAN.md`：Excel 優先的 S0-S9 工作包、檔案落點、固定驗收數值、停止條件及 Luna max 啟動指示。
 - `ARCHITECTURE_REVIEW_BRIEF.md`：2026-09-28 使用者最新的信用卡帳單優先需求、Overdesign 假說、候選簡化方向與高階模型 review gate。
-- `FREE_AI_PASSWORD_RULE_PLAN.md`：密碼規則解析改採免費 API 優先的實作步驟；目前首選 Groq Free + `openai/gpt-oss-20b`，實作前必須重新查官方額度/模型。
+- `FREE_AI_PASSWORD_RULE_PLAN.md`：Groq Free 密碼規則解析的 provider 設計、安全邊界與驗收規格；實作/切換前必須重新查官方額度與模型支援。
+- `GROQ_RUNTIME_REVIEW.md`：Groq 已實作後的程式級深度審查；明確區分 Recommended / Default / Active Provider，並定義 safe-switch preflight、runtime activation 與真實 smoke test。
 - `backend/src/family_finance_hub`：FastAPI、application use cases、domain services、ports 與 adapters。
 - `backend/tests`：後端自動化測試。
 - `frontend/src`：React/TypeScript Web UI。
@@ -37,7 +38,8 @@
 - 近期產品方向以 `ARCHITECTURE_REVIEW_BRIEF.md` 為 review gate：核心目標收斂到每月信用卡帳單自動分析。高階審查完成前，不新增非核心平台能力，也不得把 brief 中的候選簡化直接視為已批准的刪除/重構。
 - Excel 是 SQLite 已提交交易的可重建投影，不是資料來源。只能覆蓋帶應用程式 ownership marker 的專用工作簿；外部修改、檔案佔用與輸出 hash 不一致必須保留可見狀態，不得靜默覆蓋未知檔案或把 Excel 反向匯入 Finance。
 - M5.2 密碼流程必須使用 versioned PasswordRule DSL；禁止直接執行/eval LLM 產生的程式碼，禁止以大量排列組合暴力猜密碼。
-- 修改 AI 密碼規則 provider 前必讀 `FREE_AI_PASSWORD_RULE_PLAN.md`。免費 API 只能解析遮罩後規則；Groq 失敗/429 不得自動 fallback 到可能付費的 OpenAI，也不得把真實身分證、生日、實際 PDF 密碼或帳單全文送給任何 provider。
+- 修改 AI 密碼規則 provider 前必讀 `FREE_AI_PASSWORD_RULE_PLAN.md` 與 `GROQ_RUNTIME_REVIEW.md`。Groq 是 Recommended / 新設定 Default，不代表 Active Provider；runtime 只認 backend 已保存 profile + SecretStore credential。免費 API 只能解析遮罩後規則；Groq 失敗/429 不得自動 fallback 到可能付費的 OpenAI，也不得把真實身分證、生日、實際 PDF 密碼或帳單全文送給任何 provider。
+- Provider 切換必須 fail-safe：先做 synthetic preflight/Test Connection，成功後才替換 Active Provider；新設定失敗時舊 provider 必須保持可用。不要把這項 hardening 擴張成 multi-provider fallback 平台。
 - Bank-specific 密碼說明辨識、PasswordComposer、PDF decrypt、BankStatementParser 必須分層；不要把銀行規則硬編碼進通用 PdfDocumentProcessor。
 - 修改 Gmail、PDF 或密碼流程前，先閱讀 ARCHITECTURE.md 的「密碼保護 PDF 與密碼規則解析」及 HANDOFF.md 的目前狀態與安全界線。
 
@@ -47,7 +49,7 @@
 
 若只修改設計文件，不必為了文件變更虛構程式驗證；HANDOFF 必須清楚區分「已決定/已規劃」與「已實作/已驗證」。
 
-接手先檢查 Git 狀態並保留未提交修改，再讀本指引、README、HANDOFF、TASKS 與 IMPLEMENTATION_PLAN。`ARCHITECTURE_REVIEW_BRIEF.md` 是背景，checkout 缺檔時可唯讀查看本機已有的 `4f9bfb5` 版本，不自行合併。S1-S3 及 S4 純契約已有程式與隔離測試，先核對而非重寫；銀行 parser 仍需兩期授權樣本。文件修改與程式實作授權分開；開始實作後每步完成即接下一步，必要外部關卡才停止。
+接手先檢查 Git HEAD/status 並保留未提交修改，再讀本指引、README、HANDOFF、TASKS、IMPLEMENTATION_PLAN、FREE_AI_PASSWORD_RULE_PLAN 與 GROQ_RUNTIME_REVIEW。Groq 實作 `eeb6883` 已進 `main`，不可因舊文件紀錄而重做 provider。S1-S3、S3F-A 及 S4 純契約已有程式與隔離測試，先核對而非重寫；目前真正未完成的是 S3F-C safe switch、S3F-B runtime activation，以及 S4 真實銀行 parser。
 
 ## 完成標準
 
