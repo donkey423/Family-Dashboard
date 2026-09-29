@@ -9,9 +9,11 @@
 - [x] S2：密碼提示 HTML/重疊上下文、遮罩後截斷；測試僅使用合成資料。
 - [x] S3：共用 PDF 解鎖 application use case、唯一安全 profile 匹配及 API 相容性測試。
 - [x] S3F-A：Groq/OpenAI provider-neutral 程式、Groq Responses adapter、設定 API/UI、安全邊界與合成測試已完成；實作 commit `eeb6883` 已合併至 `main`。
-- [ ] S3F-B：Runtime activation——在本機明確啟用 Groq，確認 Active Provider/Model=`groq`/`openai/gpt-oss-20b`，用 synthetic prompt 驗證真實 Groq response，再確認相同提示命中 verified cache 而不重打 API。
-- [ ] S3F-C：Safe switch hardening——增加 provider test/preflight；新 provider 設定未驗證成功前不得刪除或覆蓋舊 active credential，並補穩定 provider error reason codes。禁止自動 fallback 到 OpenAI。
-  - 深度審查與切換順序見 `GROQ_RUNTIME_REVIEW.md`。
+- [ ] S3F-C：Safe switch hardening——增加 provider test/preflight；新 provider 設定未驗證成功前不得替換舊 Active Provider，並補穩定 provider error reason codes。禁止自動 fallback 到 OpenAI。
+  - Status API 必須區分「DB profile 存在」與「credential 可用」，但不得回傳 credential。
+  - UI 明確顯示目前 Active Provider + Model，並拆成「測試連線」與「保存並切換」。
+  - 深度審查、實作落點與測試矩陣見 `GROQ_RUNTIME_REVIEW.md`。
+- [ ] S3F-B：Runtime activation——S3F-C 完成後，在本機明確啟用 Groq，確認 Active Provider/Model=`groq`/`openai/gpt-oss-20b`，用 synthetic prompt 驗證真實 Groq response，再確認相同提示命中 verified cache 而不重打 API。
 - [ ] S4：通用 Statement 輸出契約/月支出語意與版型無關正規化閘門已有程式（契約+正規化聚焦測試 26 passed）；銀行 parser、兩期逐筆核對及實際對帳式待樣本。
 - [ ] S5：最小 Statement/account 模型、狀態、冪等約束與隔離 migration。
 - [ ] S6：A 分析/帳戶 API、B 原子確認/查詢/撤銷、C 正確 Excel；完成真實 PDF 到 Excel、重跑與恢復驗收。
