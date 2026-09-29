@@ -2,15 +2,19 @@
 
 ## 2026-09-29 免費 AI provider 與真實流程狀態
 
+- GitHub `main` 已包含 Groq 實作 commit `eeb6883`；2026-09-29 使用者已確認本機 push 回覆 `Everything up-to-date` 且工作區乾淨。後續模型不可再把 Groq 描述成「只在本機未提交」。
+
 - 已完成第一階段 provider-neutral 實作：Groq Free 預設 `openai/gpt-oss-20b`、既有 OpenAI 相容路徑、設定 API/UI provider 選擇，以及不送 `store` 的 Groq Responses payload。兩者共用既有 `PasswordRule` DSL、遮罩後提示、verified rule cache、SecretStore 與本機 PasswordComposer。
 - Groq 失敗、429、schema/網路錯誤會留在 pending/manual 路徑，不會自動呼叫可能付費的 OpenAI；API key 不進 repo、SQLite、log 或前端持久化。這次完整驗證為 backend 187 passed、frontend production build 成功，另有 2 個既有相依套件棄用警告。
-- 目前服務的已保存 profile 仍是 `openai` / `gpt-4.1-mini`，Groq adapter 雖已在工作區，Groq key 尚未保存。設定頁的 Groq 預設不會自動改寫既有 SecretStore profile，必須在本機明確保存 Groq key。
+- 最後一次有證據的 runtime smoke check 仍回報 Active Provider=`openai`、Model=`gpt-4.1-mini`。Groq 程式已在 `main`，但 Git 狀態不代表 runtime 已切換；設定頁的 Groq 預設也不會覆寫既有 Active Provider。切換後必須重新讀取 `/api/security/ai-provider` 才能確認真正使用的 provider/model。
 - 本次已從使用者授權的 Gmail 網頁下載一份信用卡 PDF，收錄到 FamilyHub 文件匣；同一 bytes 再次收錄回報 `duplicate=true`。FamilyHub 內建 Gmail OAuth 仍未授權，所以這次不是內建 Gmail scheduler 的驗收。
 - 該 PDF 的 AI 預覽實際使用既有 OpenAI profile，因額度不足停止；系統沒有自動切 Groq，也沒有建立 Finance transaction。結果是文件已收錄但仍未解鎖、未解析、未入帳，避免誤匯入。
-- 尚未完成：真實 Groq synthetic prompt、Groq 解鎖真實 PDF、銀行專用 PDF transaction parser、逐筆核對及 PDF → Excel 入帳；不要把本次收錄/去重視為帳單解析完成。
-- 下一步：先在本機設定 Groq key，使用合成提示驗證真實 request，再重新跑授權 PDF；完成 S4 樣本與 parser 前，不擴充多銀行 framework，也不把人工解鎖結果當成自動入帳。
+- 尚未完成：S3F-C safe-switch preflight、S3F-B Groq runtime activation、Groq 解鎖真實 PDF、銀行專用 PDF transaction parser、逐筆核對及 PDF → Excel 入帳；不要把文件收錄/去重視為帳單解析完成。
+- 下一步順序：**先 S3F-C，再 S3F-B，再 S4**。先补 `Test Connection`/preflight，确保新 provider 设定验证失败时旧 Active Provider 不变；之后才切到 Groq，用 synthetic prompt 验证真实 request 与 cache，再重新跑授权 PDF。
 
 本次執行遇到的 Git 分支同步、Windows pytest 暫存權限、runtime provider 未切換、Gmail OAuth 邊界、OpenAI 額度及文件狀態漂移，已逐項記錄在 [EXECUTION_ISSUES.md](EXECUTION_ISSUES.md)。
+
+Groq 的最新深度審查與執行規格見 [GROQ_RUNTIME_REVIEW.md](GROQ_RUNTIME_REVIEW.md)；`FREE_AI_PASSWORD_RULE_PLAN.md` 保留 provider 設計與安全邊界。
 
 ## 目前接手入口
 
