@@ -2,6 +2,9 @@
 
 ## 目前接手入口
 
+2026-09-29 新增 [FREE_AI_PASSWORD_RULE_PLAN.md](FREE_AI_PASSWORD_RULE_PLAN.md)：使用者希望密碼提示解析優先使用免費 API。已決定的實作方向是 Groq Free + `openai/gpt-oss-20b` 作第一階段預設，OpenAI 保留手動相容，Cloudflare Workers AI 只作第二選擇。這目前**只有文件規格，尚未修改程式**。後續實作需先重新查 provider 官方免費額度/model/Structured Outputs；verified rule cache 必須先於 remote API，Groq 失敗/429 留 pending/manual，禁止自動 fallback 到可能付費的 provider，且任何 provider 都不得收到真實身分證、生日、組合密碼或帳單全文。
+
+
 2026-09-29 文件解鎖操作已簡化：設定頁只需保存身分證字號及/或生日，系統內部建立固定個人 profile；開啟加密 PDF 時，若有 AI key 與可用的 Gmail/手動提示，AI 僅解析遮罩規則，由本機使用 SecretStore 值組合密碼。舊銀行/成員 profile API 保留相容，但不是新 UI 的前置。聚焦測試 45 passed、backend 全套 173 passed（2 個既有棄用警告）、frontend build 成功。既有 `FamilyFinanceHub` 排程已受控重啟；本機與私有 HTTPS 首頁及新 API 回傳 200，私有網址的新版設定頁已用瀏覽器檢查。實體 MacBook/手機未驗收。這只完成 PDF 解鎖體驗，未完成銀行 PDF 交易 parser 或 PDF→Excel 自動入帳，未使用真實身分資料或正式帳單驗收。
 
 近期目標已收斂為「信用卡 PDF 解鎖、解析、核對後更新每月支出 Excel」。Web 只補設定、核對確認及例外處理，不先擴充平台或完整 Dashboard。2026-09-28 已依本機程式更新 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 的 S0-S9 詳細工作包、檔案落點、驗收數值及 Luna max 啟動指示；本輪接續實作了版型無關的 Statement 正規化與入帳閘門，但尚未建立銀行專用 parser。

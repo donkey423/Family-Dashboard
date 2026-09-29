@@ -124,6 +124,21 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 **完成：** 現有測試通過；發現缺口只補缺口，不把已完成步驟拆成新平台里程碑。
 
+## 7.1 S3F：免費 AI 密碼規則 Provider
+
+**目的：** 在進入真實 S4 前，把目前 OpenAI-only 密碼提示解析改成免費 API 優先；完整執行規格見 [FREE_AI_PASSWORD_RULE_PLAN.md](FREE_AI_PASSWORD_RULE_PLAN.md)。
+
+- 第一階段只接 Groq Free，預設 `openai/gpt-oss-20b`；實作當下重新查 Groq 官方 Free Plan、model list 與 Structured Outputs 支援，不把 2026-09-29 額度當永久保證。
+- 既有 `PasswordRuleInterpreter` Protocol、`PasswordRuleService` verified cache、`SecretStore`、`PasswordComposer` 全部沿用；只把 provider config / adapter / UI 從 OpenAI-only 改為 provider-neutral。
+- Groq adapter 只接收遮罩後的 password instruction + safe context，使用 JSON Schema Structured Outputs；真實身分證、生日、組合密碼及帳單全文不得出站。
+- Groq 401/403/429/timeout/5xx 或 schema failure 均 fail closed：文件留 pending/manual。禁止自動 fallback 到可能付費的 OpenAI。
+- OpenAI adapter 只保留既有相容/使用者明確選擇；Cloudflare Workers AI 僅為 Groq 不再合適時的第二選擇，本輪不一起實作。
+- 目前 `AIProviderProfile` 已有 provider/model/key ref，除非實作證明需要，**不要為 provider 切換新增 migration**；不要為了 row id 命名重構資料表。
+- 前端加入 provider 選擇，預設 Groq；API key 仍只進 Windows Credential Manager。設定頁不可宣稱永久免費，只能描述目前免費方案。
+- 验收：合成提示 → Groq → 合法 PasswordRule → 本机 synthetic secret 组合 → synthetic encrypted PDF 解锁；同 fingerprint 第二次命中 cache 不再请求；429 不调用 OpenAI。
+
+S3F 是小型前置改善，不得扩张成通用 multi-provider AI 平台，也不得延误 S4 第一家真实银行 parser。
+
 ## 8. S4：第一家銀行真實解析器
 
 **前置：** 使用者指定一家銀行與至少兩期 PDF 的私有路徑，或明確授權的既有來源。密碼由既有本機設定供應，不要求貼入文件。
