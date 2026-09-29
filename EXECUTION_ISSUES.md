@@ -20,7 +20,7 @@
 - **現象：** 接手時本機 `master` 為 `001ca5d`，`origin/main` 已是 `4f9bfb5`；工作區另外有先前未提交的 Groq 程式與文件修改。
 - **風險：** 直接 push 會因遠端不是本機歷史的 fast-forward 而失敗；直接 reset、checkout 或覆蓋又可能遺失既有實作。
 - **處理：** 保留工作區修改，先讀取並以目前程式行為校正文件；完成本地 commit 後再把 `origin/main` 整合進來，最後以明確的 `master:main` 推送。
-- **目前狀態：** 尚待本次 commit 完成後確認遠端 main 的最終 commit；不可使用 `reset --hard` 解決。
+- **結論：** 本次以不覆蓋遠端歷史的 merge 方式整合，完成 push 後以本機與 `origin/main` 的 commit hash 相同作為同步完成條件；不可使用 `reset --hard` 或 force push 解決。
 
 ### 2.2 Git 權限與 Credential Manager 行為
 
