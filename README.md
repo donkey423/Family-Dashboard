@@ -2,7 +2,7 @@
 
 家庭收支記錄以 Windows 家用電腦為主機，近期目標是將信用卡 PDF 解鎖、解析與核對後，更新每月支出 Excel。SQLite 保留可追溯資料；Web 用於設定、核對確認與處理例外，完整 Dashboard 不是交付前置。
 
-**目前狀態：** 已有文件匣、通用 CSV 匯入、總覽/搜尋/工作紀錄、Gmail 同步、個人資料輔助的加密 PDF 預覽及專用 Excel 輸出；解鎖設定不再要求銀行或家庭成員。密碼規則 provider-neutral/Groq adapter 已完成並通過合成驗證，但目前服務仍使用已保存的 OpenAI profile，尚未保存 Groq key。最近一份授權 Gmail PDF 已完成收錄與 SHA-256 去重，AI 預覽因現存 OpenAI 額度不足停止，沒有建立交易；銀行專用 PDF 交易 parser 尚未完成，不能宣稱信用卡 PDF 已自動入帳。Excel 優先的逐步實作與驗收見 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)，下列操作說明描述現有功能。
+**目前狀態：** 已有文件匣、通用 CSV 匯入、總覽/搜尋/工作紀錄、Gmail 同步、個人資料輔助的加密 PDF 預覽及專用 Excel 輸出；解鎖設定不再要求銀行或家庭成員。密碼規則 provider-neutral/Groq adapter 已完成並通過合成驗證，但目前服務仍使用已保存的 OpenAI profile，尚未保存 Groq key。最近一份授權 Gmail PDF 已完成收錄與 SHA-256 去重，AI 預覽因現存 OpenAI 額度不足停止，沒有建立交易；銀行專用 PDF 交易 parser 尚未完成，不能宣稱信用卡 PDF 已自動入帳。Excel 優先的逐步實作與驗收見 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)；Groq 已實作後的 Active Provider / runtime activation / safe-switch 深度審查見 [GROQ_RUNTIME_REVIEW.md](GROQ_RUNTIME_REVIEW.md)。下列操作說明描述現有功能。
 
 ## 開發環境
 
