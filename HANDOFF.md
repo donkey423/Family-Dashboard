@@ -31,6 +31,8 @@
 - 待提交檔案掃描未發現長格式 API key／私鑰或 MD 中證號；仍須人工確認 staged 路徑，只納入原始碼／測試／腳本／文件，排除 data、DB、PDF、Excel、暫存與 build。此掃描不是萬用秘密檢測保證。
 - 正常帳戶 fetch 已讀到 `origin/main @ bf3d4f6`；沙箱 Schannel `SEC_E_NO_CREDENTIALS` 與正常帳戶 repo ownership 檢查，透過當次提升權限及命令限定的 `safe.directory` 處理，不關閉 TLS 或更動全域 Git 信任設定。整合及 push 須依當次核准，推送成功另以遠端 SHA 核對。
 
+**Git 發佈目前阻塞：** 功能與文件已建立本機 commit `75f7b72`；正常 `push origin HEAD:main` 被 `non-fast-forward` 拒絕，遠端七個 MD-only 提交與本機提交都須保留。已詢問使用者是否允許 merge `origin/main`，尚未取得答覆；不能把 commit 成功當成已上傳，也不 force push／reset。下一步在取得整合授權後處理文件衝突、核對遠端內容保留及 diff，再正常 push 並用 `git ls-remote` 確認 GitHub main SHA 與本機 HEAD 相同。原有兩個未追蹤暫存目錄保留，不加入提交。
+
 ## M12 已實作
 
 - `0012_transaction_categories`：新增 FinanceCategory、FinanceCategoryRule、TransactionCategoryOverride；14 個預設類別。FinanceTransaction 的日期、金額、來源、row_hash、Statement identity 不變。
