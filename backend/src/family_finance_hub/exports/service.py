@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..finance.queries import active_transaction_filter
+from ..finance.categories.service import CategorizationService
 from ..models import Document, FinanceTransaction, ImportJob, Statement, StatementAccount, WorkbookExportState, utc_now
 from .ports import ExportDocument, ExportTransaction, WorkbookOwnershipError, WorkbookSnapshot, WorkbookWriter
 
@@ -30,6 +31,16 @@ class WorkbookExportBusy(Exception):
 
 
 def read_snapshot(session: Session) -> WorkbookSnapshot:
+    rows = session.execute(
+        select(FinanceTransaction, Document.filename, Statement, StatementAccount.display_name)
+        .join(Document, FinanceTransaction.source_document_id == Document.id)
+        .outerjoin(Statement, FinanceTransaction.statement_id == Statement.id)
+        .outerjoin(StatementAccount, Statement.statement_account_id == StatementAccount.id)
+        .where(active_transaction_filter())
+        .order_by(FinanceTransaction.transaction_date, FinanceTransaction.id)
+    ).all()
+    categorization = CategorizationService(session)
+    resolved = categorization.resolve([row for row, _, _, _ in rows])
     transactions = tuple(
         ExportTransaction(
             row.id,
@@ -47,15 +58,10 @@ def read_snapshot(session: Session) -> WorkbookSnapshot:
             statement_period_end=statement.period_end if statement else None,
             source_type="credit_card_statement" if statement else "csv",
             statement_line_index=row.statement_line_index,
+            category_code=resolved[row.id].category.code,
+            category_name=resolved[row.id].category.name,
         )
-        for row, filename, statement, account_name in session.execute(
-            select(FinanceTransaction, Document.filename, Statement, StatementAccount.display_name)
-            .join(Document, FinanceTransaction.source_document_id == Document.id)
-            .outerjoin(Statement, FinanceTransaction.statement_id == Statement.id)
-            .outerjoin(StatementAccount, Statement.statement_account_id == StatementAccount.id)
-            .where(active_transaction_filter())
-            .order_by(FinanceTransaction.transaction_date, FinanceTransaction.id)
-        )
+        for row, filename, statement, account_name in rows
     )
     counts = dict(session.execute(select(
         FinanceTransaction.source_document_id, func.count(FinanceTransaction.id),
@@ -67,7 +73,7 @@ def read_snapshot(session: Session) -> WorkbookSnapshot:
                        counts.get(row.id, 0))
         for row in session.scalars(select(Document).order_by(Document.id))
     )
-    return WorkbookSnapshot(transactions, documents)
+    return WorkbookSnapshot(transactions, documents, categorization.configuration_hash)
 
 
 class WorkbookExportService:

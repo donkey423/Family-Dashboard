@@ -31,9 +31,11 @@ Documents 代表「文件的 logical identity 與來源」。目前主流程支�
 
 ## 目前延伸里程碑
 
-原始 v0.1 之後已加入 Codex MCP Gmail 收件、加密 PDF 本機解鎖／預覽、OCR 邊界、帳單撤銷／恢復、銀行帳單核對及專用 Excel 自動更新。Excel 投影 SQLite 已提交的有效交易；目前只驗證中國信託交易列及受限台新零交易版型，其他銀行不能因已收錄或解鎖 PDF 就視為可自動入帳。
+原始 v0.1 之後已加入 Codex MCP Gmail 收件、加密 PDF 本機解鎖／預覽、OCR 邊界、帳單撤銷／恢復、銀行帳單核對及專用 Excel 自動更新。中國信託已有真實 Finance／Excel 驗收，國泰世華與永豐已通過新下載加密帳單逐列／合計核對及草稿冪等；後兩家未自動確認。未知版型不能因已收錄或解鎖就視為可自動入帳。
 
-第一個新交付是人工確認的真實 PDF 正確進 Excel，含去重、重跑、撤銷與恢復；目前接續工作是 Codex MCP 受控收件、更多已授權銀行版型及固定 Windows 入口。完整 Dashboard、分類系統與網站內建 Gmail 同步引擎都不是前置。
+第一個新交付是人工確認的真實 PDF 正確進 Excel，含去重、重跑、撤銷與恢復；目前接續工作仍包含 Codex MCP 真實受控收件、第二期盲測及 Windows 重開機驗收。2026-09-30 已核准的「消費分類＋Donut＋Category → Merchant → Transaction」已正式部署，正式 0012 的 18 筆既有交易保留，Web／Excel 與當次新下載三銀行驗收通過。分類在 Finance 邊界，共用 read-time resolver，不改寫 parser／Statement 核心，也不擴張成完整財務平台。
+
+最新需求為每筆刷卡交易自動分到交通、圖書、飲食等。現有版本只有人工 override／商家規則及圖表，没有內建商家辨識或消費 AI。研究已收斂為先本機明確規則與逐筆確認、多用途商家不硬猜，再按實際缺口決定可選 AI；詳見 `CATEGORY_SPENDING_PLAN.md` 第 18 節。更新 MD／Git 不等於開始程式實作、正式資料變更或授權消費描述送雲端。
 
 ## 現有文件來源原則
 
@@ -50,7 +52,7 @@ Documents 代表「文件的 logical identity 與來源」。目前主流程支�
 
 保留既有 `DocumentSource`、`DocumentProcessor`、Gmail、PDF、OCR 與 AIProvider 邊界；不新增 Insurance、Assets、Warranty、Travel、Vehicle、Subscriptions、Property、股票 API 或其他 provider。未來需求真正發生再設計，不為「通用」先做 registry、多銀行 framework 或空殼 UI。
 
-本輪不做完整 Dashboard、分類/備註管理、交易 AI、雙向 Excel 同步或任意手寫工作表保留。Gmail 搜尋與排程移到 Codex 自動化；網站內舊 Gmail History/scheduler 凍結為相容程式。Excel 背景檢查沿用，不重寫為事件平台。
+本輪仍不做完整 Dashboard 重寫、備註/Tag 系統、交易 AI、Budget、理財建議、雙向 Excel 同步或任意手寫工作表保留。分類功能是已核准例外：只做 `CATEGORY_SPENDING_PLAN.md` 定義的有效分類、規則/單筆 override、Donut、商家/明細下鑽、未分類整理及 Excel 投影。Gmail 搜尋與排程移到 Codex 自動化；網站內舊 Gmail History/scheduler 凍結為相容程式。Excel 背景檢查沿用，不重寫為事件平台。
 
 近期不再以「預留所有家庭資料領域」作為開發目標。既有 `DocumentSource`、`DocumentProcessor`、Gmail source、password-protected PDF processor、OCR 邊界可保留；新的 provider/domain/通用 AI 能力一律等真實需求再新增。第一優先是完成並驗證 bank-specific 信用卡 PDF 交易解析的真實端到端流程。
 

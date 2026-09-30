@@ -22,6 +22,8 @@ class ExportTransaction:
     statement_period_end: date | None = None
     source_type: str = "csv"
     statement_line_index: int | None = None
+    category_code: str = "uncategorized"
+    category_name: str = "未分類"
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,7 @@ class WorkbookSnapshot:
 
     transactions: tuple[ExportTransaction, ...]
     documents: tuple[ExportDocument, ...]
+    category_configuration_hash: str = ""
 
 
 class WorkbookWriteError(RuntimeError):

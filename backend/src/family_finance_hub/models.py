@@ -11,6 +11,45 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class FinanceCategory(Base):
+    __tablename__ = "finance_categories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    code: Mapped[str] = mapped_column(String(80), unique=True)
+    display_name: Mapped[str] = mapped_column(String(100))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class FinanceCategoryRule(Base):
+    __tablename__ = "finance_category_rules"
+    __table_args__ = (
+        UniqueConstraint("match_type", "normalized_pattern", name="uq_category_rule_pattern"),
+        CheckConstraint("match_type IN ('normalized_exact', 'contains')", name="ck_category_rule_type"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    category_id: Mapped[str] = mapped_column(ForeignKey("finance_categories.id"), index=True)
+    match_type: Mapped[str] = mapped_column(String(24))
+    normalized_pattern: Mapped[str] = mapped_column(String(500))
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class TransactionCategoryOverride(Base):
+    __tablename__ = "transaction_category_overrides"
+
+    transaction_id: Mapped[str] = mapped_column(ForeignKey("finance_transactions.id", ondelete="CASCADE"), primary_key=True)
+    category_id: Mapped[str] = mapped_column(ForeignKey("finance_categories.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
 class Document(Base):
     __tablename__ = "documents"
 
@@ -71,6 +110,7 @@ class DocumentSecurityProfile(Base):
     institution: Mapped[str] = mapped_column(String(100))
     sender_pattern: Mapped[str | None] = mapped_column(String(255), nullable=True)
     secret_profile_id: Mapped[str] = mapped_column(ForeignKey("secret_profiles.id"), index=True)
+    secret_profile: Mapped["SecretProfile"] = relationship()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
@@ -89,6 +129,7 @@ class PasswordRuleRecord(Base):
     document_security_profile_id: Mapped[str] = mapped_column(
         ForeignKey("document_security_profiles.id", ondelete="CASCADE"), index=True
     )
+    document_security_profile: Mapped["DocumentSecurityProfile"] = relationship()
     rule_version: Mapped[int] = mapped_column(Integer)
     instruction_fingerprint: Mapped[str] = mapped_column(String(64))
     rule_json: Mapped[dict[str, object]] = mapped_column(JSON)

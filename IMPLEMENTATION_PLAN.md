@@ -1,6 +1,6 @@
 # 家庭收支記錄：Excel 優先實作流程
 
-本文件供 Luna max 或其他接手模型逐步實作。2026-09-28 依目前程式重新收斂範圍；2026-09-29 已完成第一個已授權中國信託版型的 S4 parser、S5 statement migration、S6 原子確認／入帳／Excel 與 S7 最小介面。2026-09-30 使用者決定移除網站 Gmail OAuth 主流程，改由 Codex Gmail MCP／排程管理收件；S8 以下以此新決策為準，不再擴充內建同步引擎。
+本文件供 Luna max 或其他接手模型逐步實作。2026-09-28 依目前程式重新收斂範圍；2026-09-29 已完成第一個已授權中國信託版型的 S4 parser、S5 statement migration、S6 原子確認／入帳／Excel 與 S7 最小介面。2026-09-30 使用者決定移除網站 Gmail OAuth 主流程，改由 Codex Gmail MCP／排程管理收件；同日另明确批准分类支出功能，详细设计与完整测试矩阵以 `CATEGORY_SPENDING_PLAN.md` 为准。
 
 **目前執行狀態（2026-09-30）：** 中國信託已完成真實 Finance/Excel；新下載中國信託/國泰/永豐加密帳單通過解鎖、全列/摘要核對及草稿冪等，國泰/永豐未自動確認正式入帳。parser 限上述已驗證文字版型與受限台新零交易。使用者批准未列日期的利息按明示結帳日認列，保留來源日期及認列依據，其他缺日期仍 pending。Codex MCP 匯入邊界已完成，網站 OAuth/scheduler 停用；Codex 自動化已建立，首次真實/跨日執行與第二期 parser 盲測未完成，不能因 API/合成測試成功宣稱無人收件或入帳。
 
@@ -26,13 +26,13 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 | 項目 | 已觀察狀態 | 不可誤認為 |
 | --- | --- | --- |
-| Git | 2026-09-29 GitHub `main` 已包含 Groq provider 實作 `eeb6883`；使用者回報 push 後 `Everything up-to-date` 且 local working tree 乾淨 | 後續模型仍應在開始前重查 `git status` / HEAD，不可把歷史的 `001ca5d`/`4f9bfb5` 狀態當現在 |
+| Git | 分類規劃基準 `f34550d`，遠端文件基準 `origin/main @ bf3d4f6`；使用者已要求將現有成果與研究更新 MD／Git，當前 refs 由 Git 命令驗證 | 不能假定舊 HEAD 仍為目前版本、強推覆蓋遠端或移除未提交內容 |
 | S1-S3 | Gmail 自訂查詢隔離、提示上下文/遮罩、共用 PDF 解鎖用例已有程式與合成測試 | 需要全部重寫 |
 | S4 | 契約、月支出、穩定列 hash、pending 閘門及中國信託/國泰/永豐已驗證文字版型、受限台新零交易；三銀行新下載解鎖/解析/核對通過 | 已完成第二期盲測、國泰/永豐正式入帳或所有銀行 |
 | PDF | 來源讀取、本機解密、文字抽取/預覽，OCR 有介面及 adapter | 已建立 Finance 交易 |
 | Gmail | Codex MCP 本機匯入 API 已完成；網站 OAuth/scheduler 預設停用，legacy 程式只供相容 | Codex 排程已完成真實／跨日驗收，或 PDF 可自動入帳 |
-| SQLite | FinanceTransaction、來源、工作及撤銷已存在；`0011_statement_import` 增加 Statement/StatementAccount/StatementLine 與冪等入帳欄位 | 可把 PDF 列塞入 CSV 流程就完成 |
-| Excel | 已有快照、背景檢查、ownership marker、原子替換及佔用重試 | 已正確區分信用卡退款、繳款與收入 |
+| SQLite | 正式 `family-finance-hub-live.db` 已為 `0012_transaction_categories`，18 筆既有交易保留；Statement 與分類各自擁有資料 | 可以自動確認草稿、恢復已撤銷資料或升級舊 DB |
+| Excel | 已有快照、背景檢查、ownership marker、原子替換及佔用重試；正式分類投影已核對交易／每期 API parity | 可把付款當收入，或將 legacy CSV 正值一律視為信用卡退款 |
 | 驗證 | 帳單／入帳與 Codex MCP import 有聚焦測試，frontend production build 成功；Groq/OpenAI dispatch 等以合成資料覆蓋 | 已完成第二期盲測、Groq runtime activation、Codex Gmail 真實長期自動化 |
 
 `ARCHITECTURE_REVIEW_BRIEF.md` 是背景，不是刪除授權；其原始分析基準較早，現在必須以最新 `main` 實作、TASKS/HANDOFF 與本文件為準。開始前先重查 Git，不自行 reset/force-push。
@@ -48,7 +48,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 | 原子匯入 + 撤銷/恢復 | 誤匯入可排除，失敗不留半份帳單 |
 | Excel ownership/hash/atomic replace/retry | 不覆寫別人的工作簿，Excel 開啟時保留舊檔 |
 
-**本輪不做：** 新家庭 domain、股票 API、多銀行 plugin framework、通用 AI 交易解析、AI 分類、分類/備註 CRUD、完整 Dashboard、全站重排、OCR 擴充、PWA/原生 App、雙向 Excel 同步、保留任意手寫工作表、microservices、Redis/Kafka/Kubernetes/PostgreSQL。
+**本輪仍不做：** 新家庭 domain、股票 API、多銀行 plugin framework、通用 AI 交易解析、AI 分類、備註/Tag、Budget、理財建議、完整 Dashboard 重寫、全站重排、OCR 擴充、PWA/原生 App、雙向 Excel 同步、保留任意手寫工作表、microservices、Redis/Kafka/Kubernetes/PostgreSQL。**分類例外已获使用者明确批准**：只做 `CATEGORY_SPENDING_PLAN.md` 的 Category/Rule/TransactionOverride、read-time effective category、Donut、Merchant drill-down、未分類整理與 Excel 投影。
 
 **凍結 legacy 同步引擎：** 不再擴充 Gmail History、內建 OAuth UI 或網站 scheduler，也不在本輪破壞性移除既有 schema/adapter。新收件只走 Codex MCP import；歷史 remote-only 文件完成本機保存與資料盤點後，才另案評估 dependency/schema 移除。Excel 背景檢查先沿用，不改成事件平台。
 
@@ -81,6 +81,36 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 9. 在 HANDOFF 保存當次日期、使用的收件方式、銀行、期別及各步 PASS/FAIL/BLOCKED，區分「解鎖成功」與「交易解析通過」。原件/詳細核對證據留本機受控且 Git 忽略的位置；repository 不保存全文、身分/生日/密碼、卡號、帳戶、商家與消費金額。資料或權限阻塞時只能交接局部成果，不宣稱交付完成。
 
 **結果表必備欄：** 銀行、期別、Gmail 重新下載、來源密碼格式確認、加密解鎖、逐列解析/合計核對、冪等重跑、整體結果。程式測試/build 另外列示；不得建立永遠 skip 的測試來冒充這個外部關卡。
+
+#### Gmail 網頁下載：檢查點 → 下載 → 驗證
+
+本機 Downloads 曾產生完整加密 PDF `.tmp`，但瀏覽器 download event 仍逾時；不能只等事件或搜尋新的 `.pdf`。每次選唯一 `retest-*` 目錄，三銀行依序操作，一次只下載一個指定附件。先讀來源郵件提示，排除繳款聯／通知／優惠信。
+
+```powershell
+$run = 'data/gmail-acceptance/retest-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+.\.venv\Scripts\python.exe scripts/gmail_attachment_download.py prepare --run-directory $run --label ctbc
+# 在已登入 Gmail 的來源郵件，點「下載附件」而非 PDF 預覽器的下載控制。
+.\.venv\Scripts\python.exe scripts/gmail_attachment_download.py collect --run-directory $run --label ctbc --timeout 90
+```
+
+國泰、永豐依序使用各自 label，且每家都在點擊前 prepare。先確認附件掃描／載入結束、下載按鈕 enabled；「按鈕可見」不等於下載已成功。本輪中信首次沒有新檔，重新載入原信、確認可用並建立新 checkpoint 後才成功，仍不把此推論當成瀏覽器根因。預設檢查目前 Windows 帳戶的 Downloads；若瀏覽器另存其他位置，依可觀察的實際位置用 `--downloads '<資料夾>'`，不能猜路徑。CLI 任一步非零退出就不能匯入。
+
+- `prepare` 記錄既有檔名的 hash、時間及唯一檢查點識別碼；checkpoint 十分鐘後過期，需重新 prepare／下載。
+- `collect` 等大小／修改時間穩定兩秒，再驗 `%PDF-`、檔尾 `%%EOF`、strict PdfReader 結構、讀取前後一致及 SHA-256；拒絕舊檔、超過 25MB、HTML、截斷檔、symlink 與 `.crdownload`，多個完整 PDF 不猜。90 秒預設 timeout，CLI 最多 180 秒。
+- 成功後以 SHA-256 檔名複製原始加密 bytes 到 `$run/<label>/`，保存 receipt；原 Downloads 檔不刪除／改名。receipt 必須匹配當次 checkpoint，重新 prepare 後舊 receipt 無效。
+- 工具事件逾時時仍先 collect，不盲目連點。真的沒有完整新檔時，查當前 Gmail／登入／附件按鈕與實際下載位置；排除明確阻塞後用新 label prepare，再點一次，保留前次證據。遇多檔歧義、瀏覽器保護、登入或權限限制就停止該來源並交接，不停用保護或借用舊檔。
+- 文件完整不代表銀行正確或安全掃描通過；仍須以來源郵件、解鎖內容的銀行／期別及獨立逐列／摘要核對完成本關卡。
+
+三份附件可在隔離驗收 API 使用既有應用程式流程。先確認 8031 空閒，再於正常 Windows 登入帳戶啟動（背景啟動須 `Start-Process -WindowStyle Hidden`）；不要在沙箱帳戶假稱已保存的憑證不存在：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/gmail_acceptance_app.py --run-directory $run
+.\.venv\Scripts\python.exe scripts/gmail_statement_acceptance.py --run-directory $run
+```
+
+API 需保持執行，兩個命令在不同終端執行。`$run/cases.json` 是 Git 忽略的本次 manifest：三個物件各含 `bank`（ctbc/cathay/sinopac）、`period_month`（YYYY-MM）、`label`、`filename`、`hint`（實際郵件規則，不含密碼）、`message_key`、`attachment_key`（對觀察到的來源識別 SHA-256）。不保存原始郵件 ID、全文或個資；不同郵件用各自 key，不能沿用前次來源冒充新收件。
+
+驗收腳本先核對 `/api/acceptance/status` 的隔離 run 與 AI=0，再驗當次 staged PDF／receipt，經 Codex import 邊界收錄、由保存提示解鎖、獨立讀列及摘要比對 parser/API、重送確認冪等。僅適用上述三家已驗證文字版型，沒有新增通用 parser。正式 DB 只讀，Finance/schema 前後 fingerprint 不變；隔離 Finance 仍為 0、不 confirm、不生成 Excel。完整 PASS 寫 `audit-result.json`，失敗非零退出並標 FAIL，不沿用前次 PASS；重跑舊 receipt 只重核既有證據，不能代替下次交付的新下載。
 
 以下 backend 落點除 tests/migration 外，前綴均為 `backend/src/family_finance_hub/`。
 
@@ -147,7 +177,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 **目的：** 將目前 OpenAI-only 的密碼提示解析改成免費 API 優先；完整規格見 [FREE_AI_PASSWORD_RULE_PLAN.md](FREE_AI_PASSWORD_RULE_PLAN.md)。
 
-**目前狀態（2026-09-29）：** provider-neutral 程式、Groq adapter、設定 API/UI 與安全邊界已由 `eeb6883` 完成並合併 `main`；完整 backend 207 passed、frontend build 成功。最後一次 runtime smoke check 仍使用已保存的 OpenAI profile，尚未完成 Groq safe-switch/runtime activation，因此真實 Groq request 尚未驗收。明示格式的真實帳單不需要 AI；中國信託帳單已另由受限本機規則解鎖並完成 Statement parser、核對、Finance 與 Excel 驗收。這不代表 Groq 真實 request 或所有銀行版型已驗收。
+**目前狀態（2026-09-30）：** provider-neutral／Groq adapter 與 safe-switch 程式均已完成；真實 Groq activation／request 仍未驗收，上次正常帳戶 runtime 是已保存 OpenAI profile。明示格式不需要 AI，中國信託已完成 Finance／Excel；國泰／永豐本輪新下載解鎖、逐列核對與草稿冪等成功，沒有自動 confirm。最新測試數／部署狀態以 HANDOFF 為準，不由 UI 預設推定 provider 切換。
 
 - 第一階段接 Groq Free，預設 `openai/gpt-oss-20b`；實作前重新查 Groq 官方 Free Plan、model list 與 Structured Outputs 支援。
 - 沿用 `PasswordRuleInterpreter`、`PasswordRuleService` verified cache、`SecretStore` 與 `PasswordComposer`；只把 provider config、adapter、UI 改成 provider-neutral，不新增 migration 或通用 AI 平台。
@@ -275,7 +305,7 @@ S3F 不得擴張成 multi-provider 平台。三銀行明示格式已可本機解
 5. 舊 overview/search/transactions/documents/activity URL 保留；只調必要入口，不做分類、商家管理、圖表、全站導覽重排。
 6. 顯示收到哪些期別，不在缺少應到規則時宣稱全部到齊；自然月支出不等於帳單應繳，空月份不表示沒有支出。
 
-**驗收：** 全套 tests/build；實際瀏覽器桌面/390px/320px 收錄→分析→確認→Excel→撤銷/恢復，有載入/空白/錯誤/重複點擊防護、焦點/返回路徑且不溢出。前端目前無獨立 test runner；需要時只加本流程最小互動測試配置，不換框架，不把 build 當操作測試。
+**驗收：** 全套 tests/build；實際瀏覽器桌面/390px/320px 收錄→分析→確認→Excel→撤銷/恢復，有載入/空白/錯誤/重複點擊防護、焦點/返回路徑且不溢出。M12 已加入 Vitest／React Testing Library，目前涵蓋分類互動，不表示舊流程都已有前端測試；不換框架，不把 build 當操作測試。
 
 ## 12. S8：Codex MCP 收件，受控處理
 
@@ -365,8 +395,9 @@ S3F 不得擴張成 multi-provider 平台。三銀行明示格式已可本機解
 | M9 / S0-S6 | 一家銀行兩期驗證、原子確認/去重/撤銷、真實 PDF 正確到 Excel | 完整 Dashboard、分類、每日排程 |
 | M10 / S7 | 最小帳戶設定/待處理/確認/Excel 操作，桌面手機可用 | 全站重排、財務管理平台 |
 | M11 / S8-S9 | Codex MCP 受控收件、固定 Windows 入口、授權真實驗收 | Legacy History 重寫、事件平台、原生 App |
+| M12 / C1-C5 | 消費分類、Donut、Category → Merchant → Transaction 下鑽、未分類整理、Excel 分類投影 | AI 分類、Budget、Tag、通用 Dashboard builder |
 
-- 舊 S7 Excel 提前到 S6C；月報圖表及分類/備註不再列本輪待辦。
+- 舊 S7 Excel 已提前到 S6C。2026-09-30 使用者重新把「分類支出＋Donut 下鑽」列为明确产品待办，改由 M12/C1-C5 执行；备注/Tag、Budget 与通用 Dashboard 仍不做。
 - 舊 S8 的 90 天水位、每日/退避新排程、停止 History 取消本輪要求，不刪已有實作。
 - Documents/SecretStore/去重/撤銷是必要可靠性，不為縮短檔案數拆除。
 - 不以測試數量、抽取字數、文件數、Excel 存在判定成功；要逐筆正確、重跑 0 新增、撤銷/恢復一致。
@@ -376,8 +407,10 @@ S3F 不得擴張成 multi-provider 平台。三銀行明示格式已可本機解
 從 repo 根目錄用既有 .venv，先確認測試設定隔離 DB，不自動安裝/升級依賴。
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest backend/tests -q -p no:cacheprovider
-npm --prefix frontend run build
+$testRoot = Join-Path 'C:/Users/brad/Documents/Codex' ('pt-' + [guid]::NewGuid().ToString('N').Substring(0,8))
+.\.venv\Scripts\python.exe -m pytest backend/tests --basetemp $testRoot -q --tb=short
+npm --prefix frontend test
+npm --prefix frontend run build -- --outDir dist-category-preview
 .\.venv\Scripts\python.exe -m alembic -c backend/alembic.ini heads
 git diff --check
 ```
@@ -394,7 +427,7 @@ S5-S6 現有回歸 tests：
 .\.venv\Scripts\python.exe -m pytest backend/tests/test_migrations.py backend/tests/test_imports.py backend/tests/test_document_lifecycle.py backend/tests/test_workbook_export.py backend/tests/test_xlsx_writer.py -q -p no:cacheprovider
 ```
 
-`test_statement_parser.py`、`test_statement_import.py` 等為待新增，建立後才列 focused command，不引用不存在檔案當驗證。S8 另查現有 scheduler/client 測試並跑受影響集合。
+Statement／分類 focused tests 已存在：`test_taiwan_credit_cards.py`、`test_statement_import.py`、`test_category_domain.py`、`test_categories.py`。Windows frontend tests 亦須使用短且可寫的唯一 TEMP／TMP，完整命令見 README。正式部署未授權前，build 使用獨立 `dist-category-preview`；不覆蓋正式輸出。S8 另跑 `test_codex_mcp_import.py` 與受影響 legacy 相容測試。
 
 Alembic heads 只讀 migration 定義；schema 驗證沿用 `test_migrations.py` 的 tmp_path + Config，明確覆寫暫存 URL，測 upgrade/資料保留/限制。**未指定隔離 DB 的 upgrade head 不得當測試命令。**
 
@@ -402,4 +435,41 @@ Alembic heads 只讀 migration 定義；schema 驗證沿用 `test_migrations.py`
 
 ## 18. 給 Luna max 的啟動指示
 
-> 請開始實作「家庭收支記錄」。先讀 `AGENTS.md`、`README.md`、`HANDOFF.md`、`TASKS.md`、`IMPLEMENTATION_PLAN.md`、`FREE_AI_PASSWORD_RULE_PLAN.md`，並重新確認 Git HEAD/status。`main` 已包含 `eeb6883` 的 Groq 程式，禁止重做或覆蓋。先核實 S1-S3、S3F-A 與 Statement contract；如果 runtime 尚未切 Groq，先完成 S3F-C safe-switch preflight，再完成 S3F-B synthetic activation；之後從真正未完成的 S4 接續。目標是信用卡 PDF 正確到 SQLite/Excel，不是擴建家庭平台。S6 必須先交付正確 Excel，不做完整 Dashboard、分類或同步引擎重寫。parser 需要一家銀行兩期授權樣本，缺樣本不得猜格式/假稱通過。使用隔離資料/fake provider，不讀聊天秘密，不自行操作正式 DB、啟用外部服務/排程或改網路；Git 寫入依使用者當次授權。遇必要外部關卡才停並列缺件。
+> 請先讀 `AGENTS.md`、`README.md`、`HANDOFF.md`、`TASKS.md`、`IMPLEMENTATION_PLAN.md`、`FREE_AI_PASSWORD_RULE_PLAN.md`，並重新確認 Git HEAD/status。C1-C5 分類支出／Donut／下鑽已實作，不要重做；若使用者另行批准逐筆自動分類，依 `CATEGORY_SPENDING_PLAN.md` 第 18 節及 TASKS M13 執行 A1-A6，否則只研究與交接。分類採 read-time Effective Category，不把商家規則塞進銀行 parser，不做 Budget、Tag 或完整 Dashboard 重寫。AI 消費用途與雲端傳送另取同意；使用隔離 DB/合成資料验证 schema 与分类，正式交付仍遵守 E2E-GMAIL-3BANK。Git 寫入依使用者當次授權。
+
+## 19. 使用者核准的 M12：分類支出與 Donut 下鑽
+
+**目前：C1-C5 與正式部署已完成。** 使用者「開始做」授權後先重跑 backend 326 passed（含 16 項下載驗證）、frontend 29 passed／production build，成對備份及副本還原／migration 演練後，將正式 DB 升級 0012、同步 dist／owned Excel、以原 Windows 登入帳戶排程啟動。正式 18 筆交易與來源不變；原 3000／HTTPS 443 已驗 Donut／分類 → 商家 → 逐筆 → 文件、分類設定及 Web／Excel parity。部署後另從 Gmail 新下載三家，隔離解鎖／逐列／摘要／冪等通過，證據在 `data/gmail-acceptance/retest-20260930-1903/`。分類預覽仍使用 3001／8030／8443 與獨立合成 DB，合成来源已撤銷、有效交易 0 筆。canonical 測試對照見 CATEGORY_SPENDING_PLAN；尚未完成實體手機／screen reader／重開機、第二期盲測、長期 MCP 自動化與冷啟動效能目標，不重做已有 C1-C5 或擅自確認草稿。
+
+2026-09-30 使用者明確要求：每一筆交易要能分類、同類型歸組、總覽以圓餅／Donut 一眼看出花費去向，並可點類別查看商家與逐筆明細。
+
+本功能的 **canonical 規格、資料模型、API、前端、Excel、C1-C5 工作包與完整 Test Matrix** 全部維護在：
+
+- `CATEGORY_SPENDING_PLAN.md`
+
+執行原则：
+
+1. 不改银行 parser 来做商家分类；分类属于 Finance categorization。
+2. V1 不把 category 写回 `FinanceTransaction`，使用 Category + Rule + TransactionOverride 在 read time 解析 Effective Category。
+3. 财务语义与显示分类分离；payment 永远不因改分类而进入消费，refund 仍按既有支出语义冲抵。
+4. 多币别分开，不做未授权汇率换算。
+5. Drill-down 固定为 Category → Merchant subtotal → Transaction rows；第一版不建立 subcategory taxonomy。
+6. V1 不使用 AI 自动分类。
+7. 前端使用独立组件与 Recharts；加入最小 Vitest + React Testing Library，不为了这项功能导入大型 E2E framework。
+8. Web 与 Excel 必须使用同一个 CategorizationService；只改分类也必须触发 Excel snapshot 更新。
+9. C1-C5 真正实作准备交付时，仍需跑本项目现行的 E2E-GMAIL-3BANK delivery gate。
+10. 只更新分类规划文件时，不把文件更新冒称为分类功能已实作或项目验收完成。
+
+建议顺序：
+
+```text
+C1 Category domain + migration
+  ↓
+C2 Categorization engine
+  ↓
+C3 Category APIs
+  ↓
+C4 Donut / drill-down / 未分类整理
+  ↓
+C5 Excel + full regression + delivery gate
+```

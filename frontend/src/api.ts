@@ -2,7 +2,12 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
 export type DocumentSource = { type: string; availability: string };
 export type DocumentRow = { id: string; filename: string; content_type: string; size_bytes: number; created_at: string; revoked_at: string | null; revocation_reason: string | null; sources?: DocumentSource[] };
-export type Transaction = { id: string; source_document_id: string; date: string | null; description: string; amount: string; currency: string };
+export type Transaction = { id: string; source_document_id: string; date: string | null; description: string; amount: string; currency: string; category_id?: string; category_code?: string; category_name?: string; category_source?: string; merchant_key?: string; transaction_kind?: string | null };
+export type Category = { id: string; code: string; display_name: string; sort_order: number; is_active: boolean; is_system: boolean };
+export type CategoryRule = { id: string; category_id: string; match_type: "normalized_exact" | "contains"; pattern: string; priority: number; enabled: boolean };
+export type CategoryTotal = { category_id: string; code: string; name: string; net_amount: string; transaction_count: number };
+export type CategorySpending = { month: string | null; currency: string; dashboard_expense: string; positive_category_total: string; refund_credit_total: string; categories: CategoryTotal[]; negative_categories: CategoryTotal[] };
+export type CategoryMerchant = { merchant_key: string; display_name: string; transaction_id: string; net_amount: string; transaction_count: number };
 export type TransactionPage = { items: Transaction[]; total: number; limit: number; offset: number };
 export type SearchResult = {
   documents: DocumentRow[];
@@ -114,6 +119,10 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}
+
 async function requestBlob(path: string, body: unknown): Promise<{ blob: Blob; extraction: string | null }> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
@@ -125,6 +134,18 @@ async function requestBlob(path: string, body: unknown): Promise<{ blob: Blob; e
 }
 
 export const api = {
+  categories: () => request<Category[]>("/api/finance/categories"),
+  createCategory: (body: { code: string; display_name: string }) => postJson<Category>("/api/finance/categories", body),
+  updateCategory: (id: string, body: Partial<Pick<Category, "display_name" | "is_active" | "sort_order">>) => patchJson<Category>(`/api/finance/categories/${encodeURIComponent(id)}`, body),
+  categoryRules: () => request<CategoryRule[]>("/api/finance/category-rules"),
+  createCategoryRule: (body: Omit<CategoryRule, "id">) => postJson<CategoryRule>("/api/finance/category-rules", body),
+  updateCategoryRule: (id: string, body: Partial<Omit<CategoryRule, "id" | "match_type">>) => patchJson<CategoryRule>(`/api/finance/category-rules/${encodeURIComponent(id)}`, body),
+  deleteCategoryRule: (id: string) => request(`/api/finance/category-rules/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  spendingByCategory: (month: string, currency: string) => request<CategorySpending>(`/api/finance/spending-by-category?${new URLSearchParams({ month, currency })}`),
+  categoryMerchants: (month: string, currency: string, category_id: string) => request<{ items: CategoryMerchant[] }>(`/api/finance/category-merchants?${new URLSearchParams({ month, currency, category_id })}`),
+  uncategorizedMerchants: (month: string, currency: string) => request<{ items: CategoryMerchant[] }>(`/api/finance/uncategorized-merchants?${new URLSearchParams({ month, currency })}`),
+  assignCategory: (id: string, category_id: string, scope: "transaction" | "merchant") => patchJson<Transaction>(`/api/finance/transactions/${encodeURIComponent(id)}/category`, { category_id, scope }),
+  clearCategoryOverride: (id: string) => request<Transaction>(`/api/finance/transactions/${encodeURIComponent(id)}/category`, { method: "DELETE" }),
   workbookStatus: () => request<WorkbookExportStatus>("/api/exports/excel/status"),
   configureWorkbook: (enabled: boolean) => postJson<WorkbookExportStatus>("/api/exports/excel/settings", { enabled }),
   refreshWorkbook: () => postJson<WorkbookExportStatus>("/api/exports/excel/refresh", {}),
@@ -148,10 +169,13 @@ export const api = {
   importImpact: (id: string) => request<ImportImpact>(`/api/documents/${encodeURIComponent(id)}/import-impact`),
   changeImportState: (id: string, action: "revoke" | "restore", impact_token: string, reason: string) =>
     postJson<ImportImpact & { changed: boolean }>(`/api/documents/${encodeURIComponent(id)}/${action}`, { impact_token, reason }),
-  transactions: (options: { limit?: number; offset?: number; month?: string; currency?: string } = {}) => {
+  transactions: (options: { limit?: number; offset?: number; month?: string; currency?: string; category_id?: string; merchant_key?: string; consumption_only?: boolean } = {}) => {
     const params = new URLSearchParams();
     if (options.limit !== undefined) params.set("limit", String(options.limit));
     if (options.offset !== undefined) params.set("offset", String(options.offset));
+    if (options.category_id) params.set("category_id", options.category_id);
+    if (options.merchant_key !== undefined) params.set("merchant_key", options.merchant_key);
+    if (options.consumption_only) params.set("consumption_only", "true");
     if (options.month) params.set("month", options.month);
     if (options.currency) params.set("currency", options.currency);
     return request<TransactionPage>(`/api/finance/transactions?${params.toString()}`);

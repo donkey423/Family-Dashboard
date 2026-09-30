@@ -1,0 +1,65 @@
+.category-spending { margin: 24px 0 32px; padding: 24px 0; border-top: 1px solid #d9e1dd; border-bottom: 1px solid #d9e1dd; }
+.category-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.category-heading h2, .category-heading h3 { margin: 0 0 6px; font-size: 20px; }
+.category-heading h3 { font-size: 17px; }
+.category-heading span { color: #65756f; font-size: 13px; }
+.category-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
+.category-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.category-summary { display: flex; gap: 36px; margin-top: 26px; flex-wrap: wrap; }
+.category-summary span { font-size: 13px; color: #65756f; }
+.category-summary strong { display: block; color: #23352e; font-size: 23px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.category-chart-layout { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 40px; align-items: center; margin: 16px 0; }
+.category-chart { height: 272px; min-width: 0; }
+.category-legend, .category-merchant-list, .category-settings-list { list-style: none; padding: 0; margin: 0; }
+.category-legend li button { width: 100%; display: flex; align-items: center; gap: 12px; border: 0; border-bottom: 1px solid #e0e6e2; padding: 13px 2px; background: transparent; text-align: left; cursor: pointer; color: #23352e; }
+.category-swatch { width: 10px; height: 10px; flex: 0 0 10px; border-radius: 2px; }
+.category-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.category-legend strong, .category-merchant-link strong { font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.category-label small, .category-merchant-list small, .category-settings-list small { display: block; color: #65756f; font-size: 12px; margin-top: 4px; }
+.category-refunds, .category-other, .category-review, .category-detail { border-top: 1px solid #d9e1dd; padding: 20px 0 0; margin-top: 20px; }
+.category-refunds h3, .category-other h3, .category-review h3 { font-size: 15px; }
+.category-refunds button, .category-other button { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 12px; padding: 12px 0; }
+.category-refunds button strong, .category-other button strong { margin-left: auto; }
+.category-merchant-list li, .category-settings-list li { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 14px 0; border-bottom: 1px solid #e0e6e2; }
+.category-merchant-link { display: flex; align-items: center; gap: 14px; background: transparent; border: 0; text-align: left; cursor: pointer; color: #23352e; padding: 0; flex: 1; min-width: 0; }
+.category-merchant-link > span, .category-merchant-name, .category-settings-list li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.category-description { overflow-wrap: anywhere; }
+.category-error { color: #a53642; padding: 12px 0; display: flex; gap: 16px; justify-content: space-between; }
+.category-empty { padding: 36px 0; color: #65756f; }
+.category-modal-backdrop { position: fixed; inset: 0; background: #172b2480; z-index: 100; display: flex; justify-content: center; align-items: center; padding: 16px; }
+.category-modal { background: #fff; border-radius: 8px; padding: 24px; width: 440px; max-width: 100%; max-height: 90dvh; overflow-y: auto; }
+.category-modal > label { display: grid; gap: 8px; margin: 16px 0; }
+.category-modal fieldset { border: 0; padding: 0; margin: 16px 0 24px; }
+.category-modal legend { margin-bottom: 12px; font-size: 13px; }
+.category-modal fieldset label { display: flex; gap: 8px; margin: 12px 0; font-size: 14px; }
+.category-spending select, .category-modal select, .category-settings select, .category-filter select, .category-settings input:not([type=checkbox]) { border: 1px solid #cbd6d0; background: #fff; border-radius: 4px; padding: 8px; max-width: 100%; color: #23352e; min-width: 0; }
+.category-filter { display: inline-flex; align-items: center; gap: 8px; margin: 16px; }
+.category-form { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 24px 0; }
+.category-form label { display: grid; gap: 8px; flex: 1 1 140px; min-width: 0; font-size: 13px; }
+.category-form input { width: 100%; }
+.category-settings input[type=number] { max-width: 100px; }
+.category-settings-list label { display: flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 13px; }
+.category-settings-list .category-actions { max-width: 60%; }
+.category-table-button { overflow-wrap: anywhere; white-space: normal; text-align: left; }
+@media (max-width: 640px) {
+  .category-spending { margin: 20px 0; padding: 20px 0; }
+  .category-heading { flex-wrap: wrap; gap: 10px; }
+  .category-summary { gap: 20px; }
+  .category-summary strong { font-size: 19px; }
+  .category-chart-layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .category-chart { height: 230px; }
+  .category-merchant-link { gap: 8px; }
+  .category-merchant-link strong { font-size: 12px; }
+  .category-modal { padding: 20px; }
+  .category-settings-list li { align-items: flex-start; flex-wrap: wrap; }
+  .category-settings-list .category-actions { max-width: 100%; }
+  .category-filter { margin: 12px 0; }
+  .category-detail .table-wrap table { min-width: 0; table-layout: fixed; }
+  .category-detail th, .category-detail td { padding: 9px 4px; font-size: 11px; overflow-wrap: anywhere; }
+  .category-detail .date-cell { white-space: normal; }
+  .category-detail .amount { white-space: normal; }
+  .category-detail .transaction-name { white-space: normal; overflow-wrap: anywhere; }
+  .table-wrap .transaction-table.with-category tbody tr { grid-template-areas: "item amount" "date source" "category category"; }
+  .table-wrap .transaction-table.with-category tbody td.category-cell { grid-area: category; justify-self: stretch; text-align: left; }
+  .table-wrap .transaction-table.with-category tbody td.source-cell { grid-area: source; justify-self: end; }
+}

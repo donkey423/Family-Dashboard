@@ -6,7 +6,9 @@
 
 使用者 2026-09-30 指定強制執行，UI/設定/部署修復也不省略。詳細步驟、秘密保護、正式資料不自動入帳及 FAIL/BLOCKED 條件見 `IMPLEMENTATION_PLAN.md` 第 4.1 節；當次結果見 HANDOFF。舊測試結果、合成資料、只抽文字及三封同一家銀行都不算通過。此 checkbox 只表示本次交付關卡，不是一次勾選後永久完成。
 
-2026-09-30 本次實測為 **PASS（3/3）**：修復明示郵件句型並加入受限國泰/永豐 parser 後，再次從 Gmail 網頁下載九月中國信託、國泰世華、永豐加密帳單，完整解析 1/19/31 列，獨立逐列/合計核對及冪等重跑通過。使用者允許未列日期的利息按明示結帳日認列，保留來源缺日期與認列依據；其他缺日期仍 pending。文件詳情改讀完整明細，桌面驗證 19/31 列及日期標記；正式 Finance 前後 18 筆，不自動 confirm、不呼叫 AI。完整 backend 258 passed、2 warnings，frontend build 成功。網頁替代不是 MCP/cron 驗收；手機尺寸覆寫未生效、跨次持續運行及實體手機仍未驗證。
+2026-09-30 正式部署後最新實測為 **PASS（3/3）**，證據在 `data/gmail-acceptance/retest-20260930-1903/`：用 `prepare → 附件下載 → collect` 從 Gmail 新下載九月中國信託、國泰世華、永豐加密帳單，先確認郵件格式，於隔離 API 完整解析 1/19/31 列，獨立逐列／合計核對及冪等通過。中信第一次未產生新檔，重新載入原信、確認附件可用後以新 checkpoint 重試成功；沒有借用舊檔。利息認列仍依批准政策；驗收期間正式 Finance 18 → 18、schema 0012／fingerprint 不變，隔離 Finance 0 筆，沒有 confirm 或 AI request。完整 backend 326 passed（含 16 項下載回歸）、2 warnings，frontend 29 passed／production build 成功。網頁替代不是 MCP／cron 驗收；正式分類頁桌面與 320px／390px 已實測，實體手機仍未驗證。詳細證據見 HANDOFF。
+
+本次更新研究 MD 與 Git 封存，沒有新的程式／部署交付；重新跑現有 backend 326、frontend 29 及隔離 build 通過，未再下載 Gmail。上方 checkbox 及三銀行 PASS 僅指前次 1903 部署驗收，不適用未来 M13/A1-A6；純文件與交付關卡的區分見 canonical plan 第 15 節及 HANDOFF。
 
 ## 目前執行入口：信用卡 PDF 到 Excel
 
@@ -34,7 +36,36 @@
 
 M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自動化與交付。每步 focused tests，S0/S6/S7/S9 全套 backend/build，schema 另做隔離 migration；更新 HANDOFF 才勾選。缺真實樣本/外部驗收保持未完成，不能拿合成資料代替。S0 已勾是前輪基線，接手仍要重驗。
 
-本輪延後完整 Dashboard、分類/備註、Excel 事件驅動重寫，以及 legacy Gmail History/schema 的破壞性移除。既有 remote source 只作相容，不再驅動日常收件；詳細工作包、固定測試數值與缺件處理只維護在 IMPLEMENTATION_PLAN，避免多份衝突規格。
+本輪仍延後完整 Dashboard 重寫、備註/Tag、AI 分類、Budget、Excel 事件驅動重寫，以及 legacy Gmail History/schema 的破壞性移除。2026-09-30 使用者已明确批准 M12「分类支出＋Donut＋Category → Merchant → Transaction 下钻」，canonical 设计与 Test Matrix 只维护在 `CATEGORY_SPENDING_PLAN.md`，避免多份冲突规格。
+
+## M12：消費分類、Donut 與下鑽
+
+2026-09-30 使用者已明確批准；**C1-C5 與正式部署已完成。** 正式 DB／程式均為 0012，18 筆既有交易不變；原網址的真實 Donut／下鑽與分類 Excel 已驗。分類 preview 仍隔離，合成來源已撤銷、有效交易 0 筆。詳細測試對照見 `CATEGORY_SPENDING_PLAN.md`，執行入口與證據見 README／HANDOFF。
+
+- [x] C1：0012 migration、Category／Rule／Override，不修改 FinanceTransaction identity。
+- [x] C2：read-time resolver、正規化、穩定優先序、system default、批次 3 次配置 query。
+- [x] C3：分類／規則／summary／商家／未分類 APIs、有效分類及篩選後分頁。
+- [x] C4：Recharts Donut、Top 5／其餘、退款／抵扣、商家明細下鑽與修改、未分類整理、Vitest／RTL。
+- [x] C5：Excel 分類／分類支出／fingerprint、backup／restore、全套 tests／build 及當次三銀行關卡。
+- [x] P0：migration／FK／identity、規則、override、退款／付款／多幣別、撤銷恢復、Statement 重跑、API 分頁、Excel 安全及 fingerprint。
+- [x] P1：Top-N／下鑽／rollback／stale／URL／鍵盤與 labels／管理／backup；實際桌面及 320px／390px 長名稱修正已驗，實體手機／輔助工具另待驗。
+- [ ] P2 效能目標：一萬筆／50 規則 API 首次 259.6ms，暖機 187.4／185.4ms；冷啟動尚未達 200ms。500 商家無 N+1、generated invariants 已通過。
+- [x] 使用者授權後：成對備份與副本還原／migration 演練、正式 0011 → 0012、正式 build／正常登入帳戶啟動、正式 Web／Excel 回歸及本輪新下載三銀行關卡。
+- [ ] 實體手機、真正螢幕閱讀器與重新開機後持續服務驗收。
+
+## M13：逐筆自動分類（研究已完成，實作待授權）
+
+使用者要求以每筆消費用途分類為交通、圖書、飲食等。根因、範圍、取捨、落點、停止條件與品質測試統一在 `CATEGORY_SPENDING_PLAN.md` 第 18 節；本次只更新文件及 Git，不改正式資料或將研究當作程式完成。
+
+- [x] 確認 V1 分類來源缺失：14 類、規則／有效 override 為 0；没有 books 或自動商家辨識，九月六筆支出全未分類，API 合計守恆。
+- [x] 定義以每筆刷卡交易為第一階段、多用途商家不硬猜、單筆優先與雲端另取同意，完成 A1-A6 工作包／AUTO-01-08 測試規格。
+- [ ] A1：建立經人工核對的分類樣本與未知／反例，盤點舊 CSV 會計語意缺口。
+- [ ] A2：圖書 migration、內建明確商家規則、來源追蹤與 Excel 字典版本 fingerprint。
+- [ ] A3：逐筆待確認、預設 transaction scope、記住商家影響預覽及原子批次確認。
+- [ ] A4：按實際未知樣本決定是否需要可選 AI；雲端用途同意、schema／白名單、安全降級與版本快取。
+- [ ] A5：既有資料分類 dry-run、核准後套用，保留原 identity 與 Web／API／Excel parity。
+- [ ] A6：完整測試／build、當次新下載三銀行、盲測品質報告與授權部署；未知不可冒充自動成功。
+
 
 ## M0：產品與架構基線
 

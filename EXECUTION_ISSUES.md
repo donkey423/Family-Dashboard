@@ -1,10 +1,61 @@
 # 執行問題與處理紀錄
 
-> 更新日期：2026-09-29
+> 更新日期：2026-09-30
 >
 > 本文件只記錄工程執行時可觀察到的問題、處理方式與剩餘限制，不保存帳單內容、身分資料、生日、PDF 密碼、API key、OAuth token 或其他秘密。
 
-## 1. 本次範圍
+## 0. 目前問題與處理
+
+依遠端 `main @ bf3d4f6` 的 MD 完成分類支出 C1-C5 後，使用者授權將功能部署到原正式網址；已完成備份、副本還原／migration、正式 0012／同步 build／正常帳戶啟動及 Web／Excel 回歸。既有 18 筆交易與來源保留；本次另獲 MD／Git 封存授權，提交與遠端同步以 Git refs 確認。部署前 backend **326 passed**（既有 310 + 16 項下載回歸）、frontend **29 passed**、production build 通過；部署後三銀行驗收在 `retest-20260930-1903` 通過，不冒稱是純文件更新的新結果。最新狀態以本節與 `HANDOFF.md` 為準，下方 1-4 節是歷史紀錄，不是目前待執行指令。
+
+### 0.1 Gmail 下載事件逾時，完整附件以 `.tmp` 留在 Downloads
+
+- **證據：** 下載按鈕操作後，瀏覽器 download event 逾時且未回傳路徑；Windows Downloads 卻產生完整的新加密 PDF `.tmp`。最終再次下載中國信託／國泰／永豐，完整檔案分別為 643,152／902,897／743,221 bytes。先前只等事件或找 `.pdf` 的流程會誤報失敗，不能據此認定使用者沒有下載。
+- **修復：** 新增 `scripts/gmail_attachment_download.py`，固定先 `prepare` 記錄既有檔與唯一 checkpoint，再按原郵件的指定附件，最後 `collect`。只接受新檔，至少兩秒大小／修改時間穩定、讀取前後一致、PDF header／EOF／strict 結構通過才保存 SHA-256 命名的加密副本及 receipt；不改名或刪除 Downloads 原檔。
+- **失敗處理：** 舊檔、`.crdownload`、HTML、截斷檔、超限檔、多檔歧義及遭修改的副本不能冒充成功。預設等待 90 秒、上限 180 秒；checkpoint 十分鐘後失效。無完整新檔即非零退出，先查證 Downloads／附件／介面，再建立新 checkpoint 重試；不盲目連點或繞過瀏覽器安全限制。步驟見 `IMPLEMENTATION_PLAN.md` 4.1。
+- **回歸中發現的問題：** Windows 時間戳可能在兩次 `prepare` 相同；單靠時間會讓舊 receipt 被誤接受。改為 UUID checkpoint 與時間雙重綁定，新增同時間戳重測與失效 receipt 測試，完整後端重跑 326 passed。
+- **部署後重測：** 中信原郵件按鈕等待 90 秒沒有新檔，檢視器下載等待 30 秒亦無新檔，支援的連結下載工具逾時；這些嘗試不是 PASS。國泰／永豐的原信按鈕各產生新的完整 `.tmp`。中信重新載入來源郵件，觀察到「正在掃描病毒」／disabled，待掃描結束確認 enabled 後重新 prepare／下載，也產生完整新檔。此為實際成功恢復步驟，不足以證實前幾次失敗的内部根因；沒有盲目連點、改安全設定或查受限瀏覽器內部頁。
+- **真實驗收：** 用本輪三份新原件及各自 checkpoint／receipt，先確認郵件格式，再於受控 `8031`／`acceptance.db` 走既有收錄、解鎖、分析入口。中國信託／國泰／永豐 1／19／31 列全欄位、摘要合計、API 及冪等核對通過；國泰利息按已批准的明示結帳日認列。結果與加密原件在 Git 忽略的 `data/gmail-acceptance/retest-20260930-1903/`，未保存明文 PDF、全文或秘密。
+- **隔離界線：** 驗收腳本先核對 API 隔離識別與 receipt，只從正式 DB 唯讀複製 credential references，SecretStore 禁止寫入／刪除；AI 0 次、confirm 0 次、隔離 Finance 0 筆，不生成隔離 Excel。驗收期間正式 Finance 18 → 18、schema 0012 及全交易 fingerprint 不變；正式 Excel 分類重建另在授權部署驗證，非三銀行自動入帳。
+- **剩餘限制：** 本次使用已登入 Gmail 網頁 fallback，不代表 Gmail MCP／cron 或正式入帳驗收。下載事件／最終改名缺失的瀏覽器內部根因仍未證實；沒有停用安全保護或宣稱外部服務永不失敗。PDF 結構完整也不等於來源銀行正確或惡意檔案檢查，仍須後續銀行／帳期／逐列核對。
+
+### 0.2 啟用 SQLite FK 後，安全資料 flush 順序錯誤
+
+- **證據：** 全 suite 有 13 個安全／文件流程失敗，FK constraint 揭露 ORM 未宣告相依關係。
+- **修復：** 補上 `DocumentSecurityProfile.secret_profile` 與 `PasswordRuleRecord.document_security_profile` 的 ORM 關係，讓 flush 依 FK 順序執行；未停用 FK 或放寬安全檢查。
+- **驗證：** 完整 backend 310 passed；分類 migration forward/downgrade/re-upgrade 與既有 CSV/Statement identity 保留通過。
+
+### 0.3 手機交易列新增分類欄後，長商家被擠成單字換行
+
+- **證據：** 舊 mobile grid 假設四欄；第五欄及分類按鈕 nowrap 使商家可用寬度大幅縮小。
+- **修復：** 只對含分類的交易表加入語意 grid areas，分類跨欄、來源／日期明確定位，長標籤允許換行；不重排無關頁面。
+- **驗證：** 有／無來源欄回歸測試、桌面與 320px/390px 實際瀏覽器長文字檢查通過。尚未實體手機或 screen reader 驗收。
+
+### 0.4 Windows 前端測試暫存目錄 EPERM
+
+- **處理：** Vitest 與 pytest 使用 `C:/Users/brad/Documents/Codex` 下每次唯一的短 TEMP/TMP 或 basetemp，避免舊權限目錄及過長路徑；不刪除既有未追蹤目錄。
+- **驗證：** frontend 29 passed，最新 backend 326 passed；命令見 `README.md`。
+
+### 0.5 完整分類 API 首次延遲仍高於目標
+
+- **量測：** 10,008 筆／50 規則，resolver + aggregation 37.7ms；完整 API 259.6/187.4/185.4ms。500 商家及 filtered pagination 至多 6 queries，沒有每筆交易查詢規則的 N+1。
+- **限制：** 首次尚未達 CAT-P01 的 <200ms local 目標。後續先量測 ORM row loading / serialization，評估窄欄位查詢與 SQL filter；不直接加 cache 或 materialized table。
+
+### 0.6 正式網址缺圖與分類：舊 runtime 尚未部署（已處理）
+
+- **證據：** 原 3000／HTTPS 443 有真實資料，但仍提供旧 dist／0011；隔離 3001／8030／8443 不同 DB 的新版測試畫面不能解決正式首頁缺圖。新版 API 不可直接搭配沒有分類表的 0011。
+- **修復：** 授權後停止已確認的原排程服務，備份 DB／documents／owned Excel／dist／排程；先對成對副本驗還原與 migration downgrade/re-upgrade，再正式升級 0012、同步 production dist、原 Windows 登入帳戶排程啟動。備份與證據在 `data/backups/20260930-categories-1845/`；未更改 443／8443 Serve 路由。
+- **驗證：** 原有全交易、Statement、來源、秘密參照及撤銷資料／文件 hash 保留；18 筆不變。正式分類 API／非空 Donut／分類到來源文件／分類設定、320px／390px 畫面與 owned Excel 全分類／每期 parity 通過。未給正式資料猜分類，因此圓環目前是「未分類」一個區塊，可由使用者在「待分類商家」整理。
+- **隔離：** 預覽仍用獨立 synthetic.db；合成來源已撤銷，有效交易 0 筆，SecretStore／Excel 關閉，未自行恢復。正式資料使用 3000／443。
+- **限制：** 沙箱 Windows 帳戶曾因 TLS／Credential Manager 環境失敗，正常登入帳戶 HTTPS／安全憑證狀態已重驗；沒有關閉憑證驗證。實體手機／screen reader／重開機仍未驗收，後續新部署仍需當次授權及備份。
+
+### 0.7 圓環全部未分類：分類工具不等於自動辨識（待實作）
+
+- **證據：** 正式唯讀 API 有 14 類、没有 books，規則／有效單筆 override 為 0；九月六筆支出均未分類且合計與 Dashboard 一致。`CategoryResolver` 沒有內建商家知識或消費 AI，現有 tests 主要驗規則／人工指定／投影正確，不證明能辨識真實用途。
+- **規劃：** `CATEGORY_SPENDING_PLAN.md` 第 18 節及 TASKS M13 定義 A1-A6：先本機明確規則、圖書與逐筆整理，再決定可選 AI。多用途商家不得套用同一商品類別，預設只改單筆、記住商家前看影響範圍。
+- **狀態：** 本次只更新文件及 Git，未修自動分類程式或改正式帳本。舊 CSV 缺 kind 的會計缺口須以來源另核對，不藉分類改金額／日期／類型。AI schema 正確不等於用途判斷正確，雲端用途同意與品質盲測尚未完成。
+
+## 1. 歷史範圍（2026-09-29）
 
 本次工作同時完成了三件事：
 
@@ -14,7 +65,7 @@
 
 本次不是所有銀行版型或內建 Gmail OAuth 長期自動化的完成驗收。實際完成範圍是「一份實際中國信託帳單已收錄、解鎖、解析、核對、匯入並更新 Excel」；未知版型仍停在待處理。
 
-## 2. 問題與處理
+## 2. 歷史問題與處理
 
 ### 2.1 本機分支落後最新遠端文件提交
 
@@ -119,7 +170,7 @@
 - **風險：** 容易把「表單預設 Groq」誤認為「目前正在使用 Groq」。
 - **處理方向：** 顯示「目前使用：Provider · Model」，並拆成「測試連線」與「保存並切換」兩個動作。
 
-## 3. 最終驗證結果
+## 3. 歷史驗證結果（非目前測試數字）
 
 | 項目 | 結果 | 備註 |
 | --- | --- | --- |
@@ -135,7 +186,7 @@
 | BankStatementParser | 部分完成 | 中國信託版型已由實際帳單驗證；受限台新零交易版型有測試；其他版型與第二期盲測待完成 |
 | Finance transaction / Excel 入帳 | 通過（限定範圍） | 實際中國信託帳單已核對、冪等匯入並重建專用 Excel |
 
-## 4. 下一次執行前檢查
+## 4. 歷史後續清單（目前交接以 HANDOFF.md 為準）
 
 1. 先讀 `HANDOFF.md`、`FREE_AI_PASSWORD_RULE_PLAN.md` 與本文件，不要只看 UI 的 provider 預設值。
 2. 以設定 API 或設定頁確認實際 runtime provider/model；不要假設已保存 Groq key。

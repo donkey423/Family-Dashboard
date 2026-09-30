@@ -231,6 +231,31 @@ def test_statement_analysis_confirmation_is_idempotent_and_projects_card_sheet(t
             assert rows == [(datetime(2026, 9, 1), "測試卡", "TWD", 120, 20, 100, 0, 0, 100, 300, 3)]
 
 
+def test_reanalysis_and_reconfirmation_preserve_category_override_and_identity(tmp_path):
+    parser = FakeStatementParser()
+    parser.bank_id = "cathay"
+    client, _settings = make_client(tmp_path, parser)
+    with client:
+        document_id = upload_pdf(client)
+        analyzed = client.post(f"/api/documents/{document_id}/statement-analysis", json={}).json()
+        statement_id = analyzed["statement_id"]
+        assert client.post(f"/api/statements/{statement_id}/confirm", json={"review_version": analyzed["review_version"]}).status_code == 200
+        transactions = client.get("/api/finance/transactions").json()["items"]
+        purchase = next(row for row in transactions if row["transaction_kind"] == "purchase")
+        assert client.patch(f"/api/finance/transactions/{purchase['id']}/category", json={"category_id": "food", "scope": "transaction"}).status_code == 200
+        with client.app.state.session_factory() as session:
+            identity = [(row.id, row.row_hash, row.statement_id, row.statement_line_index, row.raw_json) for row in session.scalars(select(FinanceTransaction).order_by(FinanceTransaction.id))]
+        repeated = client.post(f"/api/documents/{document_id}/statement-analysis", json={}).json()
+        assert repeated["statement_id"] == statement_id
+        confirmed = client.post(f"/api/statements/{statement_id}/confirm", json={"review_version": repeated["review_version"]})
+        assert confirmed.status_code == 200 and confirmed.json()["reused"]
+        food = client.get("/api/finance/transactions", params={"category_id": "food"}).json()
+        assert food["total"] == 1 and food["items"][0]["id"] == purchase["id"]
+        assert food["items"][0]["category_source"] == "override"
+        with client.app.state.session_factory() as session:
+            assert identity == [(row.id, row.row_hash, row.statement_id, row.statement_line_index, row.raw_json) for row in session.scalars(select(FinanceTransaction).order_by(FinanceTransaction.id))]
+
+
 def test_verified_bank_parser_auto_creates_local_account_and_imports(tmp_path):
     settings = Settings(
         database_url=f"sqlite:///{(tmp_path / 'verified.db').as_posix()}",

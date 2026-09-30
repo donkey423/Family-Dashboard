@@ -30,7 +30,9 @@ npm run dev -- --host <Windows-Tailscale-IP>
 
 ## 資料庫版本升級
 
-本版本 Alembic head 為 `0011_statement_import`。停止 API 並成對備份 DB 與文件後，在確認 `FAMILY_FINANCE_HUB_DATABASE_URL` 指向正確資料庫的環境執行 `python -m alembic -c backend/alembic.ini upgrade head`，再啟動新版 API 與前端。`0009` 增加撤銷狀態／原因／版本欄位，`0010` 增加 Excel 投影設定與狀態，`0011` 增加可核對的信用卡帳單、帳單列與冪等入帳狀態；migration 不刪除文件或交易。
+本版本 Alembic head 為 `0012_transaction_categories`，此主機正式 live.db 已同步；`start_server.ps1` 不自動 migration。未來升級先取得當次授權、停止 API 並成對備份 DB／文件／owned workbook／舊 dist，在副本驗證後才對正確的 `FAMILY_FINANCE_HUB_DATABASE_URL` 執行 `python -m alembic -c backend/alembic.ini upgrade head`，同步 build 後以原使用者排程啟動。`0009` 增加撤銷，`0010` 增加 Excel 狀態，`0011` 增加可核對的帳單與冪等入帳，`0012` 新增 Category／Rule／Override，不改寫既有 FinanceTransaction identity。
+
+2026-09-30 正式分類部署備份與驗證證據在本機 `data/backups/20260930-categories-1845/`，不進 Git：一致性 DB、20 個文件、owned Excel、旧 dist、排程與基準程式封存。成對副本還原、0011 → 0012 → 0011 → 0012 演練及全原有表／文件 hash 保留通過；正式服務只升級到 0012，沒有 downgrade。原 18 筆交易保留，私有 HTTPS 443 與同源 API／分類畫面／Excel parity 已驗；8443 隔離預覽不變。回退須另有授權並配對資料與相容程式，勿用一份新 DB 搭配舊 dist／舊 API。
 
 回退時不要讓舊版 API 讀取仍有已撤銷文件的資料庫，否則舊查詢會重新把交易算入。migration downgrade 因此在還有撤銷文件時拒絕執行；需先透過正常恢復流程處理，或成對還原升級前備份並回到相符版本。不可直接清空撤銷欄位規避檢查。
 
@@ -38,7 +40,7 @@ npm run dev -- --host <Windows-Tailscale-IP>
 
 停止 API 後，一併備份 SQLite database 和完整 `data/documents/` 目錄。還原時保持兩者來自同一時間點，再執行應用程式。`data/exports/家庭收支記錄.xlsx` 是可重建輸出，不取代 DB 與 Documents 備份；可一起備份供立即查閱，但不能只備份 Excel。v0.1 尚未提供自動備份、加密備份或還原檢查工具。
 
-`backend/tests/test_backup_restore.py` 以隔離合成資料驗證成對備份/還原可恢復文件 bytes、交易與搜尋結果；尚未對使用中的家庭資料庫進行實際還原演練。
+`backend/tests/test_backup_restore.py` 以隔離合成資料驗證成對備份／還原。2026-09-30 另以正式資料一致性備份，在獨立 `restore-check` 目錄驗證還原 bytes、migration／資料保留與唯讀 API；不是覆蓋正式資料的災難復原或重開機驗收。v0.1 仍沒有自動備份排程。
 
 ## 秘密管理
 
@@ -66,7 +68,7 @@ Excel 自動更新預設關閉。啟用後，每 30 秒比對 SQLite 快照；Ba
 
 ## 信用卡 PDF 到家庭收支
 
-支援版型的流程固定為：文件收錄 → 本機解鎖 → `BankStatementParser` 解析交易列 → 帳單合計核對 → UI 顯示待確認列 → 使用者確認 → Finance transaction → Excel rebuild。此版本已驗證中國信託版型，並保留受限台新零交易判斷；其他版型會回傳待處理原因，不猜測欄位或金額。重複確認同一帳單會重用既有交易，不新增第二份。
+支援版型的流程固定為：文件收錄 → 本機解鎖 → `BankStatementParser` 解析交易列 → 帳單合計核對 → UI 顯示待確認列 → 使用者確認 → Finance transaction → Excel rebuild。此版本已驗證中國信託／國泰／永豐指定文字版型及受限台新零交易；未知版型仍待處理，不猜欄位或金額。未列日期的利息只有在原件明示結帳日且依已批准政策時按結帳日認列，保留原始日期空值與 basis；其他缺日期不套用。重複確認重用既有交易，不新增第二份。部署後三銀行新下載／解鎖／逐列／摘要／冪等重測通過；國泰／永豐草稿沒有自動確認。
 
 Codex MCP Gmail 來源會保存遮罩後的郵件規則提示供解鎖流程使用；一般本機上傳可由 UI 輸入不含實際密碼的規則提示。實際身分證、生日與組合密碼只從 Windows Credential Manager／本機記憶體使用，不寫入 SQLite、log 或 Excel。Codex 排程只收錄附件，仍需在文件詳情完成核對與確認，不把收件視為自動入帳。
 

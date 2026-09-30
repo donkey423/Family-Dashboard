@@ -17,6 +17,9 @@ def make_engine(database_url: str):
     @event.listens_for(engine, "connect")
     def disable_driver_managed_transactions(connection, _record):
         connection.isolation_level = None
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
     @event.listens_for(engine, "begin")
     def begin_sqlite_transaction(connection):

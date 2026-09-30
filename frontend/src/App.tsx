@@ -1,13 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type AiProvider, type AiProviderStatus, type CodexMcpStatus, type Dashboard, type DocumentDetail, type DocumentRow, type Job, type Transaction, type PersonalUnlockStatus, type TransactionPage, type ImportImpact, type SearchResult, type Statement } from "./api";
 import { ImportLifecycleDialog } from "./ImportLifecycleDialog";
 import { useDialogFocus } from "./useDialogFocus";
 import { EmptyState } from "./EmptyState";
 import { TransactionTable } from "./TransactionTable";
 import { ExcelExportSettings } from "./ExcelExportSettings";
+import { CategorySettings } from "./categories/CategorySettings";
+import { CategoryPicker } from "./categories/CategoryPicker";
+import type { Category } from "./api";
+import "./categories/categories.css";
+const SpendingByCategory = lazy(() => import("./categories/SpendingByCategory").then(module => ({ default: module.SpendingByCategory })));
 
 type View = "overview" | "documents" | "transactions" | "activity" | "settings" | "search";
-type SettingsGroup = "connections" | "unlock" | "advanced";
+type SettingsGroup = "connections" | "unlock" | "advanced" | "categories";
 type SearchOffsets = { document: number; transaction: number };
 type RouteState = { view: View; query: string; searchOffsets: SearchOffsets; month: string; currency: string };
 const SEARCH_PAGE_SIZE = 10;
@@ -32,6 +37,7 @@ const viewDescriptions: Record<View, string> = {
 const settingsGroups: { id: SettingsGroup; label: string; description: string }[] = [
   { id: "unlock", label: "文件解鎖", description: "身分資料與 PDF 密碼" },
   { id: "connections", label: "自動化", description: "Codex MCP 與 Excel" },
+  { id: "categories", label: "消費分類", description: "分類與商家規則" },
   { id: "advanced", label: "進階設定", description: "選用的 AI 規則辨識" },
 ];
 function parseOffset(value: string | null) {
@@ -287,6 +293,7 @@ export default function App() {
           <article className="metric"><div className="metric-top"><span>支出</span><span className="metric-icon coral">－</span></div><strong className={dashboard && dashboard.currency_totals.length > 1 ? "multi-currency" : undefined}>{dashboard ? groupedMoney(dashboard, "expenses") : "—"}</strong><small>不同幣別分開計算</small></article>
           <article className="metric"><div className="metric-top"><span>淨額</span><span className="metric-icon lilac">＝</span></div><strong className={dashboard && dashboard.currency_totals.length > 1 ? "multi-currency" : undefined}>{dashboard ? groupedMoney(dashboard, "net") : "—"}</strong><small>收入減去支出</small></article>
         </section>
+        <Suspense fallback={<p role="status">載入分類支出…</p>}><SpendingByCategory month={periodMonth} currency={periodCurrency} currencies={dashboard?.available_currencies ?? []} version={refreshVersion} onChanged={refresh} onOpenDocument={openDocumentDetail} /></Suspense>
         <section className="content-grid">
           <div className="panel transactions-panel">
             <div className="panel-heading"><div><h2>期間交易</h2><p>{monthLabel(periodMonth)} · {periodCurrency || "全部幣別"}</p></div><button className="text-button" onClick={() => navigate("transactions", { periodMonth, periodCurrency })}>查看全部交易 <span>→</span></button></div>
@@ -369,6 +376,12 @@ function SearchPagination({ label, total, offset, limit, loading, onPage }: { la
 }
 
 function TransactionsView({ refreshVersion, month, currency, currencies, onPeriodChange, onOpenDocument }: { refreshVersion: number; month: string; currency: string; currencies: string[]; onPeriodChange: (month: string, currency: string) => void; onOpenDocument: (documentId: string) => void }) {
+  const [selected, setSelected] = useState<Transaction | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [categoryId, setCategoryId] = useState(() => new URLSearchParams(window.location.search).get("category") ?? "");
+  const [revision, setRevision] = useState(0);
+  useEffect(() => { let active = true; api.categories().then(value => { if (active) setCategories(value); }).catch(reason => { if (active) setError(reason instanceof Error ? reason.message : "無法載入分類"); }); return () => { active = false; }; }, []);
+  useEffect(() => { const listener = () => setCategoryId(new URLSearchParams(window.location.search).get("category") ?? ""); window.addEventListener("popstate", listener); return () => window.removeEventListener("popstate", listener); }, []);
   const [page, setPage] = useState(0);
   const [result, setResult] = useState<TransactionPage | null>(null);
   const [loading, setLoading] = useState(true);
@@ -378,14 +391,14 @@ function TransactionsView({ refreshVersion, month, currency, currencies, onPerio
   useEffect(() => {
     let active = true;
     setLoading(true);
-    api.transactions({ limit: pageSize, offset: page * pageSize, month: month || undefined, currency: currency || undefined })
+    api.transactions({ limit: pageSize, offset: page * pageSize, month: month || undefined, currency: currency || undefined, category_id: categoryId || undefined })
       .then((response) => { if (active) { setResult(response); setError(""); } })
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "無法載入交易"); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [currency, month, page, refreshVersion]);
+  }, [currency, month, page, refreshVersion, categoryId, revision]);
 
-  useEffect(() => { setPage(0); }, [currency, month]);
+  useEffect(() => { setPage(0); }, [currency, month, categoryId]);
 
   const pageCount = Math.max(1, Math.ceil((result?.total ?? 0) / pageSize));
   return <section className="panel page-panel transactions-page">
@@ -394,7 +407,9 @@ function TransactionsView({ refreshVersion, month, currency, currencies, onPerio
     </div>
     {error && <div className="notice error" role="alert">{error}</div>}
     {loading && <p className="transaction-loading" role="status">正在載入交易…</p>}
-    {!loading && !error && <TransactionTable rows={result?.items ?? []} onOpenDocument={onOpenDocument} emptyTitle={`${monthLabel(month)}尚無交易`} emptyDetail="目前沒有符合月份與幣別的有效交易。" />}
+    <label className="category-filter">分類<select aria-label="交易分類篩選" value={categoryId} onChange={event => { const value = event.target.value; setCategoryId(value); const url = new URL(window.location.href); if (value) url.searchParams.set("category", value); else url.searchParams.delete("category"); window.history.pushState({}, "", url.pathname + url.search); }}><option value="">全部分類</option>{categories.filter(item => item.is_active).map(item => <option value={item.id} key={item.id}>{item.display_name}</option>)}</select></label>
+    {!loading && !error && <TransactionTable rows={result?.items ?? []} onCategory={setSelected} onOpenDocument={onOpenDocument} emptyTitle={`${monthLabel(month)}尚無交易`} emptyDetail="目前沒有符合月份與幣別的有效交易。" />}
+    {selected && <CategoryPicker transaction={selected} categories={categories} onClose={() => setSelected(null)} onChanged={() => setRevision(value => value + 1)} />}
     <div className="pagination" aria-label="交易分頁">
       <span>{result?.total ? `${page + 1} / ${pageCount} 頁` : "0 筆交易"}</span>
       <div><button className="small-action" disabled={page === 0 || loading} onClick={() => setPage((current) => Math.max(0, current - 1))}>上一頁</button><button className="small-action" disabled={(page + 1) * pageSize >= (result?.total ?? 0) || loading} onClick={() => setPage((current) => current + 1)}>下一頁</button></div>
@@ -611,6 +626,7 @@ function SettingsView({ report }: { report: (message: string, error?: string) =>
       </button>)}
     </nav>
     <div className="settings-layout">
+      {activeGroup === "categories" && <section className="settings-section" id="settings-panel-categories" role="tabpanel" aria-labelledby="settings-tab-categories"><CategorySettings /></section>}
       {activeGroup === "unlock" && <section className="settings-section" id="settings-panel-unlock" role="tabpanel" aria-labelledby="settings-tab-unlock" tabIndex={-1}>
         <div className="settings-heading"><div><p className="eyebrow">本機保管</p><h2>文件解鎖</h2><p>只需保存身分證字號、出生日期，或其中一項。系統依郵件提示在本機組合密碼。</p></div><span className={personalUnlock?.has_national_id || personalUnlock?.has_birthday ? "connection-state ready" : "connection-state"}>{personalUnlock?.has_national_id || personalUnlock?.has_birthday ? "已保存" : "未設定"}</span></div>
         <form className="settings-form" onSubmit={(event) => void createSecret(event)}>

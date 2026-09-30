@@ -67,6 +67,18 @@ Documents 是文件的 logical identity、metadata 與來源關聯，不應等�
 
 SQLAlchemy 持久化 model 集中在 infrastructure/schema 邊界，由各 domain service 擁有其資料操作。Application use case 協調跨模組工作並擁有 transaction boundary；底層 service 不可 commit 整個 use case。Alembic migration 是資料庫 schema 變更的正式路徑。
 
+## Finance 分類邊界
+
+`finance/categories/domain.py` 定義純 merchant normalization／EffectiveCategory resolver；`service.py` 是批次資料存取與月／幣別彙總，`api.py` 為 HTTP adapter。銀行 parser 不做商家分類，分類不能改交易事實。
+
+`0012_transaction_categories` 新增 `finance_categories`、`finance_category_rules`、`transaction_category_overrides`；不在 FinanceTransaction 增加分類欄。單筆 override > normalized exact > contains（priority／長度／穩定 ID）> system default > 未分類，停用類別安全 fallback。SQLite foreign_keys 開啟，Category／transaction references 由 FK 保護；停用不刪既有引用。
+
+每個查詢批次載入 categories、rules、overrides，不逐筆查 DB。API 依有效文件、日期／幣別和既有 consumption expression 選交易，再解析分類與商家；分類篩選在分頁之前。退款有符號沖抵，payment 不進消費；分類總額與 Dashboard expense 一致。V1 仍於記憶體解析選定交易；萬筆規模冷啟動 API 尚有優化空間，不新增快取平台。
+
+Web／Excel 共用 CategorizationService；分類名稱／規則／override 也進入 snapshot fingerprint，不只有 amount/date 變更才刷新輸出。Excel ownership／hash／sanitizer／原子替換保持原邊界。React chart 與 drill-down 分離、Recharts lazy load，Top-N 百分比使用整數 cents 分配，負／零淨額不畫 slice。
+
+正式 DB 與程式已於授權部署後同步為 0012，入口維持 3000／私有 HTTPS 443；分類 Web／Excel 共用 resolver，原有交易與文件保留。分類預覽仍獨立使用 0012 合成 DB、3001／8030／HTTPS 8443，停用 secrets／Excel；其合成來源已撤銷，有效交易 0 筆。後續 schema 變更仍需當次授權、成對備份、同步 build 與正常登入帳戶啟動，測試脚本不可靜默升級正式 DB。
+
 ## v0.1 本機匯入流程
 
 ```text

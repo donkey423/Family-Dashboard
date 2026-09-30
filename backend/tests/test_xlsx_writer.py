@@ -62,6 +62,7 @@ def test_snapshot_contract_is_frozen_and_preserves_stable_ids(tmp_path):
         assert tuple(cell.value for cell in detail[1]) == (
             "交易日期", "說明", "金額", "幣別", "來源檔名", "交易 ID", "文件 ID",
             "來源類型", "帳戶", "交易類型", "入帳日期", "帳單起日", "帳單迄日", "帳單列號", "Statement ID",
+            "分類",
         )
         assert detail["F2"].value == tx.id
         assert detail["G2"].value == document.id
@@ -132,8 +133,8 @@ def test_empty_workbook_has_title_headers_filters_widths_and_ownership_marker(tm
     XlsxWorkbookWriter().write(empty_snapshot(), destination)
     with closing(load_workbook(destination)) as workbook:
         assert workbook.properties.title == "家庭收支記錄"
-        assert workbook.sheetnames == ["信用卡月支出", "月份幣別摘要", "交易明細", "文件狀態", "_family_finance_hub"]
-        for name, last_column in (("信用卡月支出", "K"), ("月份幣別摘要", "F"), ("交易明細", "O"), ("文件狀態", "D")):
+        assert workbook.sheetnames == ["信用卡月支出", "月份幣別摘要", "交易明細", "分類支出", "文件狀態", "_family_finance_hub"]
+        for name, last_column in (("信用卡月支出", "K"), ("月份幣別摘要", "F"), ("交易明細", "P"), ("分類支出", "E"), ("文件狀態", "D")):
             sheet = workbook[name]
             assert sheet.max_row == 1
             assert sheet.freeze_panes == "A2"
@@ -165,7 +166,7 @@ def test_utf8_paths_and_chinese_document_states_survive_replacement(tmp_path):
         assert workbook["交易明細"].max_row == 2
         assert workbook["交易明細"]["E2"].value == tx.source_filename
         assert workbook["月份幣別摘要"]["F2"].value == 1
-        assert workbook["交易明細"].auto_filter.ref == "A1:O2"
+        assert workbook["交易明細"].auto_filter.ref == "A1:P2"
 
 
 @pytest.mark.parametrize("text", [

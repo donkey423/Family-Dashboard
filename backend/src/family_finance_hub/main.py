@@ -35,6 +35,9 @@ from .documents.processors.pdf import PdfDocumentProcessor
 from .documents.processors.ports import DocumentProcessingError
 from .finance.service import FinanceCsvImportService
 from .finance.queries import active_transaction_filter, transaction_totals
+from .finance.categories.api import category_router, require_category
+from .finance.categories.domain import normalize_merchant
+from .finance.categories.service import CategorizationService, seed_categories, transaction_payload
 from .finance.statements.contracts import BankStatementParser, StatementData, resolve_transaction_date
 from .finance.statements.taiwan_credit_cards import TaiwanCreditCardStatementParser
 from .exports.ports import WorkbookWriter
@@ -174,7 +177,7 @@ def _currency_code(value: str | None) -> str | None:
     if not value:
         return None
     normalized = value.strip().upper()
-    if len(normalized) != 3 or not normalized.isalpha():
+    if len(normalized) != 3 or not normalized.isascii() or not normalized.isalpha():
         raise HTTPException(status_code=422, detail="幣別格式無效，請使用三碼英文字母")
     return normalized
 
@@ -297,6 +300,8 @@ def create_app(
         config.storage_root.mkdir(parents=True, exist_ok=True)
         if create_schema:
             Base.metadata.create_all(engine)
+            with session_factory() as session, session.begin():
+                seed_categories(session)
         stop_scheduler = asyncio.Event()
         scheduler_task = (
             asyncio.create_task(gmail_scheduler.run(stop_scheduler))
@@ -333,6 +338,8 @@ def create_app(
             yield session
         finally:
             session.close()
+
+    app.include_router(category_router(get_session, _month_range, _currency_code))
 
     def require_legacy_gmail() -> None:
         if not legacy_gmail_enabled:
@@ -1130,30 +1137,27 @@ def create_app(
         offset: int = Query(default=0, ge=0),
         month: str | None = Query(default=None, max_length=7),
         currency: str | None = Query(default=None, max_length=3),
+        category_id: str | None = Query(default=None, max_length=36),
+        merchant_key: str | None = Query(default=None, max_length=500),
+        consumption_only: bool = False,
         session: Session = Depends(get_session),
     ):
-        filters = [active_transaction_filter()]
-        month_range = _month_range(month)
-        if month_range:
-            filters.extend([
-                FinanceTransaction.transaction_date >= month_range[0],
-                FinanceTransaction.transaction_date < month_range[1],
-            ])
-        currency_code = _currency_code(currency)
-        if currency_code:
-            filters.append(FinanceTransaction.currency == currency_code)
-        statement = select(FinanceTransaction).where(*filters)
-        total = session.scalar(select(func.count(FinanceTransaction.id)).where(*filters)) or 0
-        rows = session.scalars(
-            statement.order_by(
-                case((FinanceTransaction.transaction_date.is_(None), 1), else_=0),
-                FinanceTransaction.transaction_date.desc(),
-                FinanceTransaction.created_at.desc(),
-            ).offset(offset).limit(limit)
-        ).all()
+        if category_id is not None:
+            require_category(session, category_id)
+        service = CategorizationService(session)
+        rows = service.rows(month_range=_month_range(month), currency=_currency_code(currency))
+        resolved = service.resolve(rows)
+        if consumption_only:
+            from .finance.categories.domain import is_consumption
+            rows = [row for row in rows if is_consumption(row.amount, row.statement_id, row.transaction_kind)]
+        if category_id is not None:
+            rows = [row for row in rows if resolved[row.id].category.id == category_id]
+        if merchant_key is not None:
+            key = normalize_merchant(merchant_key)
+            rows = [row for row in rows if resolved[row.id].merchant_key == key]
         return {
-            "items": [{"id": row.id, "source_document_id": row.source_document_id, "date": row.transaction_date, "description": row.description, "amount": str(row.amount), "currency": row.currency} for row in rows],
-            "total": total,
+            "items": [transaction_payload(row, resolved[row.id]) for row in rows[offset:offset + limit]],
+            "total": len(rows),
             "limit": limit,
             "offset": offset,
         }

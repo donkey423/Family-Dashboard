@@ -8,6 +8,7 @@ __pycache__/
 data/
 node_modules/
 frontend/dist/
+frontend/dist-category-preview/
 frontend/tsconfig.tsbuildinfo
 frontend/.npm-cache/
 frontend/.env.local

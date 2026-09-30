@@ -17,6 +17,7 @@ from .ports import (
     WorkbookSnapshot,
     WorkbookWriteError,
 )
+from ..finance.categories.domain import expense_value, is_consumption
 
 _MARKER_SHEET = "_family_finance_hub"
 _MARKER_VALUE = "family-finance-hub:workbook-projection:v1"
@@ -202,6 +203,7 @@ def _populate_workbook(workbook: Workbook, snapshot: WorkbookSnapshot) -> None:
     _append_row(detail, (
         "交易日期", "說明", "金額", "幣別", "來源檔名", "交易 ID", "文件 ID",
         "來源類型", "帳戶", "交易類型", "入帳日期", "帳單起日", "帳單迄日", "帳單列號", "Statement ID",
+        "分類",
     ))
     for row, transaction in enumerate(
         sorted(
@@ -226,8 +228,26 @@ def _populate_workbook(workbook: Workbook, snapshot: WorkbookSnapshot) -> None:
             transaction.statement_period_end,
             transaction.statement_line_index,
             transaction.statement_id,
+            transaction.category_name,
         ), row=row)
-    _format_sheet(detail, (16, 60, 20, 14, 50, 40, 40, 24, 24, 18, 16, 16, 16, 14, 40))
+    _format_sheet(detail, (16, 60, 20, 14, 50, 40, 40, 24, 24, 18, 16, 16, 16, 14, 40, 24))
+
+    categories = workbook.create_sheet("分類支出")
+    _append_row(categories, ("月份", "幣別", "分類", "淨支出", "筆數"))
+    category_totals = {}
+    for item in snapshot.transactions:
+        if not is_consumption(item.amount, item.statement_id, item.transaction_kind):
+            continue
+        month = item.transaction_date.replace(day=1) if item.transaction_date else None
+        key = (month, item.currency, item.category_code, item.category_name)
+        amount, count = category_totals.get(key, (Decimal("0"), 0))
+        category_totals[key] = (amount + expense_value(item.amount, item.statement_id, item.transaction_kind), count + 1)
+    for index, key in enumerate(sorted(category_totals, key=lambda item: (item[0] is None, item[0] or date.min, item[1], item[2])), start=2):
+        amount, count = category_totals[key]
+        _append_row(categories, (key[0] or "未知月份", key[1], key[3], amount, count), row=index)
+        if key[0]:
+            categories.cell(index, 1).number_format = "yyyy-mm"
+    _format_sheet(categories, (16, 14, 28, 20, 14))
 
     documents = workbook.create_sheet("文件狀態")
     _append_row(documents, ("文件 ID", "檔名", "狀態", "交易筆數"))
