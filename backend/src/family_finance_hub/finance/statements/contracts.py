@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 StatementTransactionKind = Literal["purchase", "refund", "payment", "fee", "interest", "unknown"]
+TransactionDateBasis = Literal["statement", "statement_closing_date", "missing"]
 
 
 class StatementLine(BaseModel):
@@ -70,6 +71,7 @@ class StatementData(BaseModel):
     format_version: str = Field(min_length=1, max_length=40)
     period_start: date
     period_end: date
+    closing_date: date | None = None
     account_hint: str | None = Field(default=None, max_length=80)
     lines: tuple[StatementLine, ...]
     reconciliation: ReconciliationSummary = Field(default_factory=ReconciliationSummary)
@@ -96,6 +98,8 @@ class StatementData(BaseModel):
     def validate_period_and_line_indexes(self):
         if self.period_start > self.period_end:
             raise ValueError("statement period start must not be after end")
+        if self.closing_date is not None and not self.period_start <= self.closing_date <= self.period_end:
+            raise ValueError("statement closing date must be within the period")
         indexes = [line.line_index for line in self.lines]
         if len(indexes) != len(set(indexes)):
             raise ValueError("statement line indexes must be unique")
@@ -146,15 +150,25 @@ class StatementMonthlyReport(BaseModel):
     undated_line_indexes: tuple[int, ...]
 
 
+def resolve_transaction_date(line: StatementLine, closing_date: date | None) -> tuple[date | None, TransactionDateBasis]:
+    if line.transaction_date is not None:
+        return line.transaction_date, "statement"
+    # User-approved recognition policy; retain the source line's missing date.
+    if line.transaction_kind == "interest" and closing_date is not None:
+        return closing_date, "statement_closing_date"
+    return None, "missing"
+
+
 def summarize_statement_months(statement: StatementData) -> StatementMonthlyReport:
     buckets: dict[tuple[date, str], dict[str, Decimal | int]] = {}
     undated: list[int] = []
 
     for line in statement.lines:
-        if line.transaction_date is None:
+        transaction_date, _basis = resolve_transaction_date(line, statement.closing_date)
+        if transaction_date is None:
             undated.append(line.line_index)
             continue
-        month = date(line.transaction_date.year, line.transaction_date.month, 1)
+        month = date(transaction_date.year, transaction_date.month, 1)
         values = buckets.setdefault((month, line.currency), {
             "purchases": Decimal("0"),
             "refunds": Decimal("0"),

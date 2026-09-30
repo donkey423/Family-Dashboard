@@ -12,6 +12,7 @@ class Settings:
     tesseract_executable: str | None = None
     ocr_languages: str = "chi_tra+eng"
     excel_output_path: Path | None = None
+    legacy_gmail_oauth_enabled: bool = False
 
     @property
     def workbook_path(self) -> Path:
@@ -33,4 +34,8 @@ class Settings:
             tesseract_executable=os.getenv("FAMILY_FINANCE_HUB_TESSERACT") or None,
             ocr_languages=os.getenv("FAMILY_FINANCE_HUB_OCR_LANG", "chi_tra+eng"),
             excel_output_path=Path(os.environ["FAMILY_FINANCE_HUB_EXCEL_PATH"]) if os.getenv("FAMILY_FINANCE_HUB_EXCEL_PATH") else None,
+            legacy_gmail_oauth_enabled=os.getenv(
+                "FAMILY_FINANCE_HUB_LEGACY_GMAIL_OAUTH",
+                "false",
+            ).strip().casefold() in {"1", "true", "yes", "on"},
         )

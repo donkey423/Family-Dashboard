@@ -1,4 +1,6 @@
 import os
+from secrets import token_hex
+from uuid import uuid4
 
 import keyring
 from keyring.backends.Windows import WinVaultKeyring
@@ -18,6 +20,26 @@ class KeyringSecretStore(SecretStore):
         if os.name != "nt" or not isinstance(backend, WinVaultKeyring):
             raise SecretStoreUnavailable("Windows Credential Manager is not available")
         self._keyring = keyring
+
+    def verify_access(self) -> None:
+        # Reads of missing entries can succeed in a session that cannot save secrets.
+        service = f"{SERVICE_NAME}-startup-probe:{uuid4()}"
+        reference = "startup-probe"
+        value = token_hex(32)
+        written = False
+        try:
+            self._keyring.set_password(service, reference, value)
+            written = True
+            if self._keyring.get_password(service, reference) != value:
+                raise SecretStoreUnavailable("Windows Credential Manager verification failed")
+        except Exception as error:
+            raise SecretStoreUnavailable("Windows Credential Manager is unavailable in this logon session") from error
+        finally:
+            if written:
+                try:
+                    self._keyring.delete_password(service, reference)
+                except Exception as error:
+                    raise SecretStoreUnavailable("Could not remove Windows Credential Manager startup probe") from error
 
     def set(self, reference: str, value: str) -> None:
         if not reference or not value:

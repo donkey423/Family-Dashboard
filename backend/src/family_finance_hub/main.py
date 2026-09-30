@@ -8,7 +8,7 @@ from typing import Any, Callable, Literal, cast as typing_cast
 from urllib.parse import quote
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -16,6 +16,7 @@ from sqlalchemy import String, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from .application.use_cases import ImportDocumentUseCase, ImportFinanceCsvUseCase
+from .application.codex_mcp_import import CodexMcpGmailImportCommand, CodexMcpGmailImportUseCase
 from .application.document_lifecycle import DocumentImpactChanged, DocumentLifecycleUseCase, DocumentNotFound
 from .application.pdf_processing import (
     PdfPreviewCommand,
@@ -34,7 +35,7 @@ from .documents.processors.pdf import PdfDocumentProcessor
 from .documents.processors.ports import DocumentProcessingError
 from .finance.service import FinanceCsvImportService
 from .finance.queries import active_transaction_filter, transaction_totals
-from .finance.statements.contracts import BankStatementParser, StatementData
+from .finance.statements.contracts import BankStatementParser, StatementData, resolve_transaction_date
 from .finance.statements.taiwan_credit_cards import TaiwanCreditCardStatementParser
 from .exports.ports import WorkbookWriter
 from .exports.service import WorkbookExportBusy, WorkbookExportService
@@ -178,6 +179,24 @@ def _currency_code(value: str | None) -> str | None:
     return normalized
 
 
+def _raise_ai_provider_error(error: PasswordRuleInterpreterUnavailable) -> None:
+    status_codes = {
+        "ai_auth_failed": 401,
+        "ai_rate_limited": 429,
+        "ai_quota_unavailable": 429,
+        "ai_model_unavailable": 422,
+        "ai_schema_invalid": 502,
+        "ai_timeout": 504,
+        "ai_service_unavailable": 503,
+    }
+    reason_code = error.reason_code
+    raise HTTPException(
+        status_code=status_codes.get(reason_code, 503),
+        detail={"code": reason_code, "message": str(error)},
+        headers={"X-FamilyHub-Error": reason_code},
+    ) from None
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -190,6 +209,7 @@ def create_app(
     workbook_writer: WorkbookWriter | None = None,
 ) -> FastAPI:
     config = settings or Settings.from_environment()
+    legacy_gmail_enabled = config.legacy_gmail_oauth_enabled or gmail_client_factory is not None
     engine = make_engine(config.database_url)
     session_factory = make_session_factory(engine)
     storage = LocalFilesystemStorage(config.storage_root)
@@ -221,6 +241,8 @@ def create_app(
         return password_interpreter or AIProviderService(get_pdf_secret_store()).interpreter(session)
 
     def make_gmail_client() -> GmailClient:
+        if not legacy_gmail_enabled:
+            raise GmailUnavailable("網站內建 Gmail OAuth 已停用")
         if gmail_client_factory is not None:
             return gmail_client_factory()
         try:
@@ -247,6 +269,7 @@ def create_app(
     )
     statement_import = StatementImportUseCase(pdf_preview, active_statement_parser)
     document_import = ImportDocumentUseCase(documents)
+    codex_mcp_import = CodexMcpGmailImportUseCase(documents, instruction_extractor)
     finance_service = FinanceCsvImportService(documents, document_sources)
     finance_import = ImportFinanceCsvUseCase(finance_service)
     document_lifecycle = DocumentLifecycleUseCase()
@@ -275,20 +298,25 @@ def create_app(
         if create_schema:
             Base.metadata.create_all(engine)
         stop_scheduler = asyncio.Event()
-        scheduler_task = asyncio.create_task(gmail_scheduler.run(stop_scheduler))
+        scheduler_task = (
+            asyncio.create_task(gmail_scheduler.run(stop_scheduler))
+            if legacy_gmail_enabled
+            else None
+        )
         export_task = asyncio.create_task(workbook_export.run(stop_scheduler))
         try:
             yield
         finally:
             stop_scheduler.set()
-            await scheduler_task
+            if scheduler_task is not None:
+                await scheduler_task
             await export_task
         engine.dispose()
 
     app = FastAPI(title="家庭收支記錄 API", version="0.1.0", lifespan=lifespan)
     app.state.session_factory = session_factory
     app.state.settings = config
-    app.state.gmail_sync_scheduler = gmail_scheduler
+    app.state.gmail_sync_scheduler = gmail_scheduler if legacy_gmail_enabled else None
     app.state.workbook_export = workbook_export
     app.state.statement_import = statement_import
     app.add_middleware(
@@ -305,6 +333,13 @@ def create_app(
             yield session
         finally:
             session.close()
+
+    def require_legacy_gmail() -> None:
+        if not legacy_gmail_enabled:
+            raise HTTPException(
+                status_code=410,
+                detail="網站內建 Gmail OAuth 已停用；Gmail 帳單由 Codex MCP 自動化收錄",
+            )
 
     @app.get("/api/health")
     def health():
@@ -362,6 +397,7 @@ def create_app(
 
     @app.get("/api/gmail/status")
     def gmail_status(session: Session = Depends(get_session)):
+        require_legacy_gmail()
         from .models import GmailSyncState
 
         connection = session.get(GmailConnection, "gmail")
@@ -387,6 +423,7 @@ def create_app(
 
     @app.post("/api/gmail/schedule")
     def configure_gmail_schedule(body: GmailScheduleInput, session: Session = Depends(get_session)):
+        require_legacy_gmail()
         with session.begin():
             connection = session.get(GmailConnection, "gmail")
             if connection is None:
@@ -413,6 +450,7 @@ def create_app(
 
     @app.post("/api/gmail/oauth-client", status_code=201)
     def configure_gmail_oauth(body: GmailOAuthClientInput, session: Session = Depends(get_session)):
+        require_legacy_gmail()
         try:
             GmailOAuthService(get_secret_store()).configure_client(session, body.config)
         except ValueError as error:
@@ -425,6 +463,7 @@ def create_app(
 
     @app.post("/api/gmail/authorize")
     def authorize_gmail(session: Session = Depends(get_session)):
+        require_legacy_gmail()
         try:
             GmailOAuthService(get_secret_store()).authorize(session)
         except GmailAuthorizationUnavailable as error:
@@ -437,6 +476,7 @@ def create_app(
 
     @app.post("/api/gmail/sync")
     def sync_gmail(body: GmailSyncInput, session: Session = Depends(get_session)):
+        require_legacy_gmail()
         query = body.query or "in:anywhere has:attachment {filename:pdf filename:csv}"
         if not gmail_sync_lock.acquire(blocking=False):
             raise HTTPException(status_code=409, detail="Gmail 同步正在進行")
@@ -493,11 +533,36 @@ def create_app(
     @app.get("/api/security/ai-provider")
     def get_ai_provider(session: Session = Depends(get_session)):
         profile = session.get(AIProviderProfile, "openai")
+        credential_available = False
+        if profile is not None:
+            try:
+                credential_available = bool(get_secret_store().get(profile.api_key_credential_ref))
+            except SecretStoreUnavailable:
+                raise HTTPException(status_code=503, detail="Windows 安全資料保管庫目前無法使用") from None
         return {
             "configured": profile is not None,
+            "credential_available": credential_available,
             "provider": profile.provider if profile else None,
             "model": profile.model if profile else None,
         }
+
+    @app.post("/api/security/ai-provider/test")
+    def test_ai_provider(body: AIProviderInput):
+        try:
+            AIProviderService(get_secret_store()).test_connection(
+                body.api_key,
+                body.model,
+                provider=body.provider,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from None
+        except PasswordRuleInterpreterUnavailable as error:
+            _raise_ai_provider_error(error)
+        except HTTPException:
+            raise
+        except SecretStoreUnavailable:
+            raise HTTPException(status_code=503, detail="Windows 安全資料保管庫目前無法使用") from None
+        return {"ok": True, "provider": body.provider, "model": body.model.strip()}
 
     @app.post("/api/security/ai-provider", status_code=201)
     def configure_ai_provider(body: AIProviderInput, session: Session = Depends(get_session)):
@@ -509,12 +574,21 @@ def create_app(
                 provider=body.provider,
             )
         except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
+            raise HTTPException(status_code=422, detail=str(error)) from None
+        except PasswordRuleInterpreterUnavailable as error:
+            _raise_ai_provider_error(error)
         except HTTPException:
             raise
+        except SecretStoreUnavailable:
+            raise HTTPException(status_code=503, detail="Windows 安全資料保管庫目前無法使用") from None
         except Exception:
             raise HTTPException(status_code=503, detail="無法安全保存 AI 設定，請確認 Windows Credential Manager") from None
-        return {"configured": True, "provider": profile.provider, "model": profile.model}
+        return {
+            "configured": True,
+            "credential_available": True,
+            "provider": profile.provider,
+            "model": profile.model,
+        }
 
     @app.get("/api/security/document-profiles")
     def list_document_security_profiles(session: Session = Depends(get_session)):
@@ -582,7 +656,7 @@ def create_app(
         except HTTPException:
             raise
         except PasswordRuleInterpreterUnavailable as error:
-            raise HTTPException(status_code=503, detail=str(error)) from None
+            _raise_ai_provider_error(error)
         except SecretStoreUnavailable:
             raise HTTPException(status_code=503, detail="Windows 安全資料保管庫目前無法使用") from None
         except Exception:
@@ -643,7 +717,7 @@ def create_app(
                 headers={"X-FamilyHub-Error": error.code},
             ) from None
         except PasswordRuleInterpreterUnavailable as error:
-            raise HTTPException(status_code=503, detail=str(error)) from None
+            _raise_ai_provider_error(error)
         except SecretStoreUnavailable:
             raise HTTPException(status_code=503, detail="Windows 安全資料保管庫目前無法使用") from None
         except Exception:
@@ -700,6 +774,7 @@ def create_app(
             "parser_version": statement.parser_version,
             "period_start": statement.period_start,
             "period_end": statement.period_end,
+            "closing_date": data.closing_date if data else None,
             "status": statement.status,
             "reason_code": statement.reason_code,
             "review_version": statement.review_version,
@@ -711,7 +786,14 @@ def create_app(
             "imported_at": statement.imported_at,
         }
         if include_lines and data:
-            payload["lines"] = [line.model_dump(mode="json") for line in data.lines]
+            payload["lines"] = []
+            for line in data.lines:
+                effective_date, date_basis = resolve_transaction_date(line, data.closing_date)
+                payload["lines"].append({
+                    **line.model_dump(mode="json"),
+                    "effective_transaction_date": effective_date,
+                    "transaction_date_basis": date_basis,
+                })
         return payload
 
     @app.get("/api/statement-accounts")
@@ -810,7 +892,7 @@ def create_app(
             }
             raise HTTPException(status_code=422, detail=messages.get(error.code, "PDF 處理失敗")) from None
         except PasswordRuleInterpreterUnavailable as error:
-            raise HTTPException(status_code=503, detail=str(error)) from None
+            _raise_ai_provider_error(error)
         except SecretStoreUnavailable:
             raise HTTPException(status_code=503, detail="Windows 安全資料保管庫目前無法使用") from None
         except Exception:
@@ -840,6 +922,56 @@ def create_app(
         if statement is None:
             raise HTTPException(status_code=404, detail="找不到帳單分析結果")
         return _statement_detail_payload(statement, session, include_lines=True)
+
+    @app.get("/api/integrations/codex-mcp/status")
+    def codex_mcp_status(session: Session = Depends(get_session)):
+        latest = session.scalar(
+            select(ImportJob)
+            .where(ImportJob.source_type == "codex_mcp")
+            .order_by(ImportJob.created_at.desc(), ImportJob.id.desc())
+        )
+        return {
+            "mode": "codex_mcp",
+            "legacy_gmail_oauth_enabled": legacy_gmail_enabled,
+            "last_import_at": latest.created_at if latest else None,
+            "last_import_status": latest.status if latest else None,
+        }
+
+    @app.post("/api/integrations/codex-mcp/gmail/import", status_code=201)
+    async def import_codex_mcp_gmail_attachment(
+        file: UploadFile = File(...),
+        message_id: str = Form(..., max_length=512),
+        attachment_id: str = Form(..., max_length=512),
+        subject: str = Form(default="", max_length=500),
+        sender: str = Form(default="", max_length=255),
+        password_instruction: str = Form(default="", max_length=20_000),
+        session: Session = Depends(get_session),
+    ):
+        content = await file.read(config.max_upload_bytes + 1)
+        if len(content) > config.max_upload_bytes:
+            raise HTTPException(status_code=413, detail="文件超過上傳大小限制")
+        try:
+            imported, instruction_detected = codex_mcp_import.execute(session, CodexMcpGmailImportCommand(
+                filename=file.filename or "statement.pdf",
+                content=content,
+                message_id=message_id,
+                attachment_id=attachment_id,
+                subject=subject,
+                sender=sender,
+                password_instruction=password_instruction,
+            ))
+        except ValueError as error:
+            status_code = 409 if str(error) == "來源識別碼已對應不同內容" else 400
+            raise HTTPException(status_code=status_code, detail=str(error)) from error
+        return {
+            "document_id": imported.document.id,
+            "filename": imported.document.filename,
+            "sha256": imported.document.sha256,
+            "duplicate": imported.duplicate,
+            "duplicate_source": imported.duplicate_source,
+            "instruction_detected": instruction_detected,
+            "skipped_revoked": imported.document.revoked_at is not None,
+        }
 
     @app.post("/api/documents")
     async def upload_document(file: UploadFile = File(...), session: Session = Depends(get_session)):

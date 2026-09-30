@@ -12,6 +12,8 @@ from family_finance_hub.documents.processors.pdf import PdfDocumentProcessor
 from family_finance_hub.documents.processors.ports import OcrResult
 from family_finance_hub.main import create_app
 from family_finance_hub.models import AIProviderProfile, PasswordRuleRecord
+from family_finance_hub.security.password_rules.ports import PasswordRuleInterpreterUnavailable
+from family_finance_hub.security.password_rules.provider_service import AIProviderService
 from family_finance_hub.security.password_rules.schema import PasswordRule
 
 
@@ -307,10 +309,15 @@ def test_pdf_preview_does_not_guess_after_confirmed_format_fails(tmp_path):
     assert interpreter.calls == []
 
 
-def test_ai_provider_key_is_kept_in_secret_store_only(tmp_path):
+def test_ai_provider_key_is_kept_in_secret_store_only(tmp_path, monkeypatch):
     secret_store = MemorySecretStore()
     client, settings = make_client(tmp_path, secret_store)
     api_key = "sk-synthetic-only-not-real"
+    monkeypatch.setattr(
+        AIProviderService,
+        "test_connection",
+        lambda self, api_key, model, provider="openai": single_value_rule("national_id"),
+    )
 
     with client:
         response = client.post("/api/security/ai-provider", json={"api_key": api_key, "model": "synthetic-model"})
@@ -318,6 +325,7 @@ def test_ai_provider_key_is_kept_in_secret_store_only(tmp_path):
         assert api_key not in response.text
         assert client.get("/api/security/ai-provider").json() == {
             "configured": True,
+            "credential_available": True,
             "provider": "openai",
             "model": "synthetic-model",
         }
@@ -333,10 +341,15 @@ def test_ai_provider_key_is_kept_in_secret_store_only(tmp_path):
     engine.dispose()
 
 
-def test_ai_provider_api_accepts_groq_without_returning_key(tmp_path):
+def test_ai_provider_api_accepts_groq_without_returning_key(tmp_path, monkeypatch):
     secret_store = MemorySecretStore()
     client, _ = make_client(tmp_path, secret_store)
     api_key = "gsk-synthetic-only-not-real"
+    monkeypatch.setattr(
+        AIProviderService,
+        "test_connection",
+        lambda self, api_key, model, provider="openai": single_value_rule("national_id"),
+    )
 
     with client:
         response = client.post(
@@ -346,12 +359,126 @@ def test_ai_provider_api_accepts_groq_without_returning_key(tmp_path):
         assert response.status_code == 201
         assert response.json() == {
             "configured": True,
+            "credential_available": True,
             "provider": "groq",
             "model": "openai/gpt-oss-20b",
         }
         assert api_key not in response.text
         assert client.get("/api/security/ai-provider").json()["provider"] == "groq"
     assert api_key in secret_store.values.values()
+
+
+def test_ai_provider_test_endpoint_does_not_persist_or_switch(tmp_path, monkeypatch):
+    secret_store = MemorySecretStore()
+    client, _ = make_client(tmp_path, secret_store)
+    calls = []
+
+    def successful_preflight(self, api_key, model, provider="openai"):
+        calls.append((provider, api_key, model))
+        return single_value_rule("national_id")
+
+    monkeypatch.setattr(AIProviderService, "test_connection", successful_preflight)
+    with client:
+        response = client.post(
+            "/api/security/ai-provider/test",
+            json={"provider": "groq", "api_key": "gsk-synthetic", "model": "openai/gpt-oss-20b"},
+        )
+        status = client.get("/api/security/ai-provider")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+    }
+    assert status.json() == {
+        "configured": False,
+        "credential_available": False,
+        "provider": None,
+        "model": None,
+    }
+    assert calls == [("groq", "gsk-synthetic", "openai/gpt-oss-20b")]
+    assert secret_store.values == {}
+
+
+def test_ai_provider_failed_preflight_preserves_active_configuration(tmp_path, monkeypatch):
+    secret_store = MemorySecretStore()
+    client, settings = make_client(tmp_path, secret_store)
+    monkeypatch.setattr(
+        AIProviderService,
+        "test_connection",
+        lambda self, api_key, model, provider="openai": single_value_rule("national_id"),
+    )
+
+    with client:
+        saved = client.post(
+            "/api/security/ai-provider",
+            json={"provider": "openai", "api_key": "old-safe-key", "model": "gpt-4.1-mini"},
+        )
+        assert saved.status_code == 201
+
+        def failed_preflight(self, api_key, model, provider="openai"):
+            raise PasswordRuleInterpreterUnavailable("Groq API key 無效", "ai_auth_failed")
+
+        monkeypatch.setattr(AIProviderService, "test_connection", failed_preflight)
+        failed = client.post(
+            "/api/security/ai-provider",
+            json={"provider": "groq", "api_key": "invalid-new-key", "model": "openai/gpt-oss-20b"},
+        )
+        active = client.get("/api/security/ai-provider")
+
+    assert failed.status_code == 401
+    assert failed.headers["x-familyhub-error"] == "ai_auth_failed"
+    assert failed.json()["detail"] == {"code": "ai_auth_failed", "message": "Groq API key 無效"}
+    assert "invalid-new-key" not in failed.text
+    assert active.json() == {
+        "configured": True,
+        "credential_available": True,
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+    }
+
+    engine = make_engine(settings.database_url)
+    factory = make_session_factory(engine)
+    with factory() as session:
+        profile = session.get(AIProviderProfile, "openai")
+        assert profile.provider == "openai"
+        assert profile.model == "gpt-4.1-mini"
+        assert secret_store.get(profile.api_key_credential_ref) == "old-safe-key"
+    assert "invalid-new-key" not in secret_store.values.values()
+    engine.dispose()
+
+
+def test_ai_provider_status_distinguishes_missing_credential(tmp_path, monkeypatch):
+    secret_store = MemorySecretStore()
+    client, settings = make_client(tmp_path, secret_store)
+    monkeypatch.setattr(
+        AIProviderService,
+        "test_connection",
+        lambda self, api_key, model, provider="openai": single_value_rule("national_id"),
+    )
+
+    with client:
+        assert client.post(
+            "/api/security/ai-provider",
+            json={"provider": "groq", "api_key": "temporary-key", "model": "openai/gpt-oss-20b"},
+        ).status_code == 201
+
+        engine = make_engine(settings.database_url)
+        factory = make_session_factory(engine)
+        with factory() as session:
+            profile = session.get(AIProviderProfile, "openai")
+            secret_store.delete(profile.api_key_credential_ref)
+        engine.dispose()
+
+        status = client.get("/api/security/ai-provider")
+
+    assert status.json() == {
+        "configured": True,
+        "credential_available": False,
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+    }
 
 
 def test_pdf_preview_uses_ai_rules_locally_and_persists_only_verified_rule(tmp_path):

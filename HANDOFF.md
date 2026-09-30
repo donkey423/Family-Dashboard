@@ -1,13 +1,70 @@
 # 交接
 
+## 2026-09-30 推送前驗證狀態
+
+- 本輪重新執行完整 backend：258 passed、2 個既有相依套件棄用警告；frontend production build 與 `git diff --check` 成功。只提交程式、測試及文件，原始帳單、資料庫、秘密、build 產物及未追蹤測試暫存資料夾不納入 Git。
+- 本輪 `E2E-GMAIL-3BANK` 的重新下載關卡為 **BLOCKED**：以 `in:anywhere`、未設日期搜尋並找到中國信託、國泰世華及永豐九月月帳單，確認實際郵件的密碼格式後嘗試下載；三家下載事件均逾時，中國信託另以已顯示的附件連結下載仍逾時。未取得可驗證的新下載檔案，未宣稱本輪全新 Gmail 驗收通過；原因尚未確認，後續先恢復附件下載再重跑完整外部關卡。
+- 本輪用上一輪成功下載的三份加密原件做本機回歸：解鎖、1/19/31 列逐筆來源與 API 比對、摘要合計、認列日期及重跑冪等均 PASS。這不取代重新下載關卡；沒有 AI request 或正式 confirm，Finance 仍為 18 筆。
+- 本機 health 及正常 Windows 使用者環境的既有私有 HTTPS 首頁/health 已確認屬於本專案，並載入本輪 build。沙箱 HTTPS 曾因憑證驗證失敗，未關閉 TLS 驗證；實體手機未驗收。
+
+## 2026-09-30 實作修正後的三銀行 Gmail 驗收
+
+使用者新增交付要求：每次完成本專案工作前都要重新從 Gmail 下載三家不同銀行的信用卡對帳單並成功解鎖、解析及核對。已寫入 AGENTS 完成標準、TASKS 及 IMPLEMENTATION_PLAN 第 4.1 節，測試 ID 為 `E2E-GMAIL-3BANK`。此要求不授權正式資料自動確認入帳；任一 FAIL/BLOCKED 都不能宣稱專案驗收完成。
+
+**本次結果：PASS，3/3 通過。** 最後修正後已再次從 Gmail 下載三家九月份原始加密月帳單。搜尋使用 `in:anywhere has:attachment filename:pdf {信用卡 "credit card"} {帳單 對帳單 賬單 statement}`，未設日期，搜尋範圍涵蓋可存取信箱最早信件至當下；實際只查閱首頁選取三家，沒有宣稱逐封查完整個信箱。當次工具清單沒有 Gmail MCP，採已登入 Gmail 網頁下載、`POST /api/documents` 及既有 preview/statement-analysis；不計為 Codex MCP/cron 收件驗收。永豐來源在垃圾桶，未移動或恢復郵件。
+
+| 銀行 / 郵件帳期 | Gmail 重新下載 | 來源格式確認 | 加密解鎖 | 交易解析與核對 | 冪等重跑 | 結果 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 中國信託 / 2026-09 | PASS | PASS | PASS，2 頁 | PASS，1 列；獨立原文欄位與當次 parser/API 全列相符，合計差額零 | 同一 Document/Statement，來源/明細筆數不變 | PASS |
+| 國泰世華 / 2026-09 | PASS | PASS | PASS，3 頁 | PASS，19 列；包含繳款與利息，逐列/摘要/本期消費核對相符，差額零 | 同一 Document/Statement，來源/明細筆數不變 | PASS |
+| 永豐 / 2026-09 | PASS，非繳款聯 | PASS | PASS，4 頁 | PASS，31 列；含退款、繳款、費用及本期分期額，逐列/摘要核對相符，差額零 | 同一 Document/Statement，來源/明細筆數不變 | PASS |
+
+- 三份原件均確認是加密 PDF；下載至使用者 Downloads，測試原件不加入 Git。服務安全資料 presence API 確認身分證與生日均已保存，秘密不讀給模型。
+- 已修正兩家解鎖失敗原因：`ExplicitPasswordRuleParser` 新增完整證號的括號說明與「開啟帳單請輸入正卡人資料」明示句型；部分證號、多欄組合、大小寫歧義仍 fail closed。先讀實際郵件完整必要上下文，未修改提示迎合 parser，也沒有猜密碼或允許 AI。
+- `taiwan-credit-card-v2` 新增國泰世華及永豐已驗證 TWD 文字版型，保留中國信託及受限台新。核對上期、繳款、本期列帳、利息與應繳額；永豐分期只取本期額，未到期餘額不計支出。未知/不完整列、缺核對欄位或不平仍停止，不代表通用銀行解析。
+- 使用者已明確允許未列日期的利息按帳單結帳日認列。`StatementData.closing_date` 及共用 resolver 在正規化/月彙總採此政策，原始日期仍為空；API 明細提供 effective date/date basis，確認入帳的 raw_json 保留來源日期與認列依據。國泰本次有 1 列套用政策；普通消費、費用、繳款缺日期或利息缺明示結帳日仍 pending，不放寬核對。舊 Statement JSON 沒有 closing_date 仍可讀。
+- 中國信託原本已入帳，故三家均以本次解鎖文字另執行當前 parser，不只看 cached/imported。原文獨立欄位抽查程式按全列日期/商家/金額/幣別/類型對照 parser 與 API，再核對列數及摘要；國泰、永豐交易頁另已視覺檢查。本次不是另一期未參與調整的盲測。
+- 已修正文件詳情只讀摘要列表造成「沒有新增交易」的 UI bug，改讀 `statementDetail` 並清除舊文件狀態。Tailscale 桌面瀏覽器實測國泰 19 列含「結帳日認列」、永豐 31 列，皆不再誤顯示零交易；頁面無水平溢出。Chrome 尺寸覆寫呼叫未改變實際 viewport，手機尺寸及實體手機未驗收；目前沒有獨立 frontend 自動化測試框架。
+- 本次只收錄/預覽/分析與冪等重跑，未呼叫正式 confirm，AI provider request 為零；正式 Finance 前後均為 18 筆，國泰/永豐草稿等待人工確認，不算正式入帳或真實 Excel 驗收。合成隔離 tests 已覆蓋認列日期、確認後 provenance、重複確認及 Excel 月彙總。附件、原文、秘密與消費內容不寫 repository。
+- 完整 backend **258 passed、2 個既有相依套件棄用警告**；frontend TypeScript/Vite production build、`git diff --check` 成功。Windows 長路徑測試目錄曾失敗，改用 Documents/Codex 下短且唯一的 pytest basetemp；測試與 build 不取代上方三銀行外部關卡。
+- 長駐服務曾再次退出，排程 LastTaskResult 為 `3221225786`（程序中斷），沒有足夠事件證據判定來源；已用既有 `FamilyFinanceHub` 排程恢復，資料庫與路由不變。接手先驗 health/帳戶，不在沙箱背景起正式服務；跨次對話持續運行、重開機觸發及意外退出原因仍需驗證。
+
+**下一步：** 第二期未參與調整的真實盲測、Codex Gmail cron 首次真實執行與跨日重跑、Groq runtime activation 及實體手機驗收仍未完成。每次交付重新跑三銀行；本次 PASS 不是永久豁免，也不是無人確認入帳授權。
+
+## 2026-09-30 Windows 安全儲存修復
+
+- 原因已確認：3000 埠的 FamilyHub 程序以 `CodexSandboxOffline` 執行；缺少有效的 Windows 憑證登入工作階段，保存回報 Windows 1312，也讀不到使用者原有憑證。先前「未保存」不代表原帳戶資料已遺失。
+- 已停止此已核對的沙箱程序，改由既有 `FamilyFinanceHub` 互動式登入排程啟動；實際 listener owner 已確認為登入中的 Windows 使用者。服務仍使用 `data/family-finance-hub-live.db`，18 筆有效交易保留。
+- `KeyringSecretStore.verify_access()` 與啟動腳本已加入保管庫寫入/讀取/清除閘門。Probe 使用獨立隨機 service 與合成值，不變更應用程式憑證；任何一步失敗即拒絕啟動。此主機沙箱啟動拒絕及正常登入帳戶通過均已實測。
+- 設定頁以使用者當次已填寫的欄位再次安全保存成功，欄位已清空，重新載入後身分證、生日皆顯示「已保存」。本機 API 及既有 Tailscale HTTPS 設定頁/health 均已驗證；實體手機及重開機自動觸發未重驗。
+- 聚焦驗證：`test_keyring_store.py`、`test_imports.py`、`test_pdf_api.py` 共 47 passed、2 個既有相依套件棄用警告；frontend production build 成功。本輪未重跑完整 backend suite，未發出 AI provider request。
+- 正確帳戶也重新讀到既有 OpenAI key：狀態 API 為 `openai / gpt-4.1-mini`、`credential_available=true`。這只確認本機憑證可讀，不代表 key 授權/額度有效，也不代表已切換 Groq；S3F-B 仍待使用者提供 Groq key 與真實驗收。
+
+## 2026-09-30 Codex MCP Gmail 主流程
+
+- 使用者已決定移除網站 Gmail OAuth 主流程。設定頁不再提供 OAuth JSON、連接帳戶、立即同步或內建排程控制；Gmail 授權、搜尋及排程改由 Codex Gmail MCP／Codex 自動化負責。
+- 已新增 `POST /api/integrations/codex-mcp/gmail/import`：接收附件與來源識別，先套用全域大小限制、遮罩密碼提示、計算 SHA-256，再透過 `StoragePort` 保存本機文件並建立 `codex_mcp_gmail` source。原始 Gmail ID 只用於計算不可逆 source key；subject、sender、完整本文、身分資料及實際密碼不落盤。
+- 相同來源及相同內容重跑為冪等；同一 source key 對應不同 bytes 回 409；已撤銷文件不會被重新收件恢復。PDF 後續仍走既有解鎖、Statement parser、合計核對與人工確認，Codex 收件不會直接建立 Finance transaction。
+- 已新增 `GET /api/integrations/codex-mcp/status` 供 UI 顯示本機模式與最近匯入狀態。Legacy Gmail OAuth/API/scheduler 預設停用，舊 API 回 410；`FAMILY_FINANCE_HUB_LEGACY_GMAIL_OAUTH=true` 只供歷史相容／測試。
+- 程式聚焦驗證已通過：Codex MCP import、來源衝突、敏感資料不落盤、legacy 410、Codex 提示解鎖共 27 passed；完整 backend 為 215 passed、2 個既有相依套件棄用警告，frontend production build 成功。Live server 已重新啟動；本機 status API、legacy 410 與 Tailscale 設定頁的 Codex MCP 畫面均已實測。
+- Codex 應用程式已建立並啟用「家庭收支 Gmail 帳單收錄」自動化：`gpt-6-luna`、Max reasoning、每 30 分鐘執行，最近 45 天補抓，僅將 PDF、來源識別及密碼提示附近的必要文字送入本機 endpoint；沒有新附件時保持安靜。首次真實 Gmail 執行與至少一次冪等重跑仍待驗收，完成前不可宣稱跨日自動收件已驗收。
+
+## 2026-09-29 AI Provider Safe Switch 里程碑
+
+- 已新增 `POST /api/security/ai-provider/test`：只用固定 synthetic 密碼規則與指定 provider/model 發出一次有界限 request，不讀 Gmail、個資或 PDF，不保存 credential，也不改 Active Provider。
+- `POST /api/security/ai-provider` 現在會在任何 SecretStore/DB 寫入前重新 preflight；auth、rate limit、quota、model、schema、timeout、service failure 都會 fail closed 並回穩定 reason code。失敗不會替換舊 profile、刪除舊 credential 或 fallback 到 OpenAI。
+- `GET /api/security/ai-provider` 現在分開回報 `configured` 與 `credential_available`。設定頁明確顯示作用中 Provider、模型與憑證狀態，並提供「測試連線」及「保存並切換」。PDF 預覽也只有兩個狀態都可用時才啟用 AI，credential 遺失時不會先發出失敗的 AI request。
+- 驗證：完整 backend 211 passed、2 個既有相依套件棄用警告；frontend production build 成功；`git diff --check` 通過。合成測試已覆蓋不落盤測試、失敗保留舊設定、憑證遺失狀態及安全錯誤碼；Tailscale 網址實測設定頁狀態及 PDF 預覽的 AI 停用閘門正確。
+- 本機 runtime 尚未切到 Groq：Active Provider 仍是 `OpenAI / gpt-4.1-mini`。2026-09-30 修正 Windows 執行帳戶後既有 key 已可讀（`credential_available=true`），但未重驗 provider 授權/額度。必須由使用者在設定頁提供可用 Groq key，才能完成真實 request、cache 與 synthetic encrypted PDF 的 S3F-B 驗收；不得把合成測試寫成真實 Groq 成功。
+
 ## 2026-09-29 信用卡帳單匯入里程碑
 
 - 已完成第一個實際中國信託加密信用卡帳單的端到端驗證：來源文件 → 郵件規則提示 → Windows Credential Manager 解鎖 → `TaiwanCreditCardStatementParser` → 帳單合計核對 → 使用者確認 → Finance transaction → `data/exports/家庭收支記錄.xlsx`。
 - 已新增 `0011_statement_import` migration、Statement/StatementLine/匯入狀態模型、分析／確認 API、冪等入帳，以及文件詳情的「分析帳單／確認匯入」介面。支援中國信託交易列與受限台新零交易版型；未知版型、交易列不完整或對帳不符會停在 pending。
 - 實際服務已在 `data/family-finance-hub-live.db` 完成 migration；本次匯入後 Finance 有 18 筆有效交易，Excel 已重建為含 18 筆交易明細的專用工作簿。再次確認同一 Statement 回報 `reused=true`，沒有重複入帳。
 - 本機來源沒有保留 Gmail message context，因此 UI 新增「郵件中的密碼規則提示」fallback；只接受規則文字，不接受實際密碼。Gmail 附件若保留來源郵件，仍優先自動使用該郵件提示。
-- 驗證：帳單／入帳聚焦測試 33 passed；前端 production build 成功；完整 backend 為 207 passed、2 個既有套件棄用警告；Tailscale 瀏覽器實測首頁與 `/api/health` 可用。
-- 尚未完成：內建 Gmail OAuth 的長期自動同步後自動分析／確認、第二期未參與調整的真實盲測、其他銀行版型、OCR runtime、實體 iPhone 驗收。不要把單一中國信託 parser 宣稱成通用銀行 parser。
+- 驗證：帳單／入帳聚焦測試 33 passed；前端 production build 成功；最新完整 backend 為 211 passed、2 個既有套件棄用警告；Tailscale 瀏覽器實測首頁與 `/api/health` 可用。
+- 尚未完成：Codex Gmail cron 的真實／跨日收件驗收、第二期未參與調整的真實盲測、其他銀行版型、OCR runtime、實體 iPhone 驗收。不要把單一中國信託 parser 宣稱成通用銀行 parser。
 
 ## 2026-09-29 Gmail 密碼格式確認閘門
 
@@ -26,8 +83,8 @@
 - 本次已從使用者授權的 Gmail 網頁下載一份信用卡 PDF，收錄到 FamilyHub 文件匣；同一 bytes 再次收錄回報 `duplicate=true`。FamilyHub 內建 Gmail OAuth 仍未授權，所以這次不是內建 Gmail scheduler 的驗收。
 - 舊 runtime 第一次允許 AI 的預覽仍因既有 OpenAI profile 額度不足而停止；這是 provider 問題，不是錯誤密碼。確認郵件明示格式後，改以目前 parser 產生的受限規則、關閉 AI，透過 live processor 與 Windows SecretStore 成功解鎖同一份 Gmail 下載 PDF。
 - 後續實際驗證已完成：中國信託加密帳單由 parser 解析交易列並核對帳單合計，確認後建立 Finance transaction，再重建 Excel；重複確認回報 `reused=true`。未知銀行版型仍停在待處理，不猜測入帳。
-- 此次 Gmail 搜尋使用 `in:anywhere`，但下載由已登入的 Gmail 網頁手動完成；FamilyHub 內建 Gmail OAuth/scheduler 仍未授權。內建長期流程目前仍只負責收錄附件，分析與確認匯入維持明確使用者操作。
-- 尚未完成：S3F-C safe-switch preflight、S3F-B Groq runtime activation、真實 Groq request、第二期盲測、更多銀行 parser 與 Gmail OAuth 長期授權。Groq 不再是明示格式帳單本機解鎖的前置；後續仍須依 `GROQ_RUNTIME_REVIEW.md` 先完成 provider 安全切換，再驗證真實 Groq。
+- 此次 Gmail 搜尋使用 `in:anywhere`，但下載由已登入的 Gmail 網頁手動完成；這是 2026-09-29 的歷史驗證。現行主流程已改由 Codex MCP 收件，分析與確認匯入仍維持明確使用者操作。
+- 尚未完成：S3F-B Groq runtime activation、真實 Groq request、第二期盲測、更多銀行 parser 與 Codex Gmail cron 真實驗收。S3F-C safe-switch 已完成；Groq 不再是明示格式帳單本機解鎖的前置，取得 key 後依 `GROQ_RUNTIME_REVIEW.md` 完成真實 Groq 驗收。
 
 本次執行遇到的 Git 分支同步、Windows pytest 暫存權限、runtime provider 未切換、Gmail OAuth 邊界、OpenAI 額度及文件狀態漂移，已逐項記錄在 [EXECUTION_ISSUES.md](EXECUTION_ISSUES.md)。
 
@@ -35,40 +92,40 @@ Groq 的最新深度審查與執行規格見 [GROQ_RUNTIME_REVIEW.md](GROQ_RUNTI
 
 ## 目前接手入口
 
-2026-09-29 文件解鎖操作已簡化：設定頁只需保存身分證字號及/或生日，系統內部建立固定個人 profile；來源郵件明確描述完整格式時先走本機 parser，只有其餘規則才需要可選 AI。舊銀行/成員 profile API 保留相容，但不是新 UI 的前置。中國信託實際帳單已完成解鎖、交易解析、核對、Finance 匯入與 Excel 重建；實體 MacBook/手機未驗收，內建 Gmail OAuth 的長期自動分析／確認、第二期盲測及其他銀行 parser 仍未完成。
+文件解鎖設定頁只需保存身分證字號及/或生日，系統內部建立固定個人 profile；來源郵件明確描述完整格式時先走本機 parser，只有其餘規則才需要可選 AI。舊銀行/成員 profile API 保留相容，但不是新 UI 的前置。中國信託已完成真實 Finance/Excel，國泰及永豐已完成本次解鎖、交易解析、核對及草稿冪等；第二期盲測、Codex cron 真實收件、其他未知版型及實體手機仍未完成。
 
-近期目標已收斂為「信用卡 PDF 解鎖、解析、核對後更新每月支出 Excel」。Web 只補設定、核對確認及例外處理，不先擴充平台或完整 Dashboard。2026-09-28 已依本機程式更新 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 的 S0-S9 詳細工作包、檔案落點、驗收數值及 Luna max 啟動指示；本輪已接續完成第一個銀行 parser 與 Statement 入帳閘門，下一步是盲測與 Gmail 長期流程，不是擴張平台。
+近期目標已收斂為「Codex MCP 收錄信用卡 PDF，FamilyHub 解鎖、解析、核對後更新每月支出 Excel」。Web 只補設定、核對確認及例外處理，不先擴充平台或完整 Dashboard。S0-S9 工作包依 2026-09-30 決策執行；三銀行當次關卡已通過，接著完成第二期盲測及 Codex cron 真實執行，不擴張平台。
 
-前輪 S1-S3 已完成補強及隔離合成測試；S4 現在已有版型無關的 Statement 契約、月支出語意與正規化閘門，銀行 parser 仍需樣本。接手收到開始指示後重驗基線，再從真正未完成處繼續，不重做已有功能、不把規格當程式完成。
+S1-S3 與 S3F-C 已完成補強及隔離合成測試；S4 已有 Statement 契約、月支出語意、正規化閘門與中國信託/國泰/永豐已驗證版型，未知版型及第二期仍需授權樣本。接手重驗基線，從未完成處繼續，不重做已有功能、不把規格當程式完成。
 
 - 本機 `master` 已包含 `ARCHITECTURE_REVIEW_BRIEF.md`。Tailscale Serve 既有設定為私有 HTTPS → `localhost:3000`，網頁與 API 現由同一 FastAPI 服務提供；個人解鎖及單一服務部署已在此主機驗證。此主機使用 `data/family-finance-hub-live.db`，由舊資料庫的一致性快照升級至 `0011_statement_import`；原始舊 DB 與 `data/backups/2026-09-29-pre-deploy/` 保留。舊 DB 不可直接用新版程式啟動。
 - `FamilyFinanceHub` Windows 排程在使用者登入後啟動 `scripts/start_server.ps1 -DatabasePath data/family-finance-hub-live.db`，目前由手動觸發的排程執行中。Tailscale HTTPS 首頁與 `/api/dashboard` 均驗證成功；重新開機後的自動觸發及實體 iPhone 尚未驗證。其他舊開發連接埠可能仍寫入舊 DB，兩者不自動同步，應只用新的 Tailscale 網址操作。
 - 此主機的跨專案手機預覽工具位於全域 Codex 設定，不屬於本 repository。2026-09-29 以兩個只回傳測試文字的服務驗證 `3001 -> HTTPS 8443`、`3002 -> HTTPS 8444` 可並行、重複註冊保持原路由、錯誤首頁文字與覆蓋 `443` 均被拒絕；測試路由及服務已移除。最後再驗證 Serve 僅剩 `443 -> localhost:3000`、本站 `/api/health` 回傳 200。未以實體手機驗收，也未替尚不存在的新專案預先建立網址。
 - 前輪 S0 基線：backend 128 passed、2 個既有棄用警告，frontend production build 成功。變更後聚焦測試與完整 suite 見上方及下方；目前 Alembic head 為 `0011_statement_import`。`test_xlsx_writer.py` 已同步新版信用卡欄位契約。
-- 固定取捨：S4 一家銀行 parser → S5 最小模型 → S6 原子入帳與正確 Excel → S7 最小設定/待處理 → S8 沿用 Gmail 的受控自動入帳 → S9 固定 Windows 入口。保留 Documents 1:N、SecretStore、撤銷/恢復及 Excel 安全投影；不擴充 DSL/OCR/domain。
-- 舊計畫的完整月報/分類、90 天新掃描水位、每日新排程與移除 History 不再是本輪要求。現有 Gmail 引擎/30 分鐘 opt-in 排程及 Excel 背景檢查先沿用；Excel 從選配改為主要交付，不代表現有輸出已具正確信用卡語意。
-- 外部關卡：S4 第二期未參與調整的真實樣本及逐筆核對；S8/S9 才在授權下做 Gmail/正式環境長期驗收。缺件不可猜測，不回填聊天中的個人秘密，不以合成測試代替外部驗收。
-- 下一步：以另一份已授權期別做盲測，確認 parser 未依賴本次樣本；再決定是否接入 Gmail scheduler 的受控分析流程。未知版型先維持 pending，不擴充多銀行 framework。原始文件不進 repo、聊天或外部 AI。
+- 固定取捨：S4 一家銀行 parser → S5 最小模型 → S6 原子入帳與正確 Excel → S7 最小設定/待處理 → S8 Codex MCP 受控收件 → S9 固定 Windows 入口。保留 Documents 1:N、SecretStore、撤銷/恢復及 Excel 安全投影；不擴充 DSL/OCR/domain。
+- Legacy Gmail History/OAuth/scheduler 凍結為相容程式，預設不啟用；日常搜尋與排程由 Codex 管理。Excel 背景檢查先沿用；Excel 從選配改為主要交付，不代表未知銀行已具正確信用卡語意。
+- 外部關卡：Codex Gmail cron 首次真實執行與重跑、S4 第二期未參與調整的真實樣本及逐筆核對。缺件不可猜測，不回填聊天中的個人秘密，不以合成測試代替外部驗收。
+- 下一步：完成 Codex cron 真實收件驗收，再以另一份已授權期別盲測 parser。未知版型先維持 pending，不擴充多銀行 framework。原始文件不進 repo、聊天或外部 AI。
 
 ## 目前狀態
 
-產品「家庭收支記錄」v0.1 為 Windows 主機上的 local-first Modular Monolith。M1-M5.4 的共用平台與既定流程已實作：Documents/1:N source records、SHA-256 冪等匯入、通用 Finance CSV、Dashboard/Search/Jobs、密碼規則安全邊界、加密 PDF transient preview、Gmail 手動/增量同步與 opt-in 每 30 分鐘 scheduler。M7.1-M7.5 的搜尋、來源追溯、月份／幣別總覽、設定分組、PDF 預覽體驗及手機排版，以及 M8 的專用 Excel 投影與 Statement 匯入流程也已實作；目前 parser 範圍仍限於已驗證版型，Gmail 長期自動確認與外部環境驗收尚未完成。
+產品「家庭收支記錄」v0.1 為 Windows 主機上的 local-first Modular Monolith。M1-M5.4 的共用平台與既定流程已實作：Documents/1:N source records、SHA-256 冪等匯入、通用 Finance CSV、Dashboard/Search/Jobs、密碼規則安全邊界、加密 PDF transient preview，以及 Codex MCP Gmail 本機匯入。Legacy Gmail 手動/增量同步與 scheduler 仍在程式中但預設停用。M7.1-M7.5 的搜尋、來源追溯、月份／幣別總覽、設定分組、PDF 預覽體驗及手機排版，以及 M8 的專用 Excel 投影與 Statement 匯入流程也已實作；目前 parser 範圍仍限於已驗證版型，Codex cron 長期驗收與外部環境驗收尚未完成。
 
-PDF 文字抽取不足時才走 `OcrProvider`；目前 Tesseract adapter 會先以 `--list-langs` 確認設定所需 traineddata，再使用 PDFium 在記憶體渲染、透過 stdin 傳頁面影像，最多 20 頁、每頁約 8 MP、總逾時 120 秒。缺少語言資料會回報獨立狀態；OCR 文字僅保留於此次處理記憶體，不寫 DB/log/文件暫存；OCR 失敗不影響原始/解密 PDF 預覽。OCR 執行檔和 `chi_tra`/`eng` 語言資料尚未在此 Windows 主機安裝/驗收。Statement parser 目前限於中國信託與受限台新零交易版型；其他 PDF 仍只屬於共用 Document，不會猜測或自動建立 Finance transaction。
+PDF 文字抽取不足時才走 `OcrProvider`；目前 Tesseract adapter 會先以 `--list-langs` 確認設定所需 traineddata，再使用 PDFium 在記憶體渲染、透過 stdin 傳頁面影像，最多 20 頁、每頁約 8 MP、總逾時 120 秒。缺少語言資料會回報獨立狀態；OCR 文字僅保留於此次處理記憶體，不寫 DB/log/文件暫存；OCR 失敗不影響原始/解密 PDF 預覽。OCR 執行檔和 `chi_tra`/`eng` 語言資料尚未在此 Windows 主機安裝/驗收。Statement parser 目前限於中國信託、國泰世華、永豐的已驗證文字版型及受限台新零交易版型；未知 PDF 不猜測或自動建立 Finance transaction。
 
-前輪程式測試使用 FakeGmail，尚未驗收真實帳戶授權狀態；接手時確認現場設定，不推定未設定而重設既有連線。自動同步預設關閉，需使用者在 UI 完成 readonly OAuth 後明確啟用。排程與手動按鈕共用 `GmailSyncUseCase` 及鎖，PDF 先收錄文件；支援版型需在文件詳情分析並確認後才走 Statement 入帳，CSV 仍走通用匯入。替換 OAuth client 設定會關閉排程。
+舊 FakeGmail 測試只保護 legacy 相容路徑，不代表現行 Gmail 連線狀態。網站不再提供 OAuth 或自動同步控制；新附件由 Codex Gmail MCP 呼叫本機 import endpoint。支援版型仍需在文件詳情分析並確認後才走 Statement 入帳，CSV 手動匯入維持通用流程。
 
-通用 CSV 匯入會拒絕無效日期、非有限/超精度金額、格式不合的幣別與欄位數異常，失敗資料不會留下部分交易。Gmail 先保存 CSV 文件；單份財務解析失敗會保留文件與失敗工作紀錄，並繼續處理後續郵件。完整交易頁提供月份／幣別篩選和分頁；首頁只讀選定期間最近 8 筆，Dashboard 金額由 SQLite 依期間與幣別聚合。Alembic 與 API 共用 `FAMILY_FINANCE_HUB_DATABASE_URL`。
+通用 CSV 匯入會拒絕無效日期、非有限/超精度金額、格式不合的幣別與欄位數異常，失敗資料不會留下部分交易。CSV 目前由手動匯入處理；Codex 日常自動化限定 PDF 帳單。完整交易頁提供月份／幣別篩選和分頁；首頁只讀選定期間最近 8 筆，Dashboard 金額由 SQLite 依期間與幣別聚合。Alembic 與 API 共用 `FAMILY_FINANCE_HUB_DATABASE_URL`。
 
-S1 已驗證自訂 Gmail 查詢走 message search、不借用 history 範圍，且保留預設增量 cursor；涵蓋自訂 A/B 查詢、無既有 cursor、分頁中途改查詢及附件暫時失敗重試。S2 已驗證 HTML table row/cell、inline 空白、重疊上下文保序，以及先遮罩再套輸出上限；測試使用合成值。S3 已把 PDF 來源讀取、寄件者唯一匹配、已驗證規則重用、本機密碼組合、解密與文字抽取協調移到可直接測試的 application use case；格式錯誤／多地址不自動匹配，明確手動 profile 優先。測試確認歧義時不讀秘密、匹配失敗不遍歷其他家庭成員秘密、`/content` 保持原始 bytes、`/preview` 維持 no-store。本次另完成 Gmail 網頁手動下載、文件收錄/去重及真實加密 PDF 解鎖/文字抽取；FamilyHub 內建 Gmail OAuth 仍未授權。
+S1 的 Gmail History/query 測試仍保留 legacy 相容性；不再代表產品日常路徑。S2 已驗證 HTML table row/cell、inline 空白、重疊上下文保序，以及先遮罩再套輸出上限；測試使用合成值。S3 已把 PDF 來源讀取、寄件者唯一匹配、已驗證規則重用、本機密碼組合、解密與文字抽取協調移到可直接測試的 application use case；格式錯誤／多地址不自動匹配，明確手動 profile 優先。測試確認歧義時不讀秘密、匹配失敗不遍歷其他家庭成員秘密、`/content` 保持原始 bytes、`/preview` 維持 no-store。另已完成 Gmail 網頁手動下載、文件收錄/去重及真實加密 PDF 解鎖/文字抽取；現行收件改由 Codex MCP。
 
-S4 新增 `finance/statements/contracts.py`：銀行 parser 的純輸入/輸出型別、帶原因碼的 unsupported 結果、列帳金額符號限制、對帳狀態，以及按消費日期/幣別彙總消費、退款、淨消費、費用、利息與繳款；未知列與缺日期列明確標示，不猜消費。`finance/statements/taiwan_credit_cards.py` 現在把已驗證的中國信託交易列與受限台新零交易版型接到 PDF 文字抽取；另新增 `finance/statements/normalization.py`，以 `statement_id + line_index` 產生穩定 SHA-256 row hash，保留合法相同交易，並只讓 `ready` 結果進入後續入帳。未知列、缺日期、未核對或對帳不符會保留為 `pending` 並帶原因碼。
+S4 的 `finance/statements/contracts.py` 保留純輸入/輸出、unsupported 原因碼、符號/對帳限制及按日期/幣別的月彙總。`taiwan_credit_cards.py` 只接已驗證中國信託/國泰/永豐及受限台新版型。`normalization.py` 以 `statement_id + line_index` 產生穩定 SHA-256 row hash，保留合法相同交易，只讓 `ready` 進入確認入帳。缺日期只有「利息 + 明示結帳日」適用使用者批准的認列政策，其餘仍 pending；unknown、未核對或對帳不符不能靠確認繞過。
 
 ## 帳單撤銷／恢復已完成
 
 - 文件頁提供「有效／已撤銷」與撤銷／恢復操作，確認前顯示關聯交易筆數、各幣別收入／支出／淨額及撤銷原因。
 - 撤銷會讓對應交易退出 Dashboard、交易列表與搜尋；保留來源、交易與工作紀錄，可恢復既有交易而不重新解析。沒有交易的文件恢復後仍為零筆。
-- 本機上傳與 Gmail 同步均保留相同 SHA-256 文件的撤銷狀態；不同內容仍視為新文件，尚無語意層級帳單去重。保存本機副本不會恢復收支。
+- 本機上傳、Codex MCP 與 legacy Gmail 匯入均保留相同 SHA-256 文件的撤銷狀態；不同內容仍視為新文件，尚無語意層級帳單去重。保存本機副本不會恢復收支。
 - 狀態更新與工作紀錄在同一 transaction；重複操作不新增紀錄，預覽後狀態或影響金額改變則要求重新確認。
 - `0009_document_revocation` 已在隔離 SQLite 升級驗證；既有文件預設有效。使用中的資料庫尚未遷移。
 
@@ -77,7 +134,7 @@ S4 新增 `finance/statements/contracts.py`：銀行 parser 的純輸入/輸出�
 2026-09-27 已完成 M7.1-M7.5 程式修改及隔離合成資料的桌面與 390px／320px 操作驗證。M7 的前端自動化測試基礎設施及更大規模合成資料矩陣仍待補強；實作順序及驗收條件見 `TASKS.md` 的 M7。
 
 - 搜尋與導覽：搜尋獨立為結果頁，文件／交易各自有總數與分頁，搜尋字詞及分頁保留在 URL，且具備獨立載入、空結果、錯誤與舊請求防護。
-- 新增資料與入帳：統一入口區分只收錄文件、CSV 建立交易及 Gmail 同步；文件詳情集中顯示來源、有效狀態、關聯交易與匯入歷史。PDF 收錄仍明示尚未建立交易。
+- 新增資料與入帳：統一入口區分手動收錄文件、CSV 建立交易及 Codex MCP 自動收件狀態；文件詳情集中顯示來源、有效狀態、關聯交易與匯入歷史。PDF 收錄仍明示尚未建立交易。
 - 來源追溯：交易與 Jobs 只有在有 `source_document_id`／`document_id` 時提供文件連結；文件詳情可回看本機／遠端來源及所有關聯處理結果。
 - 月份／幣別總覽：首頁預設本月，Dashboard 由資料庫依月份與幣別聚合；不同幣別不相加，連往交易頁會保留同一組條件，空月份顯示明確空狀態。
 - 設定目前依「文件解鎖／連線服務／進階設定」分組，預設顯示個人解鎖資料；不再要求使用者建立銀行或家庭成員設定。舊 profile schema/API 保留相容。
@@ -108,6 +165,8 @@ M8 第一階段已完成專用 Excel 輸出、背景重試與設定介面；新�
 
 ## 本輪程式驗證
 
+- 2026-09-29 S3F-C safe-switch：完整 backend `211 passed`、2 個既有相依套件棄用警告；frontend production build 成功；`git diff --check` 通過。
+- 新增測試確認 provider test 不落盤、不切換；configure preflight 失敗保留舊 provider/key；status 可辨識 credential 遺失；錯誤回穩定 reason code 且不洩漏 upstream body/API key。
 - 2026-09-29 免費 AI provider 實作回歸：`.\.venv\Scripts\python.exe -m pytest backend\tests -q -p no:cacheprovider --basetemp .pytest-tmp\free-ai-status`，187 passed、2 個既有 FastAPI/anyio 相依套件棄用警告。
 - 2026-09-29 Frontend production build：`npm --prefix frontend run build` 成功；`git diff --check` 通過。
 - 合成測試覆蓋 Groq/OpenAI dispatch、legacy profile、遮罩 payload、verified cache、失敗不 fallback、設定 API/UI 與 PDF preview contract；未把真實 Groq key 或真實帳單內容放進測試。
@@ -119,19 +178,19 @@ M8 第一階段已完成專用 Excel 輸出、背景重試與設定介面；新�
 - 中國信託：實際下載附件到本機，原始 PDF 判定為加密；關閉 AI，依來源郵件明示的身分證規則完成本機解密與文字抽取。
 - 台新：實際下載信用卡帳單附件；來源郵件明確寫出本國人密碼組合後，僅依該單一規則完成本機解密，輸出為 2 頁且可抽取文字，並確認內容具有台新信用卡帳單標記。
 - 永豐、國泰世華：來源郵件分別明示身分證字號規則；在 Gmail PDF 預覽輸入該郵件允許的規則後均成功解密，未把預覽明文輸出另存成一般檔案。
-- 本次只使用來源郵件明示的規則，不做排列猜測或暴力嘗試；密碼、身分證字號、生日、帳單內容與明文輸出未寫入 repository、文件、log 或測試資料。此次仍未建立交易，銀行專用 `BankStatementParser` 與自動入帳維持待辦。
+- 本次只使用來源郵件明示的規則，不做排列猜測或暴力嘗試；密碼、身分證字號、生日、帳單內容與明文輸出未寫入 repository、文件、log 或測試資料。其後已以中國信託帳單建立第一個銀行 parser 並完成核對／確認入帳；台新、永豐、國泰世華仍不可因已解鎖就宣稱可解析交易。
 
 ## 目前產品方向的重新審查 Gate
 
 2026-09-28 使用者重新確認：近期核心需求不是繼續擴張「家庭資料平台」，而是**每月信用卡帳單自動分析**。最新詳細需求、疑似 Overdesign 清單、建議簡化方向與交給高階模型的 12 個審查問題，集中在 `ARCHITECTURE_REVIEW_BRIEF.md`。
 
-在高階模型重新審查前，不要因該文件的候選方案直接刪除 Gmail incremental sync、Documents 1:N、revocation、OCR 或 Excel safety；它們是「需判斷是否值得簡化」而不是「已決定移除」。同時也不要新增 Drive、其他家庭 domain、通用 AI、Push/PubSub 等非核心能力。
+2026-09-30 已決定停用網站內建 Gmail OAuth/scheduler，改由 Codex MCP 管理收件；legacy incremental sync 暫留相容，不做破壞性 schema 移除。Documents 1:N、revocation、OCR 邊界與 Excel safety 仍保留；不要新增 Drive、其他家庭 domain、通用 AI、Push/PubSub 等非核心能力。
 
 近期開發優先序應暫時指向：
 1. 第一份真實信用卡帳單與 bank-specific parser。
 2. 密碼規則上下文擷取的真實郵件可靠性。
 3. sender/profile 自動匹配。
-4. 再由高階審查結果決定 Gmail scheduler/incremental sync 與 Excel background projection 是否收斂。
+4. 驗證 Codex cron 真實收件及重跑冪等；Excel background projection 先沿用，legacy Gmail scheduler 不再啟用。
 
 
 ## 最近程式驗證
@@ -163,16 +222,16 @@ M8 第一階段已完成專用 Excel 輸出、背景重試與設定介面；新�
 此主機已使用成對備份後升級至 `0011_statement_import` 的 `data/family-finance-hub-live.db`；舊 DB 仍保留且不可直接用新版程式啟動。其他主機若尚未升級，仍須先停止 API、成對備份 DB/storage、確認位址後依 `docs/operations.md` 操作。
 
 1. OCR 為條件式待辦，不是下一步前置：僅當 S4 真實帳單證明文字抽取不足，才安裝/驗收 Tesseract 及 `chi_tra`/`eng` traineddata。缺語言資料的提早檢查已有合成測試，真實 runtime 尚未驗收；近期順序依 S0-S9，不先擴充 OCR。
-2. 由使用者設定 Google Cloud OAuth 桌面 client 並在家庭主機互動授權；以真實台灣信用卡帳單在本機核對解密和 OCR 結果，不把帳單放入 repository。
+2. 確認 Codex Gmail connector 可讀取授權信箱，建立 read-only 排程並以真實台灣信用卡帳單驗證附件收錄；不把帳單、郵件全文或秘密放入 repository／prompt。
 3. 根據核對過的真實格式定義 bank-specific `BankStatementParser`/profile，補日期、幣別、金額、退款與冪等映射；通過人工核對前不自動寫交易。
-4. 完成 Windows 開機啟動與背景常駐包裝，並確認 Gmail OAuth refresh token 在選定發布狀態下可長期使用；不要用測試中的短效授權宣稱已可長期自動化。
+4. 完成 Windows 開機啟動與背景常駐包裝，並確認 Codex cron 在主機與 FamilyHub 可用時可重複執行、離線後能靠近期窗口補抓；不要用一次手動執行宣稱已可長期自動化。
 5. 安裝/登入 Tailscale 並確認家庭裝置與 Windows Firewall 規則後，再做遠端 Web 使用檢查。不要公開服務或設 router port forwarding。
 6. 尚未驗證真實資料庫的生產備份/還原；目前只完成隔離合成 rehearsal。未提供自動或加密備份。
 7. 搜尋分頁已列入 M7.1，不再等資料量增長才處理；工作歷史目前最多 100 筆，其分頁與匯入批次大小另依使用量評估。
 
 ## 安全界線
 
-- 不讀取或回填先前對話裡曾提供的個人秘密；SQLite、log、repository 與 plaintext config 不可存 secrets。身分資料、PDF password、OAuth token 只透過使用者明確操作的本機 SecretStore/Credential Manager。
-- 程式測試與 restore rehearsal 使用合成資料及隔離 SQLite/storage；本次另以使用者授權的 Gmail 網頁手動下載真實帳單，完成本機文件去重、SecretStore 解鎖與文字抽取驗證。FamilyHub 內建 Gmail OAuth 仍未設定，不據此宣稱自動同步、交易解析或 Excel 入帳已完成。
+- 不讀取或回填先前對話裡曾提供的個人秘密；SQLite、log、repository 與 plaintext config 不可存 secrets。身分資料與 PDF password 只透過使用者明確操作的本機 SecretStore/Credential Manager；Gmail connector credential 由 Codex 管理，不傳給 FamilyHub。
+- 程式測試與 restore rehearsal 使用合成資料及隔離 SQLite/storage；較早另以使用者授權的 Gmail 網頁手動下載真實帳單，完成本機文件去重、SecretStore 解鎖與文字抽取驗證。Codex MCP import 的合成測試不等同真實排程、交易解析或 Excel 入帳驗收。
 - 正式升級前先確認 DB 與 storage 路徑，停止 API 並成對備份 DB 和 `data/documents`，再明確執行 migration；禁止刪除/重建舊 DB 或讓 app 靜默升級 schema。
 - 不自動 commit、push 或覆蓋其他既有修改。

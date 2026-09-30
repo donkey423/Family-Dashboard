@@ -1,9 +1,12 @@
 from datetime import date, datetime
 from contextlib import closing
 from pathlib import Path
+import json
 
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
+from sqlalchemy import select
 
 from family_finance_hub.config import Settings
 from family_finance_hub.documents.processors.pdf import ProcessedPdf
@@ -14,6 +17,7 @@ from family_finance_hub.finance.statements.contracts import (
     StatementParseResult,
 )
 from family_finance_hub.main import create_app
+from family_finance_hub.models import FinanceTransaction, Statement
 from family_finance_hub.finance.statements.taiwan_credit_cards import TaiwanCreditCardStatementParser
 
 
@@ -135,6 +139,49 @@ def test_analysis_without_parser_is_pending_and_does_not_create_transactions(tmp
         assert confirm.status_code == 409
 
 
+def test_approved_interest_policy_is_reviewable_and_preserved_through_excel(tmp_path):
+    class InterestPolicyParser(FakeStatementParser):
+        bank_id = "cathay"
+
+        def parse(self, extracted_text, *, page_count):
+            result = super().parse(extracted_text, page_count=page_count)
+            undated = StatementLine(
+                line_index=4, posting_date=date(2026, 9, 30), description="循環利息",
+                transaction_kind="interest", amount=-5, currency="TWD",
+            )
+            return result.model_copy(update={"statement": result.statement.model_copy(update={
+                "lines": (*result.statement.lines, undated), "closing_date": date(2026, 9, 30),
+            })})
+
+    client, settings = make_client(tmp_path, InterestPolicyParser())
+    with client:
+        document_id = upload_pdf(client)
+        analyzed = client.post(f"/api/documents/{document_id}/statement-analysis", json={}).json()
+        assert analyzed["status"] == "ready"
+        detail = client.get(f"/api/statements/{analyzed['statement_id']}").json()
+        interest = detail["lines"][-1]
+        assert interest["transaction_date"] is None
+        assert interest["effective_transaction_date"] == "2026-09-30"
+        assert interest["transaction_date_basis"] == "statement_closing_date"
+        assert client.get("/api/finance/transactions").json()["total"] == 0
+        confirm = client.post(f"/api/statements/{analyzed['statement_id']}/confirm", json={"review_version": analyzed["review_version"]})
+        assert confirm.status_code == 200
+        repeated = client.post(f"/api/statements/{analyzed['statement_id']}/confirm", json={"review_version": analyzed["review_version"]})
+        assert repeated.json()["reused"]
+        assert client.get("/api/finance/transactions").json()["total"] == 4
+        with client.app.state.session_factory() as session:
+            transaction = session.scalar(select(FinanceTransaction).where(FinanceTransaction.transaction_kind == "interest"))
+            assert transaction.transaction_date == date(2026, 9, 30)
+            raw = json.loads(transaction.raw_json)
+            assert raw["source_transaction_date"] is None
+            assert raw["transaction_date_basis"] == "statement_closing_date"
+            assert session.get(Statement, analyzed["statement_id"]).statement_json["lines"][-1]["transaction_date"] is None
+        assert client.post("/api/exports/excel/settings", json={"enabled": True}).json()["exported_transactions"] == 4
+        with closing(load_workbook(settings.workbook_path, data_only=True)) as workbook:
+            row = next(workbook["信用卡月支出"].iter_rows(min_row=2, values_only=True))
+            assert row == (datetime(2026, 9, 1), "國泰世華信用卡", "TWD", 120, 20, 100, 0, 5, 105, 300, 4)
+
+
 def test_statement_analysis_confirmation_is_idempotent_and_projects_card_sheet(tmp_path):
     client, settings = make_client(tmp_path, FakeStatementParser())
     with client:
@@ -214,3 +261,60 @@ def test_verified_bank_parser_auto_creates_local_account_and_imports(tmp_path):
         assert confirmation.status_code == 200
         assert confirmation.json()["transaction_count"] == 1
         assert client.get("/api/finance/transactions").json()["total"] == 1
+
+
+@pytest.mark.parametrize(("bank_id", "name"), [
+    ("cathay", "國泰世華信用卡"), ("sinopac", "永豐信用卡"),
+])
+def test_new_bank_accounts_are_local_and_confirmation_remains_idempotent(tmp_path, bank_id, name):
+    parser = FakeStatementParser()
+    parser.bank_id = bank_id
+    client, settings = make_client(tmp_path, parser)
+    with client:
+        document_id = upload_pdf(client)
+        analyzed = client.post(f"/api/documents/{document_id}/statement-analysis", json={}).json()
+        assert analyzed["status"] == "ready"
+        assert client.get("/api/finance/transactions").json()["total"] == 0
+        accounts = client.get("/api/statement-accounts").json()
+        assert len(accounts) == 1
+        assert accounts[0]["display_name"] == name
+        repeated = client.post(f"/api/documents/{document_id}/statement-analysis", json={}).json()
+        assert repeated["statement_id"] == analyzed["statement_id"]
+        assert len(client.get("/api/statement-accounts").json()) == 1
+        stale = client.post(f"/api/statements/{analyzed['statement_id']}/confirm", json={"review_version": analyzed["review_version"]})
+        assert stale.status_code == 409
+        confirmed = client.post(f"/api/statements/{analyzed['statement_id']}/confirm", json={"review_version": repeated["review_version"]})
+        assert confirmed.status_code == 200
+        again = client.post(f"/api/statements/{analyzed['statement_id']}/confirm", json={"review_version": repeated["review_version"]})
+        assert again.json()["reused"]
+        assert client.get("/api/finance/transactions").json()["total"] == 3
+        assert client.post("/api/exports/excel/settings", json={"enabled": True}).json()["exported_transactions"] == 3
+        with closing(load_workbook(settings.workbook_path, data_only=True)) as workbook:
+            row = next(workbook["信用卡月支出"].iter_rows(min_row=2, values_only=True))
+            assert row == (datetime(2026, 9, 1), name, "TWD", 120, 20, 100, 0, 0, 100, 300, 3)
+
+
+def test_undated_interest_is_visible_but_cannot_be_confirmed(tmp_path):
+    class UndatedInterestParser(FakeStatementParser):
+        bank_id = "cathay"
+
+        def parse(self, extracted_text, *, page_count):
+            result = super().parse(extracted_text, page_count=page_count)
+            undated = StatementLine(
+                line_index=4, posting_date=date(2026, 9, 30), description="循環利息",
+                transaction_kind="interest", amount=-5, currency="TWD",
+            )
+            return result.model_copy(update={"statement": result.statement.model_copy(update={"lines": (*result.statement.lines, undated)})})
+
+    client, _settings = make_client(tmp_path, UndatedInterestParser())
+    with client:
+        document_id = upload_pdf(client)
+        analyzed = client.post(f"/api/documents/{document_id}/statement-analysis", json={}).json()
+        assert analyzed["status"] == "pending"
+        assert analyzed["reason_code"] == "missing_transaction_date"
+        assert analyzed["line_count"] == 4
+        detail = client.get(f"/api/statements/{analyzed['statement_id']}").json()
+        assert detail["lines"][-1]["transaction_date"] is None
+        confirm = client.post(f"/api/statements/{analyzed['statement_id']}/confirm", json={"review_version": analyzed["review_version"]})
+        assert confirm.status_code == 409
+        assert client.get("/api/finance/transactions").json()["total"] == 0

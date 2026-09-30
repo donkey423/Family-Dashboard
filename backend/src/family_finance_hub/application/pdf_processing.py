@@ -37,6 +37,7 @@ from ..security.password_rules.ports import PasswordRuleInterpreter
 from ..security.password_rules.service import PasswordRuleService
 from ..security.secrets.ports import SecretStore
 from ..security.secrets.service import PERSONAL_UNLOCK_ID
+from .codex_mcp_import import CODEX_MCP_GMAIL_SOURCE
 
 
 ProfileT = TypeVar("ProfileT")
@@ -180,9 +181,9 @@ class PdfPreviewUseCase:
                 content = self.document_sources.read(document)
             except DocumentSourceUnavailable:
                 content = None
-            gmail_references = session.scalars(select(DocumentSourceRecord).where(
+            message_references = session.scalars(select(DocumentSourceRecord).where(
                 DocumentSourceRecord.document_id == document_id,
-                DocumentSourceRecord.source_type == "gmail_attachment",
+                DocumentSourceRecord.source_type.in_(("gmail_attachment", CODEX_MCP_GMAIL_SOURCE)),
             )).all()
             profile = (
                 session.get(DocumentSecurityProfile, command.document_security_profile_id)
@@ -215,7 +216,7 @@ class PdfPreviewUseCase:
         except DocumentProcessingError as initial_error:
             if initial_error.code != "pdf_password_required":
                 raise
-            message_context = self._message_context(gmail_references)
+            message_context = self._message_context(message_references)
             if profile is None:
                 profiles = session.scalars(select(DocumentSecurityProfile)).all()
                 matched = match_profiles_by_sender(
@@ -332,6 +333,13 @@ class PdfPreviewUseCase:
         source_records: Iterable[DocumentSourceRecord],
     ) -> SourceMessageContext | None:
         for source in source_records:
+            if source.source_type == CODEX_MCP_GMAIL_SOURCE:
+                reference = source.source_reference or {}
+                return SourceMessageContext(
+                    subject="",
+                    sender="",
+                    body=reference.get("password_instruction", ""),
+                )
             try:
                 return self.message_context_source.read_message_context(source.source_reference or {})
             except DocumentSourceUnavailable:

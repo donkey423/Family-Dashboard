@@ -43,7 +43,14 @@ class DocumentService:
         ))
         return result.rowcount == 1
 
-    def import_bytes(self, session: Session, filename: str, content: bytes, target_module: str) -> ImportedDocument:
+    def import_bytes(
+        self,
+        session: Session,
+        filename: str,
+        content: bytes,
+        target_module: str,
+        source_type: str = "upload",
+    ) -> ImportedDocument:
         safe_name = PurePath(filename.replace("\\", "/")).name[:255]
         extension = PurePath(safe_name).suffix.lower()
         if extension not in ALLOWED_EXTENSIONS:
@@ -81,13 +88,63 @@ class DocumentService:
         job = ImportJob(
             id=str(uuid4()),
             document_id=document.id,
-            source_type="upload",
+            source_type=source_type,
             target_module=target_module,
             status="skipped_revoked" if document.revoked_at else "duplicate" if duplicate else "completed",
             summary="文件已撤銷，未恢復匯入" if document.revoked_at else "內容已存在，沿用既有文件" if duplicate else "文件已匯入",
         )
         session.add(job)
         return ImportedDocument(document=document, duplicate=duplicate)
+
+    def attach_source(
+        self,
+        session: Session,
+        document: Document,
+        source_type: str,
+        source_key: str,
+        source_reference: dict[str, str],
+    ) -> bool:
+        existing = session.scalar(
+            select(DocumentSourceRecord).where(
+                DocumentSourceRecord.source_type == source_type,
+                DocumentSourceRecord.source_key == source_key,
+            )
+        )
+        if existing is not None:
+            if existing.document_id != document.id:
+                raise ValueError("來源識別碼已對應不同內容")
+            existing.source_reference = source_reference
+            existing.availability_status = "available"
+            existing.last_verified_at = utc_now()
+            return True
+
+        source = DocumentSourceRecord(
+            id=str(uuid4()),
+            document_id=document.id,
+            source_type=source_type,
+            source_key=source_key,
+            source_reference=source_reference,
+            availability_status="available",
+            last_verified_at=utc_now(),
+        )
+        try:
+            with session.begin_nested():
+                session.add(source)
+                session.flush()
+        except IntegrityError:
+            existing = session.scalar(
+                select(DocumentSourceRecord).where(
+                    DocumentSourceRecord.source_type == source_type,
+                    DocumentSourceRecord.source_key == source_key,
+                )
+            )
+            if existing is None or existing.document_id != document.id:
+                raise ValueError("來源識別碼已對應不同內容") from None
+            existing.source_reference = source_reference
+            existing.availability_status = "available"
+            existing.last_verified_at = utc_now()
+            return True
+        return False
 
     def import_remote_bytes(
         self,

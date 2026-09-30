@@ -1,12 +1,12 @@
 # 家庭收支記錄：Excel 優先實作流程
 
-本文件供 Luna max 或其他接手模型逐步實作。2026-09-28 依目前程式重新收斂範圍；2026-09-29 已完成第一個已授權中國信託版型的 S4 parser、S5 statement migration、S6 原子確認／入帳／Excel 與 S7 最小介面。以下仍保留第二期盲測、其他版型與 Gmail 長期自動化的驗收條件，不把單一版型擴張成通用銀行解析。
+本文件供 Luna max 或其他接手模型逐步實作。2026-09-28 依目前程式重新收斂範圍；2026-09-29 已完成第一個已授權中國信託版型的 S4 parser、S5 statement migration、S6 原子確認／入帳／Excel 與 S7 最小介面。2026-09-30 使用者決定移除網站 Gmail OAuth 主流程，改由 Codex Gmail MCP／排程管理收件；S8 以下以此新決策為準，不再擴充內建同步引擎。
 
-**目前執行狀態（2026-09-29）：** 真實加密帳單已完成「解鎖 → 解析 → 帳單合計核對 → 使用者確認 → Finance → Excel」；同一帳單再次確認為冪等。現有 parser 範圍是中國信託交易列與受限台新零交易版型。未知版型、缺交易列、解鎖失敗或對帳不符會保留 pending。內建 Gmail OAuth 尚未完成長期授權，因此 Gmail scheduler 目前只負責收錄附件，不能宣稱新信件已無人自動入帳。
+**目前執行狀態（2026-09-30）：** 中國信託已完成真實 Finance/Excel；新下載中國信託/國泰/永豐加密帳單通過解鎖、全列/摘要核對及草稿冪等，國泰/永豐未自動確認正式入帳。parser 限上述已驗證文字版型與受限台新零交易。使用者批准未列日期的利息按明示結帳日認列，保留來源日期及認列依據，其他缺日期仍 pending。Codex MCP 匯入邊界已完成，網站 OAuth/scheduler 停用；Codex 自動化已建立，首次真實/跨日執行與第二期 parser 盲測未完成，不能因 API/合成測試成功宣稱無人收件或入帳。
 
 ## 1. 交付目標與授權
 
-唯一主流程：**信用卡 PDF → 本機解鎖 → 逐筆解析與核對 → SQLite → 每月支出 Excel**。先用本機樣本完成，再接既有 Gmail 同步自動處理。
+唯一主流程：**Codex Gmail MCP 收件 → 信用卡 PDF → 本機解鎖 → 逐筆解析與核對 → SQLite → 每月支出 Excel**。FamilyHub 不再管理 Gmail OAuth 或郵件排程。
 
 使用者日常只需要開 Excel 看支出；Web 是連線設定、處理例外、首次確認及查看來源的輔助介面。完整 Dashboard 不是交付前置，不再以通用家庭資料平台的功能數量衡量進度。
 
@@ -28,12 +28,12 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 | --- | --- | --- |
 | Git | 2026-09-29 GitHub `main` 已包含 Groq provider 實作 `eeb6883`；使用者回報 push 後 `Everything up-to-date` 且 local working tree 乾淨 | 後續模型仍應在開始前重查 `git status` / HEAD，不可把歷史的 `001ca5d`/`4f9bfb5` 狀態當現在 |
 | S1-S3 | Gmail 自訂查詢隔離、提示上下文/遮罩、共用 PDF 解鎖用例已有程式與合成測試 | 需要全部重寫 |
-| S4 | `finance/statements/contracts.py`、`normalization.py` 與 `taiwan_credit_cards.py` 已有契約、月支出語意、穩定列 hash、pending 閘門及中國信託／受限台新 parser；parser 聚焦測試通過 | 已完成兩期盲測或所有銀行 |
+| S4 | 契約、月支出、穩定列 hash、pending 閘門及中國信託/國泰/永豐已驗證文字版型、受限台新零交易；三銀行新下載解鎖/解析/核對通過 | 已完成第二期盲測、國泰/永豐正式入帳或所有銀行 |
 | PDF | 來源讀取、本機解密、文字抽取/預覽，OCR 有介面及 adapter | 已建立 Finance 交易 |
-| Gmail | 手動/排程共用同步；每 30 分鐘排程需 opt-in；PDF 收錄、CSV 可入帳 | PDF 可自動入帳 |
+| Gmail | Codex MCP 本機匯入 API 已完成；網站 OAuth/scheduler 預設停用，legacy 程式只供相容 | Codex 排程已完成真實／跨日驗收，或 PDF 可自動入帳 |
 | SQLite | FinanceTransaction、來源、工作及撤銷已存在；`0011_statement_import` 增加 Statement/StatementAccount/StatementLine 與冪等入帳欄位 | 可把 PDF 列塞入 CSV 流程就完成 |
 | Excel | 已有快照、背景檢查、ownership marker、原子替換及佔用重試 | 已正確區分信用卡退款、繳款與收入 |
-| 驗證 | 帳單／入帳聚焦 33 passed、frontend production build 成功；完整 backend 207 passed、2 個既有套件棄用警告；Groq/OpenAI dispatch 等以合成資料覆蓋 | 已完成第二期盲測、Groq runtime activation、Gmail OAuth 長期自動化 |
+| 驗證 | 帳單／入帳與 Codex MCP import 有聚焦測試，frontend production build 成功；Groq/OpenAI dispatch 等以合成資料覆蓋 | 已完成第二期盲測、Groq runtime activation、Codex Gmail 真實長期自動化 |
 
 `ARCHITECTURE_REVIEW_BRIEF.md` 是背景，不是刪除授權；其原始分析基準較早，現在必須以最新 `main` 實作、TASKS/HANDOFF 與本文件為準。開始前先重查 Git，不自行 reset/force-push。
 
@@ -50,7 +50,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 **本輪不做：** 新家庭 domain、股票 API、多銀行 plugin framework、通用 AI 交易解析、AI 分類、分類/備註 CRUD、完整 Dashboard、全站重排、OCR 擴充、PWA/原生 App、雙向 Excel 同步、保留任意手寫工作表、microservices、Redis/Kafka/Kubernetes/PostgreSQL。
 
-**不重寫同步引擎：** 不把 Gmail History 改為新 90 天掃描/水位系統，不移除 History schema，不建另一套每日排程/退避平台，不把 Excel 改成事件驅動。現有輪詢是檢查，不是每次重建；先沿用。
+**凍結 legacy 同步引擎：** 不再擴充 Gmail History、內建 OAuth UI 或網站 scheduler，也不在本輪破壞性移除既有 schema/adapter。新收件只走 Codex MCP import；歷史 remote-only 文件完成本機保存與資料盤點後，才另案評估 dependency/schema 移除。Excel 背景檢查先沿用，不改成事件平台。
 
 已有功能不因降為次要就刪掉。最小改動只服務「解析正確、入帳不重複、Excel 正確、例外能處理」。
 
@@ -66,6 +66,22 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 6. 缺外部資料先做真正不依賴它的授權工作；不能繞過樣本關卡猜格式、建推測 schema，或轉做凍結功能。
 7. 每包交接：修改、實際命令/結果、真實/合成區別、未完成、下一步。不把規格寫成已完成事實。
 
+### 4.1 必測：E2E-GMAIL-3BANK 三銀行真實 Gmail 驗收
+
+**授權與頻率：** 使用者 2026-09-30 指定為本專案每次交付的必測關卡，包括 UI、設定與部署修復。每次都要從 Gmail 重新下載三家不同銀行的信用卡對帳單；前次成功、unit tests、build 或合成 PDF 不取代本次驗收。只更新測試規格時可回報文件已更新，但不得因此宣稱整個專案驗收完成。
+
+1. 確認當次服務、資料庫、Windows 執行帳戶及 SecretStore 可用；只讀秘密是否已保存，不把秘密讀給模型。分析採正式應用程式流程，但不呼叫正式 `confirm`；需要入帳/Excel 寫入時，另使用已授權的隔離資料與輸出位置。
+2. 優先用已連線 Gmail MCP 搜尋。沒有指定時間時使用 `in:anywhere` 搜尋可存取信箱最早信件至當下，建議 query 為 `in:anywhere has:attachment filename:pdf {信用卡 "credit card"} {帳單 對帳單 賬單 statement}`；按需分頁，記錄實際查閱範圍，不宣稱已查完所有信件。優先取三家最近期帳單；排除每日消費通知、優惠信及只有繳款聯的附件。
+3. 確認三家銀行的來源郵件及對應 PDF，逐封先讀密碼關鍵字附近完整必要上下文，再允許應用程式依規則組合本機已保存資料。不得從聊天或 skill 的預設密碼回填、猜測排列、跳過格式確認。加密 PDF 必須真的解鎖成功；無加密樣本不代表加密解鎖通過。
+4. 每家重新下載實際 PDF。走 Documents 的 StoragePort/SHA-256 邊界；MCP 附件走現有 Codex import endpoint。MCP 不可用但 Gmail 網頁可用時可明確記錄網頁下載及本機上傳替代，不能把它寫成 MCP 或排程已驗收。
+5. 使用既有 PDF processor、Statement analysis、BankStatementParser 與核對流程，不另寫只為測試能過的解密/解析捷徑。只對郵件明示格式使用本機規則；需要 AI 時確認作用中 provider 與憑證，僅傳遮罩規則。不得自動切到可能付費的 provider。
+6. 解析結果必須有正確銀行/期別、完整消費列與可用核對結果。獨立逐列比對來源文字/PDF 的日期、商家、金額、幣別及 purchase/refund/payment/fee/interest，核對筆數及摘要；不能把 parser 自己宣稱 matched 當獨立核對，或把應繳額當本月消費。利息認列另核對原始日期仍空、effective date 為原件明示結帳日、date basis 正確；其他缺日期不能套用。零交易必須由原件明確證明。已匯入文件另以本次解鎖文字執行當前 parser，不能只看歷史 imported。
+7. 同一附件再次收錄/分析，核對 Documents/Sources/Statement 冪等及正式交易不增加；不得恢復已撤銷來源或強制確認 pending。文件詳情必須讀完整明細，列數/日期標記與 API 一致，不能只讀摘要而誤顯示零交易。S6/S9 的入帳、Excel、撤銷/恢復驗收另外保留，本關卡不授權正式 confirm。
+8. 任一銀行下載、格式確認、解鎖、解析、逐列核對或重跑失敗，該銀行標 FAIL；缺工具/登入/樣本/秘密則標 BLOCKED。失敗時必須盡力診斷、修復並重新跑三家，不得只寫失敗報告就停。只有具體外部阻塞、缺必要資料/權限或需使用者決策才交接，列出已嘗試方法。禁止放寬核對、將未知版型當成功或用歷史報告補齊。三家全 PASS 才是關卡 PASS。
+9. 在 HANDOFF 保存當次日期、使用的收件方式、銀行、期別及各步 PASS/FAIL/BLOCKED，區分「解鎖成功」與「交易解析通過」。原件/詳細核對證據留本機受控且 Git 忽略的位置；repository 不保存全文、身分/生日/密碼、卡號、帳戶、商家與消費金額。資料或權限阻塞時只能交接局部成果，不宣稱交付完成。
+
+**結果表必備欄：** 銀行、期別、Gmail 重新下載、來源密碼格式確認、加密解鎖、逐列解析/合計核對、冪等重跑、整體結果。程式測試/build 另外列示；不得建立永遠 skip 的測試來冒充這個外部關卡。
+
 以下 backend 落點除 tests/migration 外，前綴均為 `backend/src/family_finance_hub/`。
 
 | 現有落點 | 本輪責任 |
@@ -76,7 +92,8 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 | `application/use_cases.py` | 參考 CSV 原子匯入，不把信用卡當 CSV |
 | `finance/queries.py` | 有效文件篩選、舊查詢金額語意 |
 | `exports/ports.py`、`service.py`、`xlsx.py` | 最小擴充快照與正確 Excel 投影 |
-| `integrations/gmail/client.py`、`sync.py`、`scheduler.py` | 沿用查詢/分頁/鎖/排程，接 PDF-only 及後續處理 |
+| `application/codex_mcp_import.py`、`main.py` | 接收 Codex Gmail MCP 附件、遮罩提示、建立本機來源與狀態 API |
+| `integrations/gmail/client.py`、`sync.py`、`scheduler.py` | Legacy 相容程式；預設停用，不再作為 S8 新功能落點 |
 | `main.py` | 薄 API 與依賴組裝，不塞銀行 regex/核對規則 |
 | `frontend/src/App.tsx`、既有設定/詳情元件 | 最小帳戶設定、待處理、核對確認，不全面重寫 |
 | backend/tests/ | 沿用 tmp SQLite、FakeGmail、MemorySecretStore、合成 PDF/Excel |
@@ -85,7 +102,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 ### 5.1 支出與時間
 
-- 月支出以 transaction_date 的自然月計；帳單期起迄、入帳日另外保存。不拿郵件日/結帳日默默補消費日。
+- 月支出以有效 transaction_date 的自然月計；帳單期/入帳日另外保存。唯一批准的缺日期政策是 `interest` 且有明示 `closing_date` 時按結帳日認列；原始日期仍空、date basis 可追溯。普通消費/退款/費用/繳款及缺結帳日的利息仍 pending，不拿郵件日或結帳日默默補消費日。
 - 信用卡資料不含現金、轉帳或尚未出帳消費；收到一份帳單不等於本月全部支出到齊。
 - purchase/fee/interest 為負數，refund/payment 為正數。繳款是清償，不是收入或第二次支出；退款不是收入。
 - 分列消費、退款、淨消費、費用、利息。淨消費 = 消費 - 退款；含費用支出 = 淨消費 + 費用 + 利息；payment 只供核對。
@@ -146,13 +163,13 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 - Recommended/Default/Active Provider 必須分開：Groq 是建議與新設定預設，runtime 只認已保存 Active Provider。
 - Groq Responses API 目前官方仍標示 beta；`openai/gpt-oss-20b` 支援 strict Structured Outputs，但實際相容性以 synthetic smoke test 為準。
 
-S3F 是小型前置改善，不得擴張成 multi-provider 平台。S4 仍是產品主 blocker；若真實 S4 樣本需要自動密碼解鎖，先完成 S3F-C 再完成 S3F-B，之後進行該樣本驗收。
+S3F 不得擴張成 multi-provider 平台。三銀行明示格式已可本機解鎖，S3F-B 不是其前置；只有來源規則必須用 AI 時才要求真實 provider 驗收。S4 剩餘主要關卡是第二期獨立盲測，不重做已驗證 parser。
 
 ## 8. S4：第一家銀行真實解析器
 
 **前置：** 第一個中國信託帳單已在使用者授權的本機來源完成；第二期未參與調整的樣本仍是正式 S4 完成條件。密碼由既有本機設定供應，不要求貼入文件。
-**已有：** `finance/statements/contracts.py`、`finance/statements/normalization.py`、`finance/statements/taiwan_credit_cards.py`。parser 只處理已驗證的版型；未知列、缺日期、未核對或對帳不符會回 `pending`；不讀 DB/Gmail/SecretStore。
-**驗證：** `backend/tests/test_taiwan_credit_cards.py` 已覆蓋中國信託交易列、`/UNIC` 文字解碼、台新零交易、未知版型與對帳不符。
+**已有：** contracts/normalization/taiwan_credit_cards 的純邊界；parser 不讀 DB/Gmail/SecretStore，只處理已驗證版型。缺日期利息只由共用認列政策處理，parser 不偽造來源日期；其餘缺日期、unknown、未核對或不平仍 pending。
+**驗證：** parser tests 覆蓋中國信託、`/UNIC`、國泰 TWD、永豐本期分期/退款/繳款/費用、台新零交易、跨年日期及不完整/不平/未知版型。normalization/import tests 覆蓋批准的利息認列、缺結帳日與其他缺日期拒絕、provenance、舊 JSON 相容、冪等確認及 Excel 月彙總。三銀行當次實測結果見 HANDOFF；第二期未參與調整的盲測仍未完成。
 
 ### S4A 樣本與核對規則
 
@@ -164,7 +181,7 @@ S3F 是小型前置改善，不得擴張成 multi-provider 平台。S4 仍是產
 ### S4B 純解析器
 
 1. 接收共用流程內容，沿用 `BankStatementParser.parse(extracted_text, page_count=...)` 與 `StatementParseResult`，不讀 DB/Gmail/SecretStore、不 commit。頁碼等現有欄位只能從可追溯內容取得，不依猜測填寫。
-2. 先驗銀行/版型，按實際欄位解析；unknown、缺日期、缺核對欄位或跨頁截斷回待處理，不用寬鬆 regex 在任意文字找金額。
+2. 先驗銀行/版型，按實際欄位解析；unknown、缺核對欄位或跨頁截斷回待處理，不用寬鬆 regex 任意找金額。保留缺日期原始列，正規化只有已批准的利息政策可認列，其餘仍待處理。
 3. 沿用契約欄名 `bank_id`、`format_version`、`period_start`、`period_end`、`account_hint`；列使用 `page_number`、`line_index`、`transaction_date`、`posting_date`、`description`、`transaction_kind`、`amount`、`currency`。不要另建 page/date/kind 等重複欄名；解析器實作 ID 在持久化時另外記錄即可。
 4. 不把末四碼當唯一帳戶，不存完整卡號。只做一個 parser，不建 registry/跨銀行猜測框架。
 
@@ -251,7 +268,7 @@ S3F 是小型前置改善，不得擴張成 multi-provider 平台。S4 仍是產
 **目標：** 不需終端呼叫 API，不重做 Dashboard。
 **修改：** 既有設定、ExcelExportSettings、文件詳情/對話框及必要 API client/type。
 
-1. 沿用 Gmail、個人解鎖、Excel 設定；新增最小帳單帳戶綁定，只顯示 parser 已確認的銀行/遮罩線索與可選別名，不要求使用者手填銀行、機構、家庭成員或解鎖 profile。
+1. 沿用 Codex MCP 狀態、個人解鎖、Excel 設定；新增最小帳單帳戶綁定，只顯示 parser 已確認的銀行/遮罩線索與可選別名，不要求使用者手填銀行、機構、家庭成員或解鎖 profile。
 2. 一個「待處理帳單」入口，顯示來源/期別/原因/下一步，可選帳戶、補解鎖、分析重試、核對確認、看原件、撤銷。不建第二套文件匣/Jobs。
 3. 確認畫面列筆數/期間/幣別/消費/退款/繳款/費用/利息/差額/來源；只有 ready 可確認。409 重載，不沿用舊確認。
 4. Excel 區顯示上次成功更新、檔案狀態、待處理數、立即更新/下載；檔案佔用提示關閉 Excel 後重試，不把已入帳顯示成整批失敗。
@@ -260,34 +277,30 @@ S3F 是小型前置改善，不得擴張成 multi-provider 平台。S4 仍是產
 
 **驗收：** 全套 tests/build；實際瀏覽器桌面/390px/320px 收錄→分析→確認→Excel→撤銷/恢復，有載入/空白/錯誤/重複點擊防護、焦點/返回路徑且不溢出。前端目前無獨立 test runner；需要時只加本流程最小互動測試配置，不換框架，不把 build 當操作測試。
 
-## 12. S8：沿用 Gmail，受控自動入帳
+## 12. S8：Codex MCP 收件，受控處理
 
-**前置：** S4/S6 真實關卡通過、S7 可處理例外；使用者明確啟用指定帳戶自動入帳。同步、AI 密碼分析、自動入帳是不同選項。
+**前置：** S4/S6 真實關卡通過、S7 可處理例外。Gmail 收件、AI 密碼規則與 Finance 確認是三個獨立邊界；啟用 Codex 排程不等於授權未知帳單自動入帳。
 
-### S8A 有限範圍，不重寫引擎
+### S8A FamilyHub 本機匯入邊界（已實作）
 
-1. 沿用 GmailSyncUseCase、full/resume/message search、去重與 shared lock；新增明確帳單模式，不從自由文字 q 推測附件策略。
-2. 帳單模式用確認過的銀行寄件者/主旨條件加 PDF，預設 in:anywhere、不限日期；重複查同一銀行全部可存取帳單信件，靠來源/內容去重。家用量先不建 90 天窗口/停機水位系統。
-3. 查詢篩郵件不保證附件全為 PDF；附件層明確 pdf_only，同封 CSV 不自動匯入。一般手動 PDF/CSV 模式相容。
-4. 宣稱包含垃圾郵件/垃圾桶時，list 呼叫要實際帶對應 includeSpamTrash；不是只在 q 寫 in:anywhere。FakeGmail/HTTP 參數測試需覆蓋。
-5. 使用者限制日期時顯示真實範圍及範圍外未掃描，不把限定查詢成功當全信箱完成，不用 shared last_successful_at 推測已處理歷史。
-6. full-sync query/page token 加上模式/附件策略相容檢查；中途改 q/policy 回衝突。可明確取消當輪續傳重跑，不清 Documents/transactions/預設 History cursor。
-7. 沿用失敗頁重試/上限/分頁；token 失效可從同一查詢重跑靠冪等，不永久儲存任意搜尋語法分析結果。
+1. `POST /api/integrations/codex-mcp/gmail/import` 接受 PDF bytes、message ID、attachment ID，以及可選的 subject/sender/password instruction。大小限制沿用全域上傳限制。
+2. 原始 Gmail ID 只在記憶體中計算 SHA-256 source key；subject/sender/完整本文不保存。密碼文字先經 `PasswordInstructionExtractor` 遮罩及截斷，source reference 只保留 `transport=gmail_mcp` 與遮罩提示。
+3. 附件經 `StoragePort` 本機持久化，文件以內容 SHA-256 去重；source key 重跑冪等，同一 key 對應不同 bytes 時 409 fail closed。已撤銷文件維持撤銷，不因重新收件恢復。
+4. `GET /api/integrations/codex-mcp/status` 只回模式、legacy 是否啟用及最近一次本機匯入狀態，不宣稱 Gmail 連線健康或排程已執行。
+5. 設定頁移除 OAuth JSON、連接帳戶、立即同步與內建排程控制，只說明 Codex 管理模式及本機最近匯入狀態。
+6. `FAMILY_FINANCE_HUB_LEGACY_GMAIL_OAUTH` 預設 false；舊 Gmail API 回 410，內建 scheduler 不啟動。測試注入 fake client 或明確開 flag 時才能使用 legacy path。
 
-設定與進度分開：既有 `GmailConnection` 最小擴充帳單模式/指定查詢等非秘密設定，`GmailSyncState` 只記當輪 query/policy/page token。手動與 scheduler 都讀相同已保存設定，不把 full-sync 的暫時 query 當成下次排程設定；舊連線升級維持原模式、不自動開啟新帳單模式。新增欄位沿用 S5 的隔離 migration 驗證，不加新設定檔或設定平台。
+### S8B Codex 自動化（外部任務）
 
-### S8B 發現後處理與安全開關
+1. 建立本機 Codex cron；使用已連線 Gmail MCP 做 read-only 搜尋，限定含 PDF 的信用卡／銀行帳單信件。搜尋窗口需能覆蓋停機期間，重跑由 FamilyHub source key/SHA-256 去重。
+2. 只下載附件及擷取「密碼／password」附近必要文字；不把身分證、生日、實際密碼、完整郵件或附件內容寫入 prompt、repository 或一般 log，也不開啟郵件內連結。
+3. 每個附件獨立呼叫 localhost import endpoint，完成後刪除 transient copy。FamilyHub 不可用、Gmail MCP 失效、來源衝突或匯入失敗時，保留失敗並通知使用者採取行動。
+4. 無新附件時保持安靜；新附件只完成 Documents 收錄。可觸發既有 Statement analysis，但未知版型、解鎖失敗、對帳不符與 pending 都不得確認入帳。
+5. 目前不開自動 confirm。只有未來另有明確授權、且 bank/account/parser version、解鎖條件、matched 核對、無 unknown/缺日期/同期衝突全數成立，才能另案加入受控自動確認。
 
-1. 同步提交 Documents 後呼叫 S6，不在現有 Gmail sync 外層寫入 transaction 裡解析 PDF/呼叫 AI。先接共用 orchestration，不大改全同步 transaction。
-2. 包含已有且合格的 pending/failed，不只新增附件；限已設定銀行/帳戶範圍，跳過 imported/revoked。缺資料的 pending 等條件改變或人工重試，不每輪重打 AI。
-3. 每份獨立處理，單份失敗不回滾其他帳單；同步成功/PDF 待處理/Excel 待更新分開，新附件 0 不代表全部完成。
-4. 首份人工核對後使用者才可開該帳戶自動入帳；授權持久化綁 bank/account/parser version，新版本/綁定變更使資格失效。
-5. 唯一帳戶、驗收格式/版本、解鎖條件、matched 核對、無 unknown/缺日期/同期衝突且 opt-in 才走同一 confirm；其餘待處理，不猜、不靜默略過。
-6. 保留每 30 分鐘排程及背景到期檢查；關閉不跑，重啟按既有 due 邏輯補跑。不新增每日/退避平台、不刪 History，頻率優化等使用證據。
-7. 不重設既有授權；首次 OAuth 由使用者操作。開發用 fake，真實驗收限授權銀行帳單範圍，不輸出全文/token。
+**必測：** API 大小／格式、source key 衝突、相同來源／相同內容冪等、撤銷不復活、提示遮罩、敏感資料不落盤、legacy API 預設 410、legacy fake 測試相容、frontend build。外部排程另驗證一次真實新增、一次無新增重跑及服務離線後補抓。
 
-**必測：** 混合附件、垃圾桶參數、範圍不借 History、分頁改 policy、多頁/上限/重啟、下載暫時失敗/失效 token、長停機重掃、授權失效、重複/撤銷、舊 pending、auto/AI 關閉、未知版型/版本變更。
-**完成：** FakeGmail/scheduler focused tests 與一次授權真實重跑：範圍不漏頁、重跑 0 新增、待處理可見、Excel 更新。用注入時鐘測排程，不等待一天；沒跨日測試不宣稱長期穩定。
+**完成條件：** FamilyHub 全套測試與 build 通過；Codex 任務已建立並以真實 Gmail 執行，實際新增附件可在網站看到，第二次執行不重複。尚未完成跨日／離線補抓時必須明列，不能用 API 合成測試代替。
 
 ## 13. S9：固定 Windows 入口與正式驗收
 
@@ -299,10 +312,10 @@ S3F 是小型前置改善，不得擴張成 multi-provider 平台。S4 仍是產
 4. 啟動/停止支援空白路徑、健康檢查、清楚錯誤；背景程序隱藏視窗。登入啟動是 OS 持久設定，需明確同意，預設不註冊。
 5. 辨識正式 DB/storage、停服務、成對備份並驗可讀，再授權 migration。啟動只檢查 schema，不靜默 upgrade，不建空 DB 冒充升級。
 6. 說明 remote-only 附件不在本機備份、秘密不在 SQLite；離線原件由使用者選本機副本，不匯出明文 secrets 當備份。
-7. 先完成本機；需其他裝置才驗 Tailscale。OAuth/token/Tailscale/Firewall 易變設定查當時官方文件；不擅改網路/公開服務。
+7. 先完成本機；需其他裝置才驗 Tailscale。Codex Gmail connector、Tailscale/Firewall 等易變設定查當時狀態；不擅改網路/公開服務。
 8. 真實端到端：來源→解鎖→逐筆核對→入帳→Excel→重跑→撤銷/恢復→Excel 佔用重試→重啟恢復；報告不含秘密/全文。
 
-**完成：** 全套 backend/build、隔離操作測試、固定網址及一鍵啟停可用；正式資料/跨日驗收各有證據。外部未完成明列，不以 localhost 可開就稱自動化交付。
+**完成：** 全套 backend/build、隔離操作測試、固定網址及一鍵啟停可用；本次 E2E-GMAIL-3BANK 三家全 PASS，正式資料/跨日驗收各有證據。外部未完成明列，不以 localhost 可開就稱自動化交付。
 
 ## 14. 固定驗收資料與數值
 
@@ -336,7 +349,7 @@ S3F 是小型前置改善，不得擴張成 multi-provider 平台。S4 仍是產
 | 核對不符 | pending，顯示差額/缺項 | 造平衡列或確認跳過 |
 | 帳戶歧義 | pending，使用者選取/修正 | 只靠末四碼/寄件者 |
 | 同期不同文件 | pending conflict，指向既有來源 | 自動替換已入帳/已撤銷 |
-| 來源不可用/OAuth 失效 | 保留文件，修連線再試 | 刪來源/假成功/洩 token |
+| Codex Gmail connector／FamilyHub 不可用 | 保留既有文件，修復後重掃近期窗口 | 刪來源/假成功/洩 credential |
 | 原子匯入失敗 | 無部分交易，安全失敗紀錄 | 清空已有交易重跑 |
 | Excel 佔用/寫入失敗 | 入帳不變、保留舊檔、重試輸出 | 重匯一次 PDF |
 | 版本過期/正在處理 | 明確衝突、重載/等待 | 失效程序覆寫新結果 |
@@ -351,7 +364,7 @@ S3F 是小型前置改善，不得擴張成 multi-provider 平台。S4 仍是產
 | --- | --- | --- |
 | M9 / S0-S6 | 一家銀行兩期驗證、原子確認/去重/撤銷、真實 PDF 正確到 Excel | 完整 Dashboard、分類、每日排程 |
 | M10 / S7 | 最小帳戶設定/待處理/確認/Excel 操作，桌面手機可用 | 全站重排、財務管理平台 |
-| M11 / S8-S9 | 沿用 Gmail 的受控自動入帳、固定 Windows 入口、授權真實驗收 | History 重寫、事件平台、原生 App |
+| M11 / S8-S9 | Codex MCP 受控收件、固定 Windows 入口、授權真實驗收 | Legacy History 重寫、事件平台、原生 App |
 
 - 舊 S7 Excel 提前到 S6C；月報圖表及分類/備註不再列本輪待辦。
 - 舊 S8 的 90 天水位、每日/退避新排程、停止 History 取消本輪要求，不刪已有實作。

@@ -8,4 +8,6 @@ class PasswordRuleInterpreter(Protocol):
 
 
 class PasswordRuleInterpreterUnavailable(Exception):
-    pass
+    def __init__(self, message: str, reason_code: str = "ai_service_unavailable"):
+        super().__init__(message)
+        self.reason_code = reason_code

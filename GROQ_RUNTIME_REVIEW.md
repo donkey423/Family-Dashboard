@@ -1,19 +1,17 @@
 # Groq Runtime 深度審查與切換方案
 
-> 更新日期：2026-09-29
+> 更新日期：2026-09-30
 >
 > Groq 實作 commit：`eeb6883`。本次程式級審查最初以 `b40163d` 為基準，之後的文件 commit 只更新規格與交接，不代表 Groq provider 被重新實作。開始工作前仍須讀取最新 `main`。
 
 ## 1. 結論
 
-Groq provider **已實作並合併**。現在真正的問題不是「還沒有 Groq」，而是四件事：
+Groq provider 與 S3F-C safe-switch **已實作**。現在剩下的問題是兩件事：
 
 1. runtime 是否真的已切到 Groq；
-2. 切換前是否能安全驗證新 provider/model；
-3. 設定頁是否能清楚顯示真正 Active Provider，而不是讓 UI 預設造成誤解；
-4. 真實 Groq request、verified cache 與真實加密 PDF 是否完成端到端驗收。
+2. 真實 Groq request、verified cache 與 synthetic encrypted PDF 是否完成端到端驗收。
 
-最後一次有證據的 runtime smoke check 仍使用 OpenAI / `gpt-4.1-mini`。因此不能因 UI 預設 Groq 或 Git 已包含 Groq adapter，就宣稱真實 PDF 已經走 Groq。
+目前資料庫中的 Active Provider 仍指向 OpenAI / `gpt-4.1-mini`。2026-09-30 已確認先前服務誤以 Codex 沙箱帳戶執行，讀不到使用者的憑證；改由互動式登入排程啟動後，既有 key 已可讀（`credential_available=true`）。本次只查本機憑證狀態，未重新驗證 provider 授權或額度，也未切換 Groq。不能因 UI 預設 Groq 或 Git 已包含 Groq adapter，就宣稱真實 PDF 已經走 Groq。
 
 ## 2. Recommended / Default / Active 必須分開
 
@@ -37,6 +35,9 @@ Backend `AIProviderInput.provider="openai"` 的 default 只作舊 client 相容�
 - Groq request 不送官方目前不支援的 `store` 欄位。
 - `PdfPreviewUseCase` 先查 verified PasswordRule cache；只有 cache miss 且使用者允許 AI 時才建立 remote interpreter。
 - 成功解鎖後才保存 verified rule；ambiguous candidate 會收斂為真正命中的 resolved rule。
+- `POST /api/security/ai-provider/test` 只用固定 synthetic 規則測試指定 credential/model，不保存或切換。
+- `configure()` 在寫入 SecretStore/DB 前重新 preflight；失敗保留舊 Active Provider/credential。
+- provider failure 回穩定 reason code，且不會自動 fallback。
 
 ### Frontend
 
@@ -44,90 +45,21 @@ Backend `AIProviderInput.provider="openai"` 的 default 只作舊 client 相容�
 - 新設定預設 Groq + `openai/gpt-oss-20b`。
 - 載入既有設定後，provider/model 會由 backend 狀態覆蓋表單預設。
 - credential 欄位不會由 server 回填。
+- 明確顯示作用中 Provider、模型及 credential availability，並拆成「測試連線」和「保存並切換」。
 
 ### 已有驗證
 
-- 完整 backend 測試紀錄：187 passed。
+- 最新完整 backend 測試紀錄：211 passed。
 - frontend production build 成功。
 - 合成測試覆蓋 Groq/OpenAI dispatch、Groq endpoint/schema、legacy profile、設定 API、不自動 fallback 等。
 - 這些都**不是**真實 Groq credential/request 或真實銀行 PDF 驗收。
 
-## 4. 深度審查發現的剩餘問題
+## 4. S3F-C 已修正的風險
 
-### 4.1 P0：切換前沒有 preflight
-
-目前 `AIProviderService.configure()` 的流程是：
-
-```text
-建立新 credential reference
-    ↓
-SecretStore.set(new)
-    ↓
-DB profile 改成新 provider/model/reference
-    ↓
-DB transaction 成功
-    ↓
-刪除舊 credential
-```
-
-它**不會先向新 provider 驗證 credential/model/schema**。
-
-因此如果新設定輸入錯誤、模型下架、權限不足或 Structured Output 不相容，Active Provider 可能已切換，而且舊 credential 已被移除後才在第一次真正 request 發現問題。
-
-### 4.2 P0：設定狀態可能「DB 有 row，但 credential 不存在」
-
-目前 `GET /api/security/ai-provider` 的 `configured` 只判斷 DB profile 是否存在：
-
-```text
-configured = profile is not None
-```
-
-但真正建立 interpreter 時，`AIProviderService.interpreter()` 還會去 SecretStore 取得 credential。
-
-所以存在這個邊界案例：
-
-```text
-DB profile 存在
-SecretStore credential 遺失 / 不可用
-      ↓
-GET status 顯示 configured=true
-      ↓
-真正 PDF 解鎖才失敗
-```
-
-後續應讓 status 能反映「profile 存在」與「credential 可用」的差別，但不能回傳 credential 本身。
-
-### 4.3 P1：UI 沒有把 Active Provider 顯示得夠清楚
-
-設定頁目前狀態徽章主要顯示：
-
-```text
-已設定 · <model>
-```
-
-雖然 provider selector 會載入 backend 值，但對使用者仍不夠直觀。建議直接顯示：
-
-```text
-目前使用：Groq · openai/gpt-oss-20b
-```
-
-或：
-
-```text
-目前使用：OpenAI · gpt-4.1-mini
-推薦：Groq Free
-```
-
-按鈕也應從模糊的「保存 AI 設定」收斂成兩個行為：
-
-- **測試連線**
-- **保存並切換**
-
-### 4.4 P1：provider 錯誤目前主要是文字，不是穩定 reason code
-
-目前 adapter 已安全處理 400/401/403/429/network/schema failure，且不暴露 upstream body；但 application/UI 仍主要依賴文字。
-
-建議增加穩定 reason code：
+- 切換前沒有 preflight：已修正；獨立測試不落盤，`configure()` 也會強制再測一次。
+- DB 有 profile 但 credential 遺失：status 現在以 `credential_available` 單獨回報，不回傳 credential。
+- UI 可能把預設值誤認成 Active：現在另列作用中 Provider、模型與憑證狀態。
+- provider error 只有文字：現在穩定回傳下列 reason code：
 
 - `ai_auth_failed`
 - `ai_rate_limited`
@@ -137,9 +69,9 @@ GET status 顯示 configured=true
 - `ai_timeout`
 - `ai_service_unavailable`
 
-UI 可以依 Active Provider 顯示下一步，但任何錯誤都不能自動切到另一 provider。
+任何錯誤都不會自動切到另一 provider。剩餘風險是尚未取得 Groq credential 進行真實 runtime 驗收，而不是 safe-switch 程式缺失。
 
-## 5. 建議實作：S3F-C Safe Switch
+## 5. 已實作：S3F-C Safe Switch
 
 ### 5.1 最小 Test Connection API
 
@@ -176,7 +108,7 @@ Pydantic 再驗證
 
 ### 5.2 保存與切換
 
-只有 Test Connection 成功後才執行既有 `configure()`。
+獨立 Test Connection 成功後仍不改設定；使用者按「保存並切換」時，`configure()` 會再次執行同一個 synthetic preflight，避免兩次操作之間的 provider/model 狀態漂移。
 
 更穩健的最終流程：
 
@@ -191,16 +123,16 @@ synthetic preflight
            ↓
      更新 DB Active Provider
            ↓
-     重新讀取 status 驗證
+     DB commit 成功
            ↓
-     再清理舊 credential
+     best-effort 清理舊 credential
 ```
 
-如果最後清理舊 credential 失敗，應記錄不含秘密的維護警告；不能因此把已成功的新 Active Provider rollback 成未知狀態。
+DB transaction 失敗時會 best-effort 刪除剛建立的新 credential；舊 profile 與舊 credential 保持不變。最後清理舊 credential 若失敗，不會把已成功的新 Active Provider rollback 成未知狀態。API 回應成功後，前端直接採用回傳的 Active Provider、模型與 credential availability；重新開啟設定頁時也會再讀取 status。
 
 ### 5.3 Status API
 
-建議 status 至少能安全區分：
+目前 status 會安全區分：
 
 ```json
 {
@@ -266,15 +198,15 @@ S3F-C 完成後再做 S3F-B：
 ```text
 S3F-A Groq implementation        ✅
         ↓
-S3F-C Safe switch / Test         ⬜
+S3F-C Safe switch / Test         ✅
         ↓
 S3F-B Runtime activation         ⬜
         ↓
-Real encrypted PDF unlock        ⬜
+Real encrypted PDF unlock        ✅ local explicit rule
         ↓
-S4 BankStatementParser           ⬜
+S4 first BankStatementParser     ✅ CTBC
         ↓
-S5 / S6 PDF → SQLite → Excel     ⬜
+S5 / S6 PDF → SQLite → Excel     ✅ first statement
 ```
 
-**产品主 blocker 仍是 S4 BankStatementParser。** S3F-C/B 只负责把「自动解锁」这条前置链路安全地完成，不应扩张成新的 AI 平台。
+**目前外部 blocker 是 Groq credential、第二期盲測樣本及更多已授權銀行版型。** S3F-B 只負責完成可選 AI 的真實 runtime 驗收，不應擴張成新的 AI 平台。

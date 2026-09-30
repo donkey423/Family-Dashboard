@@ -272,6 +272,74 @@ def test_gmail_preview_never_replaces_source_email_rule_with_manual_hint():
         engine.dispose()
 
 
+def test_codex_mcp_password_hint_unlocks_local_attachment_without_gmail_client():
+    original_pdf = _encrypted_pdf("A123456789")
+    source_registry = DocumentSourceRegistry((MemoryDocumentSource(original_pdf),))
+    store = MemorySecretStore({"personal:id": "A123456789"})
+    engine = make_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+    use_case = PdfPreviewUseCase(
+        source_registry,
+        PasswordlessMessageContextSource(),
+        PdfDocumentProcessor(),
+        PasswordInstructionExtractor(),
+        PasswordRuleService(),
+        lambda: store,
+        lambda session: pytest.fail("explicit MCP rule should avoid AI"),
+    )
+
+    try:
+        with factory() as session:
+            document = Document(
+                id="codex-mcp-document",
+                sha256=sha256(original_pdf).hexdigest(),
+                filename="statement.pdf",
+                content_type="application/pdf",
+                size_bytes=len(original_pdf),
+            )
+            document.sources.extend([
+                DocumentSourceRecord(
+                    id="codex-mcp-memory-source",
+                    source_type="memory_pdf",
+                    source_key="memory:codex-mcp",
+                    availability_status="available",
+                ),
+                DocumentSourceRecord(
+                    id="codex-mcp-context-source",
+                    source_type="codex_mcp_gmail",
+                    source_key="codex-mcp:statement",
+                    source_reference={
+                        "password_instruction": "開啟密碼為身分證字號，英文字母為大寫。",
+                    },
+                    availability_status="available",
+                ),
+            ])
+            session.add_all([
+                document,
+                SecretProfile(
+                    id=PERSONAL_UNLOCK_ID,
+                    display_name="Personal unlock",
+                    national_id_credential_ref="personal:id",
+                    birthday_credential_ref="personal:birthday",
+                ),
+                DocumentSecurityProfile(
+                    id=PERSONAL_UNLOCK_ID,
+                    display_name="Personal unlock",
+                    institution="Generic",
+                    secret_profile_id=PERSONAL_UNLOCK_ID,
+                ),
+            ])
+            session.commit()
+
+            result = use_case.execute(session, document.id, PdfPreviewCommand())
+
+            assert result.processed.was_encrypted
+            assert not PdfReader(BytesIO(result.processed.preview_bytes)).is_encrypted
+    finally:
+        engine.dispose()
+
+
 @pytest.mark.parametrize(("password", "opens"), [
     ("678919840302", True),
     ("432119850403", False),

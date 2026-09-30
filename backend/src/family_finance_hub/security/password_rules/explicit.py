@@ -29,6 +29,15 @@ class ExplicitPasswordRuleParser:
         rf"{_national_id}.{{0,50}}?(?:作為|作为|當作|当作|用作|as)\s*(?:附件)?{_password}",
         re.IGNORECASE | re.DOTALL,
     )
+    _parenthetical_id = re.compile(
+        rf"{_password}\s*[（(]\s*(?:您(?:的)?|你的|your)?\s*{_national_id}",
+        re.IGNORECASE,
+    )
+    _open_statement_then_id = re.compile(
+        rf"(?:開啟|开启)\s*(?:電子|电子)?(?:帳單|账单|附件)\s*"
+        rf"(?:請|请)?(?:輸入|输入)\s*(?:正卡人|持卡人|您(?:的)?|你的)?\s*{_national_id}",
+        re.IGNORECASE,
+    )
     _other_source = re.compile(
         r"生日|出生(?:日期|年月日)?|birth(?:day|\s*date)?|date\s+of\s+birth|\bDOB\b",
         re.IGNORECASE,
@@ -71,7 +80,10 @@ class ExplicitPasswordRuleParser:
     def parse(self, instruction: str) -> PasswordRule | None:
         text = instruction.strip()
         if not text or not (
-            self._password_then_id.search(text) or self._id_then_password.search(text)
+            self._password_then_id.search(text)
+            or self._id_then_password.search(text)
+            or self._parenthetical_id.search(text)
+            or self._open_statement_then_id.search(text)
         ):
             return None
         upper = bool(self._upper.search(text))

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, type AiProvider, type AiProviderStatus, type Dashboard, type DocumentDetail, type DocumentRow, type Job, type Transaction, type PersonalUnlockStatus, type GmailStatus, type TransactionPage, type ImportImpact, type SearchResult, type Statement } from "./api";
+import { api, ApiError, type AiProvider, type AiProviderStatus, type CodexMcpStatus, type Dashboard, type DocumentDetail, type DocumentRow, type Job, type Transaction, type PersonalUnlockStatus, type TransactionPage, type ImportImpact, type SearchResult, type Statement } from "./api";
 import { ImportLifecycleDialog } from "./ImportLifecycleDialog";
 import { useDialogFocus } from "./useDialogFocus";
 import { EmptyState } from "./EmptyState";
@@ -26,12 +26,12 @@ const viewDescriptions: Record<View, string> = {
   documents: "所有家庭文件的共用資料來源。",
   transactions: "按月份檢視已匯入的收支明細。",
   activity: "查看文件與財務資料的匯入結果。",
-  settings: "安全資料、文件解鎖與 Gmail 連線。",
+  settings: "安全資料、文件解鎖與自動化狀態。",
   search: "從已收錄的文件與有效交易中查找資料。",
 };
 const settingsGroups: { id: SettingsGroup; label: string; description: string }[] = [
   { id: "unlock", label: "文件解鎖", description: "身分資料與 PDF 密碼" },
-  { id: "connections", label: "連線服務", description: "Gmail 與 Excel 自動更新" },
+  { id: "connections", label: "自動化", description: "Codex MCP 與 Excel" },
   { id: "advanced", label: "進階設定", description: "選用的 AI 規則辨識" },
 ];
 function parseOffset(value: string | null) {
@@ -78,6 +78,7 @@ const statementReason = (value: string | null) => {
     statement_reconciliation_unavailable: "無法確認帳單合計，未匯入。",
     statement_row_description_unreliable: "交易說明無法可靠讀取，未匯入。",
     statement_row_value_unreliable: "交易日期或金額無法可靠讀取，未匯入。",
+    missing_transaction_date: "帳單有明細未列交易日期，已保留解析結果；日期確認前不會入帳。",
   };
   return value?.split(",").map((reason) => labels[reason] ?? reason).join(" ") || "尚未分析。";
 };
@@ -307,10 +308,10 @@ export default function App() {
       </div></div><DocumentList rows={documentState === "active" ? documents : revokedDocuments} expanded revoked={documentState === "revoked"} onDetail={openDocumentDetail} onPreview={setPreviewDocument} onSaveLocal={saveLocally} onChangeImport={openLifecycle} busy={busy} /></section>}
       {view === "transactions" && <TransactionsView refreshVersion={refreshVersion} month={periodMonth} currency={periodCurrency} currencies={dashboard?.available_currencies ?? []} onPeriodChange={changePeriod} onOpenDocument={openDocumentDetail} />}
       {view === "activity" && <section className="panel page-panel"><div className="panel-heading"><div><h2>工作與匯入歷史</h2><p>最新 100 筆處理紀錄</p></div></div><JobList rows={jobs} expanded onOpenDocument={openDocumentDetail} /></section>}
-      {view === "settings" && <SettingsView report={report} onRefresh={refresh} />}
+      {view === "settings" && <SettingsView report={report} />}
       <footer className="page-footer"><span>家庭收支記錄 v0.1</span><span>資料保存在此 Windows 主機</span></footer>
     </main>
-    {addDataOpen && <AddDataDialog busy={busy} onClose={() => setAddDataOpen(false)} onUpload={upload} onGmailSync={async () => { const result = await api.syncGmail(); await refresh(); return `Gmail 同步完成：新增附件 ${result.new_attachments} 份、交易 ${result.created_transactions} 筆、略過已撤銷 ${result.skipped_revoked} 份、失敗 ${result.failures} 件${result.truncated ? "；已達單次安全上限，請再次同步接續處理" : ""}`; }} onSettings={() => { setAddDataOpen(false); navigate("settings"); }} />}
+    {addDataOpen && <AddDataDialog busy={busy} onClose={() => setAddDataOpen(false)} onUpload={upload} onSettings={() => { setAddDataOpen(false); navigate("settings"); }} />}
     {detailDocumentId && <DocumentDetailDialog documentId={detailDocumentId} onClose={() => setDetailDocumentId(null)} onPreview={(document) => { setDetailDocumentId(null); setPreviewDocument(document); }} onSaveLocal={saveLocally} onChangeImport={openLifecycle} onImported={refresh} />}
     {previewDocument && <PdfPreviewDialog document={previewDocument} onClose={() => setPreviewDocument(null)} />}
     {lifecycleDocument && <ImportLifecycleDialog document={lifecycleDocument} onClose={() => { setLifecycleDocument(null); void refresh(); }} onChanged={importStateChanged} />}
@@ -407,37 +408,29 @@ function DocumentList({ rows, expanded = false, revoked = false, onDetail, onPre
     const isPdf = row.content_type.includes("pdf") || row.filename.toLowerCase().endsWith(".pdf");
     const hasLocal = row.sources?.some((source) => source.type === "local_file");
     const hasRemote = row.sources?.some((source) => source.type === "gmail_attachment");
+    const hasGmail = row.sources?.some((source) => source.type === "gmail_attachment" || source.type === "codex_mcp_gmail");
     const stateLabel = hasLocal ? "本機副本" : hasRemote ? "僅遠端來源" : "本機";
-    return <li key={row.id}><span className={`file-icon ${isPdf ? "pdf" : row.content_type.includes("image") ? "image" : "csv"}`}>{isPdf ? "PDF" : row.content_type.includes("image") ? "IMG" : "CSV"}</span><span className="file-info"><a href={api.documentUrl(row.id)} target="_blank" rel="noreferrer"><strong>{row.filename}</strong></a><small>{formatBytes(row.size_bytes)} · {new Date(row.created_at).toLocaleDateString("zh-TW")}{hasRemote ? " · Gmail" : ""}</small>{row.revoked_at && <small className="revocation-detail">已撤銷 · {new Date(row.revoked_at).toLocaleDateString("zh-TW")}{row.revocation_reason ? ` · ${row.revocation_reason}` : ""}</small>}</span><span className="document-actions">{onDetail && <button className="small-action" aria-label={`查看 ${row.filename} 詳情`} onClick={() => onDetail(row.id)}>詳情</button>}{isPdf && onPreview && <button className="small-action" title="開啟 PDF 預覽" aria-label={`預覽 ${row.filename}`} onClick={() => onPreview(row)}>預覽</button>}{hasRemote && !hasLocal && onSaveLocal && <button className="small-action" title="將附件保存到本機文件匣" aria-label={`保存 ${row.filename} 到本機`} disabled={busy} onClick={() => onSaveLocal(row)}>保存</button>}{onChangeImport && <button className={`small-action ${row.revoked_at ? "" : "revoke-action"}`} aria-label={`${row.revoked_at ? "恢復" : "撤銷匯入"} ${row.filename}`} disabled={busy} onClick={() => onChangeImport(row)}>{row.revoked_at ? "恢復" : "撤銷匯入"}</button>}</span><span className="file-state" title={hasLocal ? "本機已有副本" : hasRemote ? "目前只保留遠端來源" : "本機已有副本"}>{stateLabel}</span></li>;
+    return <li key={row.id}><span className={`file-icon ${isPdf ? "pdf" : row.content_type.includes("image") ? "image" : "csv"}`}>{isPdf ? "PDF" : row.content_type.includes("image") ? "IMG" : "CSV"}</span><span className="file-info"><a href={api.documentUrl(row.id)} target="_blank" rel="noreferrer"><strong>{row.filename}</strong></a><small>{formatBytes(row.size_bytes)} · {new Date(row.created_at).toLocaleDateString("zh-TW")}{hasGmail ? " · Gmail" : ""}</small>{row.revoked_at && <small className="revocation-detail">已撤銷 · {new Date(row.revoked_at).toLocaleDateString("zh-TW")}{row.revocation_reason ? ` · ${row.revocation_reason}` : ""}</small>}</span><span className="document-actions">{onDetail && <button className="small-action" aria-label={`查看 ${row.filename} 詳情`} onClick={() => onDetail(row.id)}>詳情</button>}{isPdf && onPreview && <button className="small-action" title="開啟 PDF 預覽" aria-label={`預覽 ${row.filename}`} onClick={() => onPreview(row)}>預覽</button>}{hasRemote && !hasLocal && onSaveLocal && <button className="small-action" title="將附件保存到本機文件匣" aria-label={`保存 ${row.filename} 到本機`} disabled={busy} onClick={() => onSaveLocal(row)}>保存</button>}{onChangeImport && <button className={`small-action ${row.revoked_at ? "" : "revoke-action"}`} aria-label={`${row.revoked_at ? "恢復" : "撤銷匯入"} ${row.filename}`} disabled={busy} onClick={() => onChangeImport(row)}>{row.revoked_at ? "恢復" : "撤銷匯入"}</button>}</span><span className="file-state" title={hasLocal ? "本機已有副本" : hasRemote ? "目前只保留遠端來源" : "本機已有副本"}>{stateLabel}</span></li>;
   })}</ul>;
 }
 
 function JobList({ rows, expanded = false, onOpenDocument }: { rows: Job[]; expanded?: boolean; onOpenDocument?: (documentId: string) => void }) {
   if (!rows.length) return <EmptyState title="還沒有匯入紀錄" detail="上傳文件或匯入 CSV 後，這裡會列出處理狀態。" />;
   const statusLabels: Record<string, string> = { completed: "完成", duplicate: "內容重複", partial: "部分完成", revoked: "已撤銷", restored: "已恢復", skipped_revoked: "略過已撤銷", failed: "失敗" };
-  return <div className={expanded ? "job-list expanded" : "job-list"}>{rows.map((job) => <div className="job-row" key={job.id}><span className="job-type">{job.source_type === "gmail_sync" ? "GMAIL" : job.source_type === "csv" ? "CSV" : "DOC"}</span><span className="job-info"><strong>{job.source_type === "document_lifecycle" ? "文件匯入狀態" : job.source_type === "gmail_sync" ? "Gmail 同步" : job.target_module === "finance" ? "財務資料匯入" : "文件匯入"}</strong><small title={job.summary}>{job.summary} · {new Date(job.created_at).toLocaleString("zh-TW")}</small></span>{job.document_id && onOpenDocument && <button className="text-button job-document-link" aria-label="查看這筆工作對應的文件" onClick={() => onOpenDocument(job.document_id as string)}>查看文件</button>}<span className={`job-status ${job.status}`}>{statusLabels[job.status] ?? job.status}</span></div>)}</div>;
+  return <div className={expanded ? "job-list expanded" : "job-list"}>{rows.map((job) => <div className="job-row" key={job.id}><span className="job-type">{job.source_type === "gmail_sync" || job.source_type === "codex_mcp" ? "GMAIL" : job.source_type === "csv" ? "CSV" : "DOC"}</span><span className="job-info"><strong>{job.source_type === "document_lifecycle" ? "文件匯入狀態" : job.source_type === "gmail_sync" ? "舊版 Gmail 同步" : job.source_type === "codex_mcp" ? "Codex MCP 收錄" : job.target_module === "finance" ? "財務資料匯入" : "文件匯入"}</strong><small title={job.summary}>{job.summary} · {new Date(job.created_at).toLocaleString("zh-TW")}</small></span>{job.document_id && onOpenDocument && <button className="text-button job-document-link" aria-label="查看這筆工作對應的文件" onClick={() => onOpenDocument(job.document_id as string)}>查看文件</button>}<span className={`job-status ${job.status}`}>{statusLabels[job.status] ?? job.status}</span></div>)}</div>;
 }
 
 function formatBytes(bytes: number) { return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
 
-function AddDataDialog({ busy, onClose, onUpload, onGmailSync, onSettings }: {
+function AddDataDialog({ busy, onClose, onUpload, onSettings }: {
   busy: boolean;
   onClose: () => void;
   onUpload: (file: File | undefined, finance: boolean) => Promise<string>;
-  onGmailSync: () => Promise<string>;
   onSettings: () => void;
 }) {
-  const [gmail, setGmail] = useState<GmailStatus | null>(null);
-  const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
-
-  useEffect(() => {
-    let active = true;
-    api.gmailStatus().then((result) => { if (active) setGmail(result); }).catch(() => { if (active) setGmail(null); }).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, []);
 
   async function importFile(file: File | undefined, finance: boolean) {
     if (!file) return;
@@ -447,20 +440,13 @@ function AddDataDialog({ busy, onClose, onUpload, onGmailSync, onSettings }: {
     finally { setWorking(false); }
   }
 
-  async function syncGmail() {
-    setWorking(true); setError(""); setStatus("");
-    try { setStatus(await onGmailSync()); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Gmail 同步失敗"); }
-    finally { setWorking(false); }
-  }
-
   return <div className="data-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !working) onClose(); }}>
     <section className="data-dialog" role="dialog" aria-modal="true" aria-labelledby="add-data-title">
       <header className="data-dialog-header"><div><p className="eyebrow">資料入口</p><h2 id="add-data-title">新增資料</h2><p>先收錄來源，再依資料類型決定是否建立交易。</p></div><button className="icon-button" aria-label="關閉新增資料" title="關閉新增資料" disabled={working} onClick={onClose}>×</button></header>
       <div className="data-options">
         <article className="data-option"><span className="data-option-icon">DOC</span><div><h3>只收錄文件</h3><p>PDF、JPG、PNG 或其他 CSV 來源會進入文件匣；PDF 會在文件詳情中分析、核對後匯入。</p><label className="button secondary">加入文件<input type="file" accept=".pdf,.jpg,.jpeg,.png,.csv" disabled={busy || working} onChange={(event) => { void importFile(event.target.files?.[0], false); event.currentTarget.value = ""; }} /></label></div></article>
         <article className="data-option"><span className="data-option-icon csv">CSV</span><div><h3>收錄並建立交易</h3><p>通用 CSV 會先做 SHA-256 去重，再解析有效資料列；結果會顯示新增或略過筆數。</p><label className="button primary">匯入財務 CSV<input type="file" accept=".csv,text/csv" disabled={busy || working} onChange={(event) => { void importFile(event.target.files?.[0], true); event.currentTarget.value = ""; }} /></label></div></article>
-        <article className="data-option"><span className="data-option-icon gmail">G</span><div><h3>同步 Gmail 帳單</h3><p>只使用 Gmail 唯讀授權；附件先收錄，CSV 才會進入通用財務匯入。</p>{loading ? <p className="settings-note">正在檢查 Gmail 連線…</p> : gmail?.authorized ? <button className="button secondary" disabled={busy || working} onClick={() => void syncGmail()}>立即同步 Gmail</button> : <><p className="settings-note">尚未完成 Gmail 唯讀授權。</p><button className="text-button" onClick={onSettings}>前往設定連線 <span>→</span></button></>}</div></article>
+        <article className="data-option"><span className="data-option-icon gmail">MCP</span><div><h3>Gmail 自動收錄</h3><p>Codex 排程會透過已連線的 Gmail 工具抓取帳單；網站不保存 Google OAuth 設定或 token。</p><p className="settings-note">自動收錄後仍會經過解鎖、版型辨識與核對。</p><button className="text-button" onClick={onSettings}>查看自動化狀態 <span>→</span></button></div></article>
       </div>
       {working && <p className="transaction-loading" role="status">正在處理資料…</p>}
       {error && <div className="notice error" role="alert">{error}</div>}
@@ -488,11 +474,13 @@ function DocumentDetailDialog({ documentId, onClose, onPreview, onSaveLocal, onC
 
   useEffect(() => {
     let active = true;
-    setLoading(true); setError(""); setDetail(null); setPasswordHint("");
-    Promise.all([api.documentDetail(documentId), api.statements()]).then(([result, statements]) => {
+    setLoading(true); setError(""); setDetail(null); setStatement(null); setPasswordHint("");
+    Promise.all([api.documentDetail(documentId), api.statements()]).then(async ([result, statements]) => {
+      const matched = statements.find((item) => item.document_id === documentId);
+      const review = matched ? await api.statementDetail(matched.statement_id) : null;
       if (!active) return;
       setDetail(result);
-      setStatement(statements.find((item) => item.document_id === documentId) ?? null);
+      setStatement(review);
     }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "無法載入文件詳情"); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [documentId, retry]);
@@ -523,7 +511,7 @@ function DocumentDetailDialog({ documentId, onClose, onPreview, onSaveLocal, onC
 
   const document = detail?.document;
   const isPdf = document?.content_type.includes("pdf") || document?.filename.toLowerCase().endsWith(".pdf");
-  const hasGmailSource = detail?.sources.some((source) => source.type === "gmail_attachment") ?? false;
+  const hasGmailSource = detail?.sources.some((source) => source.type === "gmail_attachment" || source.type === "codex_mcp_gmail") ?? false;
   return <div className="data-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="document-detail-title">
       <header className="data-dialog-header"><div><p className="eyebrow">文件詳情</p><h2 id="document-detail-title">{document?.filename ?? "載入文件中"}</h2><p>來源、收錄狀態、關聯交易與處理紀錄集中在這裡。</p></div><button className="icon-button" aria-label="關閉文件詳情" title="關閉文件詳情" onClick={onClose}>×</button></header>
@@ -532,8 +520,8 @@ function DocumentDetailDialog({ documentId, onClose, onPreview, onSaveLocal, onC
       {detail && document && <div className="detail-content">
         <div className="detail-meta"><span className={document.revoked_at ? "connection-state" : "connection-state ready"}>{document.revoked_at ? "已撤銷" : "有效文件"}</span><span>{formatBytes(document.size_bytes)} · 收錄於 {new Date(document.created_at).toLocaleString("zh-TW")}</span></div>
         {document.revoked_at && <p className="lifecycle-note">撤銷原因：{document.revocation_reason || "未提供"}</p>}
-        {isPdf && <section className="detail-section statement-import-section"><div className="panel-heading"><div><h3>匯入家庭收支</h3><p>先解鎖與解析，再核對交易，確認後才會寫入收支與 Excel。</p></div><div className="detail-actions">{(!statement || statement.status === "pending") && <button className="small-action" disabled={statementBusy || document.revoked_at !== null} onClick={() => void analyzeStatement()}>{statementBusy ? "處理中…" : statement ? "重新分析" : "分析帳單"}</button>}{statement?.status === "ready" && <button className="small-action primary-action" disabled={statementBusy || document.revoked_at !== null} onClick={() => void confirmStatement()}>{statementBusy ? "匯入中…" : "確認匯入"}</button>}</div></div>{!hasGmailSource && <label className="statement-hint-field"><span>郵件中的密碼規則提示（選填，不要貼實際密碼）</span><textarea rows={3} maxLength={20_000} value={passwordHint} onChange={(event) => setPasswordHint(event.target.value)} placeholder="例如：PDF 密碼為身分證字號，英文字母請用大寫。" /><small>Gmail 附件會自動讀取原郵件；只有本機文件沒有郵件內文時才需要補充。</small></label>}{!statement && <p className="statement-help">這份 PDF 尚未分析。系統會使用 Gmail 郵件中的密碼提示與本機解鎖資料，成功後才顯示可匯入的交易。</p>}{statement && <><div className="statement-summary"><span className={`connection-state ${statement.status === "ready" || statement.status === "imported" ? "ready" : ""}`}>{statement.status === "ready" ? "待確認" : statement.status === "imported" ? "已匯入" : "待處理"}</span><span>{statement.bank_id} · {statementPeriod(statement)} · {statement.line_count} 筆交易列</span></div>{statement.status === "pending" && <p className="statement-help">{statementReason(statement.reason_code)}</p>}{statement.status === "imported" && <p className="notice success" role="status">這份帳單已匯入家庭收支；重複按下不會建立第二份交易。</p>}{statement.status === "ready" && <StatementReviewTable statement={statement} />}</>}</section>}
-        <section className="detail-section"><div className="panel-heading"><div><h3>來源</h3><p>來源可用性與本機副本狀態</p></div><div className="detail-actions">{isPdf && <button className="small-action" onClick={() => onPreview(document)}>預覽 PDF</button>}{detail.sources.some((source) => source.type === "gmail_attachment" && !source.has_local_copy) && <button className="small-action" onClick={() => onSaveLocal(document)}>保存本機副本</button>}<button className={`small-action ${document.revoked_at ? "" : "revoke-action"}`} onClick={() => onChangeImport(document)}>{document.revoked_at ? "恢復文件" : "撤銷匯入"}</button></div></div><ul className="detail-source-list">{detail.sources.map((source) => <li key={`${source.type}-${source.availability}`}><strong>{source.type === "local_file" ? "本機文件匣" : source.type === "gmail_attachment" ? "Gmail 附件" : source.type}</strong><span>{source.has_local_copy ? "已有本機副本" : "僅保留來源參照"} · {source.availability === "available" ? "可取得" : source.availability === "unavailable" ? "目前不可取得" : "狀態未知"}</span></li>)}</ul></section>
+        {isPdf && <section className="detail-section statement-import-section"><div className="panel-heading"><div><h3>匯入家庭收支</h3><p>先解鎖與解析，再核對交易，確認後才會寫入收支與 Excel。</p></div><div className="detail-actions">{(!statement || statement.status === "pending") && <button className="small-action" disabled={statementBusy || document.revoked_at !== null} onClick={() => void analyzeStatement()}>{statementBusy ? "處理中…" : statement ? "重新分析" : "分析帳單"}</button>}{statement?.status === "ready" && <button className="small-action primary-action" disabled={statementBusy || document.revoked_at !== null} onClick={() => void confirmStatement()}>{statementBusy ? "匯入中…" : "確認匯入"}</button>}</div></div>{!hasGmailSource && <label className="statement-hint-field"><span>郵件中的密碼規則提示（選填，不要貼實際密碼）</span><textarea rows={3} maxLength={20_000} value={passwordHint} onChange={(event) => setPasswordHint(event.target.value)} placeholder="例如：PDF 密碼為身分證字號，英文字母請用大寫。" /><small>Codex MCP 收錄會帶入遮罩後提示；只有純本機文件才需要補充。</small></label>}{!statement && <p className="statement-help">這份 PDF 尚未分析。系統會使用已遮罩的郵件密碼提示與本機解鎖資料，成功後才顯示可匯入的交易。</p>}{statement && <><div className="statement-summary"><span className={`connection-state ${statement.status === "ready" || statement.status === "imported" ? "ready" : ""}`}>{statement.status === "ready" ? "待確認" : statement.status === "imported" ? "已匯入" : "待處理"}</span><span>{statement.bank_id} · {statementPeriod(statement)} · {statement.line_count} 筆交易列</span></div>{statement.status === "pending" && <p className="statement-help">{statementReason(statement.reason_code)}</p>}{statement.status === "imported" && <p className="notice success" role="status">這份帳單已匯入家庭收支；重複按下不會建立第二份交易。</p>}{statement.status === "ready" && <StatementReviewTable statement={statement} />}</>}</section>}
+        <section className="detail-section"><div className="panel-heading"><div><h3>來源</h3><p>來源可用性與本機副本狀態</p></div><div className="detail-actions">{isPdf && <button className="small-action" onClick={() => onPreview(document)}>預覽 PDF</button>}{detail.sources.some((source) => source.type === "gmail_attachment" && !source.has_local_copy) && <button className="small-action" onClick={() => onSaveLocal(document)}>保存本機副本</button>}<button className={`small-action ${document.revoked_at ? "" : "revoke-action"}`} onClick={() => onChangeImport(document)}>{document.revoked_at ? "恢復文件" : "撤銷匯入"}</button></div></div><ul className="detail-source-list">{detail.sources.map((source) => <li key={`${source.type}-${source.availability}`}><strong>{source.type === "local_file" ? "本機文件匣" : source.type === "gmail_attachment" ? "Gmail 附件（舊版）" : source.type === "codex_mcp_gmail" ? "Gmail · Codex MCP" : source.type}</strong><span>{source.has_local_copy ? "已有本機副本" : source.type === "codex_mcp_gmail" ? "密碼提示已遮罩保存" : "僅保留來源參照"} · {source.availability === "available" ? "可取得" : source.availability === "unavailable" ? "目前不可取得" : "狀態未知"}</span></li>)}</ul></section>
         <section className="detail-section"><div className="panel-heading"><div><h3>關聯交易 <span className="detail-count">{detail.transactions.length}</span></h3><p>有效與已撤銷來源的原始交易紀錄</p></div></div><TransactionTable rows={detail.transactions} /></section>
         <section className="detail-section"><div className="panel-heading"><div><h3>匯入歷史 <span className="detail-count">{detail.jobs.length}</span></h3><p>這份文件的收錄、財務解析與狀態變更</p></div></div><JobList rows={detail.jobs} expanded /></section>
       </div>}
@@ -545,15 +533,16 @@ function DocumentDetailDialog({ documentId, onClose, onPreview, onSaveLocal, onC
 function StatementReviewTable({ statement }: { statement: Statement }) {
   const rows = statement.lines ?? [];
   if (!rows.length) return <p className="statement-help">帳單已確認本期沒有新增交易；確認後會留下帳單匯入紀錄，但不會虛構交易。</p>;
-  return <div className="statement-review-table"><div className="statement-review-head"><span>日期</span><span>項目</span><span>金額</span></div>{rows.map((line) => <div className="statement-review-row" key={line.line_index}><span>{line.transaction_date ?? "日期待確認"}</span><span>{line.description}</span><strong className={line.amount.startsWith("-") ? "expense" : "income"}>{money(line.amount, line.currency)}</strong></div>)}</div>;
+  return <div className="statement-review-table"><div className="statement-review-head"><span>日期</span><span>項目</span><span>金額</span></div>{rows.map((line) => <div className="statement-review-row" key={line.line_index}><span>{line.effective_transaction_date ?? line.transaction_date ?? "日期待確認"}{line.transaction_date_basis === "statement_closing_date" && <small className="statement-date-basis">結帳日認列</small>}</span><span>{line.description}</span><strong className={line.amount.startsWith("-") ? "expense" : "income"}>{money(line.amount, line.currency)}</strong></div>)}</div>;
 }
 
-function SettingsView({ report, onRefresh }: { report: (message: string, error?: string) => void; onRefresh: () => Promise<void> }) {
+function SettingsView({ report }: { report: (message: string, error?: string) => void }) {
   const [personalUnlock, setPersonalUnlock] = useState<PersonalUnlockStatus | null>(null);
-  const [gmail, setGmail] = useState<GmailStatus | null>(null);
+  const [codexMcp, setCodexMcp] = useState<CodexMcpStatus | null>(null);
   const [ai, setAi] = useState<AiProviderStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [aiTestMessage, setAiTestMessage] = useState("");
   const [secret, setSecret] = useState({ national_id: "", birthday: "" });
   const [aiConfig, setAiConfig] = useState<{ provider: AiProvider; api_key: string; model: string }>({ provider: "groq", api_key: "", model: "openai/gpt-oss-20b" });
   const [activeGroup, setActiveGroup] = useState<SettingsGroup>("unlock");
@@ -562,10 +551,10 @@ function SettingsView({ report, onRefresh }: { report: (message: string, error?:
 
   const load = useCallback(async () => {
     try {
-      const [unlockStatus, gmailStatus, aiStatus] = await Promise.all([
-        api.personalUnlock(), api.gmailStatus(), api.aiProvider(),
+      const [unlockStatus, codexMcpStatus, aiStatus] = await Promise.all([
+        api.personalUnlock(), api.codexMcpStatus(), api.aiProvider(),
       ]);
-      setPersonalUnlock(unlockStatus); setGmail(gmailStatus); setAi(aiStatus);
+      setPersonalUnlock(unlockStatus); setCodexMcp(codexMcpStatus); setAi(aiStatus);
       setAiConfig((current) => ({
         ...current,
         provider: aiStatus.provider ?? current.provider,
@@ -594,55 +583,23 @@ function SettingsView({ report, onRefresh }: { report: (message: string, error?:
   }
 
   async function saveAi(event: React.FormEvent) {
-    event.preventDefault(); setBusy(true); setError("");
+    event.preventDefault(); setBusy(true); setError(""); setAiTestMessage("");
     try {
       const result = await api.configureAiProvider(aiConfig);
       setAiConfig((current) => ({ ...current, api_key: "" }));
-      setAi({ configured: result.configured, provider: result.provider, model: result.model });
-      report("AI 設定已保存；開啟加密 PDF 時會分析遮罩後的密碼提示");
+      setAi(result);
+      setAiTestMessage("");
+      report("AI 連線已驗證並切換；開啟加密 PDF 時會分析遮罩後的密碼提示");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "無法保存 AI 設定"); }
     finally { setBusy(false); }
   }
 
-  async function configureGmail(file?: File) {
-    if (!file) return;
-    setBusy(true); setError("");
+  async function testAi() {
+    setBusy(true); setError(""); setAiTestMessage("");
     try {
-      const parsed: unknown = JSON.parse(await file.text());
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("OAuth JSON 格式不正確");
-      await api.configureGmail(parsed as Record<string, unknown>);
-      await load(); report("Gmail OAuth 設定已安全保存");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "無法讀取 Gmail OAuth 設定"); }
-    finally { setBusy(false); }
-  }
-
-  async function authorizeGmail() {
-    setBusy(true); setError("");
-    try {
-      await api.authorizeGmail();
-      await load(); report("Gmail 已連線，只授予唯讀郵件權限");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Gmail 授權未完成"); }
-    finally { setBusy(false); }
-  }
-
-  async function syncGmail() {
-    setBusy(true); setError("");
-    try {
-      const result = await api.syncGmail();
-      const suffix = result.truncated ? "；已達單次安全上限，請再次同步接續處理" : "";
-      report(`Gmail 同步完成：新增附件 ${result.new_attachments} 份、交易 ${result.created_transactions} 筆、略過已撤銷 ${result.skipped_revoked} 份、失敗 ${result.failures} 件${suffix}`);
-      await Promise.all([load(), onRefresh()]);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Gmail 同步失敗"); }
-    finally { setBusy(false); }
-  }
-
-  async function setGmailSchedule(enabled: boolean) {
-    setBusy(true); setError("");
-    try {
-      await api.setGmailSchedule(enabled);
-      await load();
-      report(enabled ? "Gmail 自動同步已啟用" : "Gmail 自動同步已關閉");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "無法更新 Gmail 自動同步設定"); }
+      const result = await api.testAiProvider(aiConfig);
+      setAiTestMessage(`連線成功：${result.provider === "groq" ? "Groq" : "OpenAI"} · ${result.model}`);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "AI 連線測試失敗"); }
     finally { setBusy(false); }
   }
 
@@ -665,22 +622,32 @@ function SettingsView({ report, onRefresh }: { report: (message: string, error?:
       </section>}
 
       {activeGroup === "advanced" && <section className="settings-section" id="settings-panel-advanced" role="tabpanel" aria-labelledby="settings-tab-advanced" tabIndex={-1}>
-        <div className="settings-heading"><div><p className="eyebrow">可選服務</p><h2>AI 密碼規則辨識</h2><p>保存 API key 後，開啟加密 PDF 時會自動分析遮罩後的郵件提示；可能產生 API 用量。身分資料與組合密碼不會送出。</p></div><span className={ai?.configured ? "connection-state ready" : "connection-state"}>{ai?.configured ? `已設定 · ${ai.model}` : "未設定"}</span></div>
+        <div className="settings-heading"><div><p className="eyebrow">可選服務</p><h2>AI 密碼規則辨識</h2><p>保存 API key 後，開啟加密 PDF 時會自動分析遮罩後的郵件提示；可能產生 API 用量。身分資料與組合密碼不會送出。</p></div><span className={ai?.configured && ai.credential_available ? "connection-state ready" : "connection-state"}>{ai?.configured ? ai.credential_available ? "作用中" : "憑證遺失" : "未設定"}</span></div>
+        <div className="provider-active" aria-live="polite">
+          <span>作用中 Provider<strong>{ai?.provider ? ai.provider === "groq" ? "Groq" : "OpenAI" : "尚未啟用"}</strong></span>
+          <span>作用中模型<strong>{ai?.model ?? "尚未設定"}</strong></span>
+          <span>安全憑證<strong>{ai?.credential_available ? "Windows Credential Manager 可用" : ai?.configured ? "找不到已保存的 API key" : "尚未保存"}</strong></span>
+        </div>
         <form className="settings-form settings-form-two" onSubmit={(event) => void saveAi(event)}>
-          <label>Provider<select value={aiConfig.provider} onChange={(event) => { const provider = event.target.value as AiProvider; setAiConfig({ ...aiConfig, provider, model: defaultModel(provider) }); }}><option value="groq">Groq（免費優先）</option><option value="openai">OpenAI（既有相容）</option></select></label>
-          <label>AI API key<input required type="password" autoComplete="new-password" value={aiConfig.api_key} onChange={(event) => setAiConfig({ ...aiConfig, api_key: event.target.value })} placeholder={ai?.configured ? "已設定；輸入新 key 可更新" : aiConfig.provider === "groq" ? "gsk_..." : "sk-..."} /></label>
-          <label>模型<input required maxLength={120} value={aiConfig.model} onChange={(event) => setAiConfig({ ...aiConfig, model: event.target.value })} /></label>
-          <button className="button secondary" disabled={busy || !aiConfig.api_key}>保存 AI 設定</button>
+          <label>Provider<select value={aiConfig.provider} onChange={(event) => { const provider = event.target.value as AiProvider; setAiConfig({ ...aiConfig, provider, model: defaultModel(provider) }); setAiTestMessage(""); }}><option value="groq">Groq（免費優先）</option><option value="openai">OpenAI（既有相容）</option></select></label>
+          <label>AI API key<input required type="password" autoComplete="new-password" value={aiConfig.api_key} onChange={(event) => { setAiConfig({ ...aiConfig, api_key: event.target.value }); setAiTestMessage(""); }} placeholder={ai?.configured ? "輸入 key 以測試並切換" : aiConfig.provider === "groq" ? "gsk_..." : "sk-..."} /></label>
+          <label>模型<input required maxLength={120} value={aiConfig.model} onChange={(event) => { setAiConfig({ ...aiConfig, model: event.target.value }); setAiTestMessage(""); }} /></label>
+          <div className="provider-actions"><button type="button" className="button secondary" disabled={busy || !aiConfig.api_key.trim() || !aiConfig.model.trim()} onClick={() => void testAi()}>{busy ? "處理中…" : "測試連線"}</button><button type="submit" className="button primary" disabled={busy || !aiConfig.api_key.trim() || !aiConfig.model.trim()}>{busy ? "處理中…" : "保存並切換"}</button></div>
         </form>
+        {aiTestMessage && <p className="settings-note provider-test-success" role="status">{aiTestMessage}。尚未更改作用中設定；按「保存並切換」後才會生效。</p>}
+        {ai?.configured && !ai.credential_available && <p className="settings-note provider-warning" role="alert">資料庫仍保留 Provider 設定，但 Windows Credential Manager 找不到對應 API key。請重新測試並保存，否則系統不會呼叫 AI。</p>}
         <p className="settings-note">Groq 目前提供 Free Plan；額度與支援模型可能由供應商調整。API key 只保存到 Windows Credential Manager，且只會把遮罩後的密碼提示送出。</p>
       </section>}
 
       {activeGroup === "connections" && <section className="settings-section" id="settings-panel-connections" role="tabpanel" aria-labelledby="settings-tab-connections" tabIndex={-1}>
-        <div className="settings-heading"><div><p className="eyebrow">只讀連線</p><h2>Gmail 帳單</h2><p>預設搜尋全部可存取郵件（含垃圾郵件與封存），不設日期範圍；附件預設只保存來源參照。</p></div><span className={gmail?.authorized ? "connection-state ready" : "connection-state"}>{gmail?.authorized ? "已連線 · 唯讀" : gmail?.configured ? "待授權" : "未設定"}</span></div>
-        {gmail && <p className="settings-note">同步狀態：{gmail.last_sync_status === "never" ? "尚未同步" : gmail.last_sync_status === "completed" ? "完成" : gmail.last_sync_status === "failed" ? "失敗" : gmail.last_sync_status === "running" ? "同步中" : "部分完成"}{gmail.last_successful_sync ? ` · 最近成功 ${new Date(gmail.last_successful_sync).toLocaleString("zh-TW")}` : ""}{gmail.last_error_summary ? ` · ${gmail.last_error_summary}` : ""}{gmail.full_sync_in_progress ? " · 初次同步尚在分批處理" : ""}</p>}
-        <div className="gmail-actions"><label className="button secondary">選擇 OAuth 桌面設定<input type="file" accept="application/json,.json" disabled={busy} onChange={(event) => { void configureGmail(event.target.files?.[0]); event.currentTarget.value = ""; }} /></label><button className="button secondary" disabled={busy || !gmail?.configured} onClick={() => void authorizeGmail()}>連接 Google 帳戶</button><button className="button primary" disabled={busy || !gmail?.authorized} onClick={() => void syncGmail()}>{busy ? "處理中…" : "立即同步 Gmail"}</button></div>
-        {gmail && <div className="gmail-schedule"><label><input type="checkbox" checked={gmail.auto_sync_enabled} disabled={busy || !gmail.authorized} onChange={(event) => void setGmailSchedule(event.target.checked)} /><span>啟用每 {gmail.sync_interval_minutes} 分鐘自動同步</span></label>{gmail.auto_sync_enabled && gmail.next_sync_at && <span className="settings-note">下次同步：{new Date(gmail.next_sync_at).toLocaleString("zh-TW")}</span>}</div>}
-        <p className="settings-note">請先在 Google Cloud 建立 OAuth 用戶端 ID，應用程式類型選「桌面應用程式」，啟用 Gmail API，下載 JSON 後於此選取。連線只要求 gmail.readonly 權限。</p>
+        <div className="settings-heading"><div><p className="eyebrow">外部自動化</p><h2>Codex MCP 帳單收錄</h2><p>Codex 使用已授權的 Gmail 工具尋找帳單，將附件與遮罩後的密碼提示送進本機系統。</p></div><span className="connection-state ready">Codex 管理</span></div>
+        <div className="automation-flow" aria-label="Codex MCP 自動化流程">
+          <span><strong>1</strong>搜尋 Gmail 帳單信件</span>
+          <span><strong>2</strong>下載附件與擷取密碼提示</span>
+          <span><strong>3</strong>本機去重、解鎖與核對</span>
+        </div>
+        <p className="settings-note">網站不再要求 Google Cloud OAuth JSON，也不保存 Gmail token。Codex 排程與 Gmail 授權在 Codex 應用程式中管理。</p>
+        <p className="settings-note" role="status">{codexMcp?.last_import_at ? `最近收到附件：${new Date(codexMcp.last_import_at).toLocaleString("zh-TW")} · ${codexMcp.last_import_status === "completed" ? "已收錄" : codexMcp.last_import_status === "duplicate" ? "內容重複，已略過" : codexMcp.last_import_status ?? "狀態未知"}` : "尚未收到 Codex MCP 自動化匯入的附件。"}</p>
         <ExcelExportSettings />
       </section>}
     </div>
@@ -691,9 +658,9 @@ const unlockErrorCodes = new Set(["pdf_password_required", "pdf_wrong_password"]
 
 function previewFailure(reason: unknown) {
   if (reason instanceof ApiError) {
-    if (reason.code === "pdf_password_required") return { code: reason.code, message: "尚無可用的解鎖資料或密碼提示。請在設定保存身分資料；若不是 Gmail 文件，請貼上郵件中的密碼提示。" };
+    if (reason.code === "pdf_password_required") return { code: reason.code, message: "尚無可用的解鎖資料或密碼提示。請在設定保存身分資料；本機文件可補上郵件中的密碼提示。" };
     if (reason.code === "pdf_wrong_password") return { code: reason.code, message: "郵件提示組成的密碼無法開啟這份 PDF。請核對提示與已保存的資料。" };
-    if (reason.code === "document_source_unavailable") return { code: reason.code, message: "目前無法取得這份文件的來源；若是 Gmail 附件，請先保存本機副本或重新同步。" };
+    if (reason.code === "document_source_unavailable") return { code: reason.code, message: "目前無法取得這份文件的本機副本；請重新收錄原始附件。" };
     return { code: reason.code ?? "preview_failed", message: reason.message };
   }
   return { code: "preview_failed", message: reason instanceof Error ? reason.message : "無法預覽 PDF" };
@@ -722,9 +689,10 @@ function PdfPreviewDialog({ document, onClose }: { document: DocumentRow; onClos
     let active = true;
     void api.aiProvider().then((status) => {
       if (!active) return;
-      setAiConfigured(status.configured);
-      setAllowAi(status.configured);
-      void requestPreview(status.configured);
+      const aiAvailable = status.configured && status.credential_available;
+      setAiConfigured(aiAvailable);
+      setAllowAi(aiAvailable);
+      void requestPreview(aiAvailable);
     }).catch(() => { if (active) void requestPreview(false); });
     return () => { active = false; };
   }, [document.id]);
@@ -769,10 +737,10 @@ function PdfPreviewDialog({ document, onClose }: { document: DocumentRow; onClos
           {unlockOpen && <div className="preview-unlock-form">
             <div className="preview-section-heading"><strong>解鎖提示</strong><button type="button" className="text-button" onClick={() => setUnlockOpen(false)}>收起</button></div>
             <label>郵件主旨（選填）<input maxLength={500} value={subject} onChange={(event) => setSubject(event.target.value)} /></label>
-            <label>密碼提示（非 Gmail 文件才需要）<textarea rows={8} maxLength={20_000} value={body} onChange={(event) => setBody(event.target.value)} placeholder="例如：密碼為身分證末四碼加出生日期 YYYYMMDD" /></label>
+            <label>密碼提示（純本機文件才需要）<textarea rows={8} maxLength={20_000} value={body} onChange={(event) => setBody(event.target.value)} placeholder="例如：密碼為身分證末四碼加出生日期 YYYYMMDD" /></label>
             <label className="check-row"><input type="checkbox" checked={allowAi} disabled={!aiConfigured} onChange={(event) => setAllowAi(event.target.checked)} /><span>使用 AI 辨識遮罩後的提示{!aiConfigured ? "（請先在設定保存 API key）" : ""}</span></label>
             <button className="button primary" disabled={busy}>{busy ? "正在處理…" : "重新產生預覽"}</button>
-            <p className="settings-note">Gmail 文件會讀取原郵件提示；解密只在本機處理，原始 PDF 不變。AI 不會收到身分資料或實際密碼。</p>
+            <p className="settings-note">Codex MCP 收錄的 Gmail 文件會使用已遮罩的郵件提示；解密只在本機處理，原始 PDF 不變。AI 不會收到身分資料或實際密碼。</p>
           </div>}
           {error && !needsUnlock && <button type="button" className="small-action" disabled={busy} onClick={() => void requestPreview()}>重試預覽</button>}
           {pdfUrl && <p className="settings-note">預覽成功不代表已建立財務交易；PDF 仍只是共用文件。</p>}

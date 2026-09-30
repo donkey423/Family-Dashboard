@@ -38,6 +38,9 @@ class MemorySecretStore:
         ("附件檔案開啟密碼為您的身分證字號（英文字母為大寫）", "upper"),
         ("PDF 密码：身份证号码，英文字母使用小写", "lower"),
         ("Password: your national ID number", "preserve"),
+        ("請輸入您的電子帳單密碼(您的身分證字號，英文字母大寫) 開啟附件詳閱及繳款。", "upper"),
+        ("請輸入您的電子帳單密碼（您的身分證字號，英文字母大寫）開啟附件。", "upper"),
+        ("為確保帳單資料之完整性及隱私性，開啟帳單請輸入正卡人身分證字號(英文字母為大寫)；公司戶密碼為統一編號；外籍人士為居留證號碼（請輸入10碼）。", "upper"),
     ],
 )
 def test_explicit_rule_parser_accepts_only_full_national_id_instructions(
@@ -73,6 +76,12 @@ def test_explicit_rule_parser_accepts_explicit_customer_type_alternatives():
     "密碼為身分證末四碼。",
     "密碼為身分證字號加上出生年月日。",
     "請注意密碼英文字母需區分大小寫。",
+    "電子帳單密碼（您的身分證字號末四碼，英文字母大寫）。",
+    "開啟帳單請輸入正卡人身分證字號加上生日。",
+    "開啟帳單請輸入正卡人身分證字號後六碼。",
+    "請提供身分證字號申請電子帳單，附件密碼另行通知。",
+    "電子帳單密碼（您的身分證字號，英文字母大寫或英文字母小寫）。",
+    "密碼（公司統一編號）；個人資料包含身分證字號。",
 ])
 def test_explicit_rule_parser_rejects_missing_partial_or_combined_formats(instruction):
     assert ExplicitPasswordRuleParser().parse(instruction) is None
@@ -487,11 +496,16 @@ def test_ai_provider_service_dispatches_configured_provider(tmp_path, provider, 
     engine.dispose()
 
 
-def test_ai_provider_service_keeps_legacy_profile_id_when_switching_to_groq(tmp_path):
+def test_ai_provider_service_keeps_legacy_profile_id_when_switching_to_groq(tmp_path, monkeypatch):
     engine = make_engine(f"sqlite:///{(tmp_path / 'configure.db').as_posix()}")
     Base.metadata.create_all(engine)
     factory = make_session_factory(engine)
     store = MemorySecretStore({"old-ref": "old-key"})
+    monkeypatch.setattr(
+        AIProviderService,
+        "test_connection",
+        lambda self, api_key, model, provider="openai": make_rule(date_format=None),
+    )
 
     with factory() as session:
         profile = AIProviderService(store).configure(
@@ -528,16 +542,16 @@ def test_ai_provider_service_rejects_unknown_provider(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("status", "expected"),
+    ("status", "expected", "reason_code"),
     [
-        (400, "AI 請求格式不被目前模型接受"),
-        (401, "AI API key 無效"),
-        (403, "AI API key 沒有使用此模型的權限"),
-        (429, "AI API 回應 429"),
-        (500, "AI 密碼規則服務目前無法使用"),
+        (400, "AI 請求格式不被目前模型接受", "ai_model_unavailable"),
+        (401, "AI API key 無效", "ai_auth_failed"),
+        (403, "AI API key 沒有使用此模型的權限", "ai_model_unavailable"),
+        (429, "AI API 回應 429", "ai_rate_limited"),
+        (500, "AI 密碼規則服務目前無法使用", "ai_service_unavailable"),
     ],
 )
-def test_openai_adapter_reports_safe_http_failure(monkeypatch, status, expected):
+def test_openai_adapter_reports_safe_http_failure(monkeypatch, status, expected, reason_code):
     from io import BytesIO
     from urllib.error import HTTPError
 
@@ -552,6 +566,7 @@ def test_openai_adapter_reports_safe_http_failure(monkeypatch, status, expected)
             "身分證末四碼", {"document_type": "PDF"}
         )
     assert expected in str(exc.value)
+    assert exc.value.reason_code == reason_code
     assert "private" not in str(exc.value)
     assert "sk-test-secret" not in str(exc.value)
 
@@ -573,4 +588,42 @@ def test_openai_adapter_identifies_quota_without_exposing_upstream_body(monkeypa
             "身分證末四碼", {"document_type": "PDF"}
         )
     assert "OpenAI API 額度不足" in str(exc.value)
+    assert exc.value.reason_code == "ai_quota_unavailable"
     assert "private" not in str(exc.value)
+
+
+def test_ai_provider_service_failed_preflight_keeps_active_profile(tmp_path, monkeypatch):
+    engine = make_engine(f"sqlite:///{(tmp_path / 'failed-preflight.db').as_posix()}")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+    store = MemorySecretStore({"old-ref": "old-key"})
+
+    with factory.begin() as session:
+        session.add(AIProviderProfile(
+            id="openai",
+            provider="openai",
+            model="gpt-4.1-mini",
+            api_key_credential_ref="old-ref",
+        ))
+
+    def fail_preflight(self, api_key, model, provider="openai"):
+        raise PasswordRuleInterpreterUnavailable("API key 無效", "ai_auth_failed")
+
+    monkeypatch.setattr(AIProviderService, "test_connection", fail_preflight)
+    with factory() as session:
+        with pytest.raises(PasswordRuleInterpreterUnavailable) as exc:
+            AIProviderService(store).configure(
+                session,
+                "invalid-new-key",
+                "openai/gpt-oss-20b",
+                provider="groq",
+            )
+        assert exc.value.reason_code == "ai_auth_failed"
+
+    with factory() as session:
+        stored = session.get(AIProviderProfile, "openai")
+        assert stored.provider == "openai"
+        assert stored.model == "gpt-4.1-mini"
+        assert stored.api_key_credential_ref == "old-ref"
+    assert store.values == {"old-ref": "old-key"}
+    engine.dispose()

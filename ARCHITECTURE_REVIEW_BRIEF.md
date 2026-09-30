@@ -1,6 +1,6 @@
 # 架構重新審查 Brief：信用卡帳單優先
 
-> 狀態：**原始 scope-reset / Overdesign 分析已保留作背景；2026-09-29 已再次依最新程式收斂執行方向，仍不授權大規模重構。實際工作以 `IMPLEMENTATION_PLAN.md`、`TASKS.md` 與最新 repo 為準。**
+> 狀態：**原始 scope-reset / Overdesign 分析已保留作背景；2026-09-30 使用者已決定將 Gmail 授權、搜尋與排程移到 Codex MCP，自此不再擴充網站內建 OAuth/History/scheduler。實際工作以 `ARCHITECTURE.md`、`IMPLEMENTATION_PLAN.md`、`TASKS.md`、`HANDOFF.md` 與最新 repo 為準。**
 >
 > 原始分析基準：`488cee7`。目前 GitHub `main` 已包含 Groq provider 實作 `eeb6883`；本文中早期假說若與最新程式衝突，以最新程式與執行文件為準。
 

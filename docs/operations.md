@@ -42,17 +42,23 @@ npm run dev -- --host <Windows-Tailscale-IP>
 
 ## 秘密管理
 
-家庭成員身分資料、Groq/OpenAI API key 與 Gmail OAuth client/token 均透過 Windows Credential Manager 保存；SQLite 只存隨機 credential reference。不要將 secrets 寫入普通 SQLite table、log、`.env`、repository 或明文設定檔。若 Windows Credential Manager 不可用，相關設定/操作會失敗，不會降級至明文儲存。
+家庭成員身分資料與 Groq/OpenAI API key 透過 Windows Credential Manager 保存；SQLite 只存隨機 credential reference。Gmail connector credential 由 Codex 管理，不交給 FamilyHub。不要將 secrets 寫入普通 SQLite table、log、`.env`、repository 或明文設定檔。若 Windows Credential Manager 不可用，相關設定/操作會失敗，不會降級至明文儲存。
+
+憑證屬於執行服務的 Windows 使用者，從「認證管理員 → Windows 認證」查看 `family-finance-hub` 或 `<隨機參照>@family-finance-hub` 項目。請透過設定頁保存，不要手動修改參照。此主機須以原有 `FamilyFinanceHub` 互動式登入排程啟動服務；可在該使用者的 PowerShell 執行 `Start-ScheduledTask -TaskName FamilyFinanceHub`。排程不會停止已占用 3000 的程序，遇到占用時應先核對原程序所屬專案與帳戶。
+
+`start_server.ps1` 在監聽前，以獨立隨機 service 及合成值測試 Windows Credential Manager 的寫入、讀取與清除。失敗時拒絕啟動。已確認 `CodexSandboxOffline` 環境寫入會回報 Windows 1312；缺少有效憑證登入工作階段時，即使讀取不存在的項目未報錯，也不能宣稱安全保管庫可用。2026-09-30 已改由使用者排程提供服務，設定頁保存與重新讀取均成功。
 
 AI 密碼規則設定可在「設定 → 進階設定」選擇 Groq（免費優先）或 OpenAI。Groq 目前使用 `openai/gpt-oss-20b` 與 Responses JSON Schema；Groq Responses 不接受 `store`，程式不會送出。只有遮罩後的密碼提示與必要非敏感 context 會送出，provider 失敗/429 會保留待處理，不會自動切換到可能付費的 provider。免費額度、模型及 Structured Outputs 支援需以供應商當下官方文件為準。
 
-切換 provider 後必須按保存；設定頁的 Groq 預設值只提供新設定的預填，不會自動改寫既有的 Windows Credential Manager profile。可用設定頁重新讀取的實際 provider/model 確認目前服務使用哪一條路徑。2026-09-29 的現場服務仍是既有 OpenAI profile；Groq adapter 已在工作區但尚未完成 safe-switch/runtime activation，也尚未保存 Groq key。來源郵件明示的完整格式不需要 AI；實際中國信託帳單已完成本機解鎖、parser、合計核對、Finance 匯入與 Excel 重建。
+切換 provider 後必須按保存；設定頁的 Groq 預設值只提供新設定的預填，不會自動改寫既有的 Windows Credential Manager profile。可用設定頁重新讀取的實際 provider/model 確認目前服務使用哪一條路徑。2026-09-30 修正啟動帳戶後，現場服務仍是 OpenAI / `gpt-4.1-mini`，既有 credential 已可讀；本次未發出 provider request，未確認授權或額度。Groq adapter 與 safe-switch 已完成，但 Groq runtime activation 及真實 request 尚未驗收。來源郵件明示的完整格式不需要 AI；實際中國信託帳單已完成本機解鎖、parser、合計核對、Finance 匯入與 Excel 重建。
 
-Provider 切換目前還需要 safe-switch hardening：先以固定 synthetic 密碼提示與現有 PasswordRule schema 做 Test Connection / preflight，不讀 Gmail 或個資，也不持久化新設定；只有驗證成功後才保存並切換 Active Provider。驗證失敗時舊 provider 應維持可用，且不得自動 fallback 到其他付費 provider。最新執行順序與驗收條件見 `GROQ_RUNTIME_REVIEW.md`。
+Provider 切換已採 safe-switch：先以固定 synthetic 密碼提示與現有 PasswordRule schema 做 Test Connection / preflight，不讀 Gmail 或個資，也不持久化新設定；只有驗證成功後才保存並切換 Active Provider。驗證失敗時舊 provider 維持不變，且不會自動 fallback 到其他付費 provider。最新執行順序與驗收條件見 `GROQ_RUNTIME_REVIEW.md`。
 
-Gmail OAuth 授權會在執行 API 的 Windows 主機開啟瀏覽器並使用 loopback callback，因此首次連線需要互動式桌面 session。授權完成後可手動同步；定時同步預設關閉，必須在 UI 明確啟用後才每 30 分鐘觸發一次，並且只呼叫既有 Gmail sync use case。它可匯入通用 CSV 與收錄 PDF 文件，但不會將 PDF 猜成交易。Windows 關機時排程暫停；重新啟動後若已到期，會在 scheduler 下一次檢查時補跑。替換 OAuth client 設定會自動關閉排程。
+Gmail 授權、搜尋與排程由 Codex Gmail MCP／Codex 自動化管理。FamilyHub 設定頁不接收 OAuth JSON 或 token；網站內建 Gmail API 與 scheduler 預設停用，舊端點回 410。`FAMILY_FINANCE_HUB_LEGACY_GMAIL_OAUTH=true` 只供既有 remote source 相容與測試，不應在新部署中開啟。
 
-若 Google OAuth consent screen 使用 External + Testing，refresh token 一般會在 7 天後過期；長期自動同步應依 Google 官方規則完成應用程式發布狀態與測試使用者設定，並在真實 Windows 主機驗證重新開機後仍可刷新 token。不要把 refresh token 移出 Credential Manager 來繞過到期。
+Codex 任務取得 PDF 後，將附件、Gmail message/attachment ID 及密碼規則附近的必要文字，以 multipart 送到本機 `POST /api/integrations/codex-mcp/gmail/import`。Backend 不保存原始 Gmail ID、subject、sender 或完整本文；來源 ID 只用來計算不可逆 key，提示先遮罩才保存。附件會持久化到 Documents storage，因此備份時必須連同 `data/documents/` 保存。
+
+此主機已在 Codex 應用程式建立並啟用「家庭收支 Gmail 帳單收錄」自動化，使用 `gpt-6-luna` 的 Max reasoning，每 30 分鐘搜尋最近 45 天的 PDF 帳單。排程沒有新附件時不通知；新匯入、失敗或需要人工處理時才通知。自動化可收錄並觸發分析，但不會自動確認入帳。排程設定屬於 Codex 應用程式，不存於 repository；首次真實 Gmail 執行及至少一次冪等重跑仍須另行驗收。
 
 ## Excel 輸出操作
 
@@ -62,6 +68,6 @@ Excel 自動更新預設關閉。啟用後，每 30 秒比對 SQLite 快照；Ba
 
 支援版型的流程固定為：文件收錄 → 本機解鎖 → `BankStatementParser` 解析交易列 → 帳單合計核對 → UI 顯示待確認列 → 使用者確認 → Finance transaction → Excel rebuild。此版本已驗證中國信託版型，並保留受限台新零交易判斷；其他版型會回傳待處理原因，不猜測欄位或金額。重複確認同一帳單會重用既有交易，不新增第二份。
 
-Gmail 來源會把郵件提示交給解鎖流程；若文件只有本機來源，UI 可輸入不含實際密碼的規則提示。實際身分證、生日與組合密碼只從 Windows Credential Manager／本機記憶體使用，不寫入 SQLite、log 或 Excel。Gmail scheduler 目前收錄附件，仍需在文件詳情完成確認，不把收件視為自動入帳。
+Codex MCP Gmail 來源會保存遮罩後的郵件規則提示供解鎖流程使用；一般本機上傳可由 UI 輸入不含實際密碼的規則提示。實際身分證、生日與組合密碼只從 Windows Credential Manager／本機記憶體使用，不寫入 SQLite、log 或 Excel。Codex 排程只收錄附件，仍需在文件詳情完成核對與確認，不把收件視為自動入帳。
 
 應用程式只覆蓋自己建立且帶有 ownership marker 的工作簿。若目標已有其他檔案，會顯示 `unowned_workbook` 並停止；請移動該檔案或改用新路徑。使用 Excel 開啟導致寫入失敗時會保留上一版並定時重試。直接編輯專用工作簿後，系統會偵測輸出 SHA-256 不一致、暫停下載，並在下一次更新以 SQLite 內容重建。

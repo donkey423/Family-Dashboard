@@ -4,7 +4,9 @@
 
 近期產品目標為信用卡 PDF 解鎖、解析與核對後寫入 SQLite，產生每月支出 Excel；Web 補設定、核對確認及例外處理。完整 Dashboard、新家庭模組及新同步引擎不是前置。既有 Documents/Sources、SecretStore、去重、撤銷及 Excel 安全輸出仍保留。
 
-以下記錄現有架構與邊界；後續擴充點不等於已排定待辦。尚未實作的工作、狀態/API/schema 與驗收以 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 為準；銀行專用 PDF 交易 parser 目前仍未完成，Excel 信用卡語意亦待串接。
+以下記錄現有架構與邊界；後續擴充點不等於已排定待辦。工作及驗收以 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 為準；目前已驗證中國信託/國泰世華/永豐文字版型及受限台新零交易，未知版型與第二期仍需授權樣本。
+
+Statement 保留 `closing_date` 與來源 transaction date。僅依使用者批准，未列日期的 interest 可由共用 resolver 按明示結帳日認列；正規化與月彙總一致，API/raw_json 保留來源缺日期、有效日期及 date basis。此政策不屬於銀行 regex，不補普通消費/費用/繳款，也不繞過核對閘門；舊 JSON 沒有 closing_date 仍向後相容。
 
 ## 執行拓樸
 
@@ -12,7 +14,7 @@
 Windows 主機
   React/Vite Web UI  ->  FastAPI Modular Monolith  ->  SQLite + Alembic
                                                 ->  Local filesystem adapter
-                                                ->  Gmail source adapter + future providers
+Codex 排程 + Gmail MCP  ----------------------->  Codex MCP import API
 MacBook / iPhone  -- Tailscale private network --> Windows 主機
 ```
 
@@ -50,7 +52,7 @@ Documents 是文件的 logical identity、metadata 與來源關聯，不應等�
 - `DocumentLifecycleUseCase` 協調 Documents 狀態與 Jobs 稽核，擁有同一筆 DB transaction。Finance 提供影響查詢；交易本身不刪除或複製，Dashboard、交易列表及 Search 共用 `active_transaction_filter` 排除已撤銷來源。
 - `GET /api/documents/{id}/import-impact` 回傳筆數、各幣別金額與包含版本／影響摘要的 `impact_token`。`POST .../revoke` 和 `POST .../restore` 需附 token；影響已變更回應 409，要求重新預覽。同狀態重複操作回應 `changed=false`，不新增稽核紀錄。
 - `GET /api/documents` 預設只列有效文件，`state=revoked` 或 `state=all` 用於恢復清單。原始文件讀取、PDF 預覽和保存副本仍可使用；不改變來源本身的可用性。
-- 手動 CSV 匯入及 Gmail 在解析前檢查撤銷狀態。保留 SHA-256 和 source records 作為防重匯依據，新 source 若同 hash 仍略過交易匯入；不默默恢復。Gmail 回報 `skipped_revoked`，不把這種情況當失敗或新匯入。
+- 手動 CSV 與 Codex MCP Gmail 匯入在解析前檢查撤銷狀態。保留 SHA-256 和 source records 作為防重匯依據，新 source 若同 hash 仍略過交易匯入；不默默恢復。匯入 API 回報 `skipped_revoked`，不把這種情況當失敗或新匯入。
 - 恢復只啟用既有交易，不重新解析。未來新增 domain 時，需在自己的查詢中遵守文件有效狀態，並於 lifecycle use case 中整合本模組的影響預覽；不可跨模組直接刪表或資料列。
 - 永久清除文件及移除本機副本是不同操作，目前尚未提供。不同 bytes 的語意重複帳單、單筆交易撤銷和跨文件合併亦不在本次範圍。
 
@@ -87,9 +89,9 @@ HTTP multipart upload
 ```text
                      +---------------- Local File
                      |
-DocumentSource ------+---------------- Gmail Attachment
+DocumentSource ------+---------------- Codex MCP Gmail (local persisted)
                      |
-                     +---------------- Future: Drive / other provider
+                     +---------------- Legacy Gmail remote reference
                                   |
                                   v
                          Document identity/metadata
@@ -107,66 +109,49 @@ DocumentSource ------+---------------- Gmail Attachment
                                Finance
 ```
 
-`DocumentSource` 負責「如何取得 bytes」；`DocumentProcessor` 負責「如何理解 bytes」。目前已實作來源 registry、本機檔案及 Gmail attachment adapters、CSV processor、PDF processor、通用 OCR port/Tesseract adapter 與受限密碼規則流程。真實銀行帳單的專用交易 parser 仍未實作。兩者必須分離，避免 Finance 或其他 domain 直接依賴 Gmail、filesystem、PDF library 或 OCR provider。
+`DocumentSource` 負責「如何取得 bytes」；`DocumentProcessor` 負責「如何理解 bytes」。目前有來源 registry、本機/Codex MCP/legacy Gmail adapter、CSV/PDF processor、OCR port/Tesseract adapter、受限密碼規則與上述已驗證銀行 parser。兩者保持分離，Finance 不直接依賴 Gmail、filesystem、PDF library 或 OCR provider。
 
-### Gmail attachment 流程
-
-```text
-Gmail query
- -> identify message + attachment
- -> fetch attachment bytes on demand
- -> keep bytes in memory; enforce size limit
- -> parse CSV or classify PDF
- -> compute/verify SHA-256 and create logical Document/source record
- -> persist normalized CSV Finance rows (PDF remains a Document)
- -> discard transient bytes
-```
-
-預設不將 Gmail attachment 永久寫入 Windows storage。SQLite 只保存必要的 source reference 與 metadata：
-
-- provider/source type
-- Gmail message ID
-- Gmail attachment ID
-- filename
-- SHA-256
-- optional local persistence state
-
-目前不保存 sender、subject 或郵件本文。同步預設搜尋 `in:anywhere has:attachment {filename:pdf filename:csv}`，涵蓋可存取的全部郵件，包含垃圾郵件與封存郵件，不設日期範圍。PDF 附件先以共用 Document 收錄；只有已驗證版型經文件詳情分析、帳單合計核對並由使用者確認後，才建立 Finance transaction。
-
-若使用者選擇「保存到家庭文件匣」，application service 才將該 attachment 寫入 `StoragePort`，並為同一 Document 新增本機來源記錄；不覆寫 Gmail remote source。
-
-### Gmail Sync Use Case 與 Trigger
-
-Gmail 同步的業務邏輯集中在單一 `GmailSyncUseCase`。Trigger 只負責「何時執行」，不得自行實作 Gmail 搜尋、附件解析、去重或 Finance 寫入。
+### Codex MCP Gmail attachment 流程
 
 ```text
-               +-- Manual: 立即同步 Gmail
-               |
-Trigger --------+-- Scheduler: 每 30 分鐘
-               |
-               +-- Future: Gmail Push / Pub/Sub
-                         |
-                         v
-                  GmailSyncUseCase
-                         |
-                         v
-               Gmail DocumentSource
-                         |
-                         v
-                 DocumentProcessor
-                         |
-                         v
-                  Finance / Jobs
+Codex scheduled task + Gmail MCP
+ -> search for eligible statement PDF messages
+ -> obtain attachment bytes and nearby password wording
+ -> POST local multipart import endpoint
+ -> validate size and sanitize/mask password instruction
+ -> compute SHA-256; persist through StoragePort
+ -> create/reuse logical Document + codex_mcp_gmail source
+ -> leave statement analysis/confirmation to the existing safe workflow
 ```
 
-實作順序固定為：
+網站不管理 Gmail 帳戶授權、郵件查詢或排程；這三項由 Codex Gmail MCP 與 Codex 自動化負責。`POST /api/integrations/codex-mcp/gmail/import` 是唯一新收件入口。附件會永久寫入 Windows storage，讓後續預覽、解鎖、重跑與備份不依賴 Gmail 連線。
 
-1. **Manual sync**：UI/API 可手動觸發；合成 Gmail client 已驗證 query、remote reference、attachment bytes、CSV persistence、重複同步與續跑。
-2. **Incremental sync**：保存 Gmail history cursor/state，只處理新加入郵件；若 cursor 過期則受控 full sync，超過每批上限會保存 page token 續跑。
-3. **Scheduler third**：已提供本機 opt-in scheduler；設定預設關閉，使用者完成唯讀 OAuth 後可明確啟用，每 30 分鐘呼叫同一個 `GmailSyncUseCase`。手動/排程觸發共用同步鎖；scheduler 不自行實作 Gmail 搜尋、附件解析或 Finance 寫入。現階段排程只將 PDF 收錄為 Documents；Statement 分析與確認匯入仍由文件詳情流程執行，避免新郵件因未知版型直接入帳。
-4. **Push optional**：只有產品真的需要近即時更新時，才導入 Gmail Push / Pub/Sub；Push 仍只是一種 trigger。
+SQLite 只保存必要 metadata：
 
-Windows 關機時 scheduler 不執行，這是 local-first 架構的預期行為。重新開機後會補跑已到期的排程，由 incremental sync 補抓關機期間的新信，因此不要求主機 24 小時常駐。OAuth 設定被替換時會自動停用排程，須重新授權並再次明確啟用。
+- `source_type=codex_mcp_gmail`
+- filename、SHA-256 與 local storage key
+- 由 Gmail message ID + attachment ID 計算的不可逆 source key
+- 已遮罩及截斷的密碼規則提示（若可辨識）
+
+不保存原始 Gmail message/attachment ID、subject、sender、完整郵件本文或實際密碼。同一來源重跑會重用 source record；同一來源 key 對應不同內容時回 409，避免來源漂移被靜默覆寫。相同 SHA-256 亦重用既有 Document，已撤銷文件不會因重新收件而自動恢復。
+
+### Codex Trigger 與處理邊界
+
+Codex trigger 只負責 Gmail 搜尋、取得附件及呼叫本機匯入 API。FamilyHub 仍擁有內容去重、文件生命週期、PDF 解鎖、Statement parser、核對、Finance 寫入及 Excel 投影；自動化 prompt 不得複製或繞過這些規則。
+
+```text
+Codex cron
+ -> Gmail MCP read-only search/download
+ -> FamilyHub CodexMcpGmailImportUseCase
+ -> Documents + StoragePort + Jobs
+ -> PDF preview / Statement analysis
+ -> explicit user confirmation
+ -> Finance -> Excel
+```
+
+網站內建的 OAuth UI/API 與 Gmail scheduler 預設停用；舊端點回 410。`FAMILY_FINANCE_HUB_LEGACY_GMAIL_OAUTH=true` 只提供歷史資料相容／測試，不是日常部署選項。舊 `GmailSyncUseCase`、History schema 與 remote source adapter 暫不做破壞性 migration，避免現有來源失讀；待歷史 remote-only 文件已保存本機副本後，才另案評估移除依賴。
+
+Codex 自動化的搜尋窗口與頻率屬外部任務設定，不寫進 FamilyHub DB。無新信時保持安靜；附件重複由本機 source key 與 SHA-256 共同去重。Codex、Windows 主機或 FamilyHub 服務未執行時不會收件，下次執行可重掃近期窗口補回，不能把排程建立等同於已完成跨日真實驗收。
 
 ### Excel 投影與重建
 
@@ -190,27 +175,26 @@ Excel 是輸出投影，不是資料來源。`WorkbookExportService` 只讀取�
 
 目前投影包括月份／幣別摘要、所有有效交易與文件狀態。零交易 PDF 只顯示為待處理，不會觸發猜測解析；未來銀行 parser 必須先寫回 Finance transaction，再由同一投影自然進入 Excel。
 
-### 即時查看原始帳單
+### 查看原始帳單
 
 ```text
 Browser requests original document
  -> Backend resolves Document source
- -> Gmail DocumentSource fetches attachment bytes
+ -> Codex MCP source reads local persisted bytes through StoragePort
  -> Backend streams bytes with correct media type
  -> Browser PDF viewer displays content
- -> no permanent local copy required
 ```
 
-Gmail 暫時不可用、權限失效或原始信件遭刪除時，remote-only document 可能無法重新取得內容；UI 應清楚顯示 source availability，並允許使用者事前選擇保存本地副本。
+新匯入不依賴 Gmail 即時可用性。歷史 legacy remote-only document 仍可能因 Gmail 暫時不可用、授權失效或原始信件遭刪除而無法取得；UI 應清楚顯示來源狀態，且不把 legacy 來源失效解讀成已刪除 Document。
 
 ### 密碼保護 PDF 與密碼規則解析
 
-Password-protected PDF processor 可以對 memory/temporary bytes 解密與解析，不要求永久落地。PDF 密碼、OAuth token、refresh token、身分證字號、生日與其他 secret 不得存入一般 SQLite table、log、repository 或明文設定檔；Windows 整合採 Credential Manager/SecretStore。
+Password-protected PDF processor 對 StoragePort 讀出的 bytes 在記憶體中解密與解析，不保存明文副本。PDF 密碼、legacy OAuth token、身分證字號、生日與其他 secret 不得存入一般 SQLite table、log、repository 或明文設定檔；Windows 整合採 Credential Manager/SecretStore。
 
 密碼流程採「**先確認來源郵件的明確格式；AI 只理解其餘規則；敏感資料只在本機組合**」：
 
 ```text
-Gmail subject/body/sender + attachment filename + readable metadata
+Codex 提供的郵件規則片段 + attachment filename
                     |
                     v
         PasswordInstructionExtractor
@@ -261,9 +245,9 @@ Gmail subject/body/sender + attachment filename + readable metadata
 
 #### PasswordInstructionExtractor
 
-密碼規則優先從 Gmail subject/body、sender、附件檔名與未加密可讀 metadata 取得。若規則文字只存在於「必須先解密才能看到」的 PDF 頁面，系統無法靠該 PDF 自己推導密碼，必須改用郵件說明或人工補充。
+密碼規則優先從 Codex MCP 提供的來源郵件規則片段、附件檔名與未加密可讀 metadata 取得。若規則文字只存在於「必須先解密才能看到」的 PDF 頁面，系統無法靠該 PDF 自己推導密碼，必須改用郵件說明或人工補充。
 
-對 Gmail 來源 PDF，只有初次 PDF 處理回報需要密碼時，Backend 才即時取得來源郵件的 subject/from 與純文字/HTML body；不將郵件資料保存至 SQLite。Gmail 文件只採用來源郵件的提示，不允許預覽表單的手動文字覆蓋；本機上傳文件才可由使用者在預覽視窗輸入說明。Extractor 會先遮罩敏感值，再交給後續規則解析。
+Codex 只把密碼關鍵字附近的必要文字交給 import endpoint；Backend 立即經 `PasswordInstructionExtractor` 遮罩、截斷並保存受限提示，subject、sender、完整本文與 Gmail 原始 ID 不落盤。`codex_mcp_gmail` 文件預覽只使用這份來源提示，不允許表單覆蓋；一般本機上傳才可由使用者輸入不含實際密碼的說明。歷史 legacy Gmail source 仍沿用既有即時讀取相容路徑。
 
 遮罩後的提示若明確表示「完整身分證字號」及英文字母大小寫，`ExplicitPasswordRuleParser` 會在本機產生單一受限 DSL 規則，不需要 AI。若同一提示明確區分本國籍使用完整身分證、外籍使用西元生日 `YYYYMMDD`，parser 會產生且只產生這兩個候選，依提示順序交給 PDF processor，成功後只保存實際命中的單一規則。只說「請輸入密碼」、只說大小寫、要求證號局部或多欄位組合時，不會被這條快速路徑猜測；改用已成功驗證的規則，或在允許時交給 AI 解讀。所有明確候選仍無法解鎖時直接回報密碼不符，不擴張其他排列。
 
@@ -305,7 +289,7 @@ PasswordRule DSL 第一版只允許白名單操作，例如：
 
 ## 擴充介面
 
-儲存透過 `StoragePort` 隔離，v0.1 adapter 為本機檔案系統。外部內容取得透過 `DocumentSource` 隔離；內容理解透過 `DocumentProcessor`/`OcrProvider` 隔離。Gmail OAuth/source、受限密碼規則 AI boundary、password-protected PDF processor 與本機 OCR adapter 已有實作；Google Drive、通用 AIProvider 及各家庭領域模組仍為後續擴充，不讓核心依賴供應商 SDK。
+儲存透過 `StoragePort` 隔離，v0.1 adapter 為本機檔案系統。外部內容取得透過 Codex MCP import boundary／`DocumentSource` 隔離；內容理解透過 `DocumentProcessor`/`OcrProvider` 隔離。Codex MCP Gmail source、受限密碼規則 AI boundary、password-protected PDF processor 與本機 OCR adapter 已有實作；legacy Gmail OAuth/source 預設停用。Google Drive、通用 AIProvider 及各家庭領域模組仍為後續擴充，不讓核心依賴供應商 SDK。
 
 Insurance、Assets、Warranty、Travel、Vehicle、Subscriptions、Property 等 domain 僅於需要時新增模組與 migration。
 
@@ -315,7 +299,7 @@ Insurance、Assets、Warranty、Travel、Vehicle、Subscriptions、Property 等 
 
 ## 安全與限制
 
-- 不記錄文件內容、PDF 密碼、OAuth token、secret 或完整敏感欄位；一般操作 log 僅可包含 job/document ID、provider 類型與狀態。
+- 不記錄郵件全文、Gmail 原始 ID、PDF 密碼、legacy OAuth token、secret 或完整敏感欄位；一般操作 log 僅可包含 job/document ID、provider 類型與狀態。
 - Transient attachment bytes 不應寫入一般 log、crash dump 或永久 temporary directory；若處理 library 必須使用 temporary file，應使用受控位置並在處理完成後可靠刪除。
 - SQLite、local storage 和備份均視為家庭敏感資料，需保留在受控 Windows 使用者目錄並納入備份。
 - Remote-only document 的可用性依賴外部 provider；metadata 與已解析的 normalized data 可保留，但原始內容不保證永久可重新取得。

@@ -179,6 +179,8 @@ class StatementImportUseCase:
                             "page_number": line.page_number,
                             "source_sequence": line.source_sequence,
                             "transaction_date": line.transaction_date,
+                            "source_transaction_date": line.source_transaction_date,
+                            "transaction_date_basis": line.transaction_date_basis,
                             "posting_date": line.posting_date,
                             "description": line.description,
                             "transaction_kind": line.transaction_kind,
@@ -348,6 +350,8 @@ class StatementImportUseCase:
             default_names = {
                 "ctbc": "中國信託信用卡",
                 "taishin": "台新信用卡",
+                "cathay": "國泰世華信用卡",
+                "sinopac": "永豐信用卡",
             }
             default_name = default_names.get(bank_id)
             if default_name:
