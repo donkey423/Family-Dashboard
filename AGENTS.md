@@ -11,6 +11,7 @@
 - `ARCHITECTURE_REVIEW_BRIEF.md`：2026-09-28 使用者最新的信用卡帳單優先需求、Overdesign 假說、候選簡化方向與高階模型 review gate。
 - `FREE_AI_PASSWORD_RULE_PLAN.md`：Groq Free 密碼規則解析的 provider 設計、安全邊界與驗收規格；實作/切換前必須重新查官方額度與模型支援。
 - `GROQ_RUNTIME_REVIEW.md`：Groq 已實作後的程式級深度審查；明確區分 Recommended / Default / Active Provider，並定義 safe-switch preflight、runtime activation 與真實 smoke test。
+- `CATEGORY_SPENDING_PLAN.md`：2026-09-30 使用者核准的消費分類／Donut／Category → Merchant → Transaction 下鑽規格、C1-C5 工作包與完整 Test Matrix；分類功能以此文件為 canonical plan。
 - `backend/src/family_finance_hub`：FastAPI、application use cases、domain services、ports 與 adapters。
 - `backend/tests`：後端自動化測試。
 - `frontend/src`：React/TypeScript Web UI。
@@ -18,7 +19,7 @@
 
 ## 邊界與限制
 
-- 近期工作依 `IMPLEMENTATION_PLAN.md` 收斂為信用卡 PDF 解鎖、解析、核對、SQLite 入帳及每月支出 Excel；Web 只補設定與例外處理。S6 先交付正確 Excel，不以完整 Dashboard、分類或同步引擎重寫為前置，不擴充通用家庭平台。獲得實作指示後按 S0-S9 連續完成，每步驗證及更新交接後繼續；必要真實樣本/外部授權不足才停在關卡。未通過真實資料關卡不得宣稱自動化完成；候選簡化不是任意刪除/重構授權。
+- 既有 S0-S9 仍以信用卡 PDF 解鎖、解析、核對、SQLite 入帳及 Excel 正確性為基線，不因新功能回頭重寫核心。2026-09-30 使用者已明確核准下一階段 `CATEGORY_SPENDING_PLAN.md`：每筆交易有效分類、同類歸組、支出 Donut、Category → Merchant → Transaction 下鑽與未分類整理。這是特定產品需求，不等同授權完整 Dashboard、Budget、Tag、AI 理財或通用家庭平台。
 - 日常 Gmail 收件由 Codex Gmail MCP／自動化負責；FamilyHub 只接受本機 import endpoint、處理文件與入帳。網站內建 Gmail OAuth/UI/scheduler 預設停用，legacy History/remote source 程式僅供既有資料相容，不再新增功能；Excel 背景檢查維持既有設計。
 - 保持 Modular Monolith；不引入 microservices、Redis、Kafka、Kubernetes 或 PostgreSQL。
 - v0.1 本機上傳由 Documents 接收並透過 StoragePort 保存；文件讀取與解析必須透過 `DocumentSource` / `DocumentProcessor` 邊界，不可假設每筆 Document 都有永久 local file。
@@ -33,10 +34,10 @@
 - 不記錄文件內容、PDF 密碼、secret、OAuth token、身分證字號、生日或完整敏感資料。M5.2 必須使用 Windows Credential Manager/SecretStore；AI 只解析密碼規則文字，不得接收真實身分證字號、生日或實際密碼。
 - 此主機的常態服務由 `FamilyFinanceHub` 互動式登入排程執行。`scripts/start_server.ps1` 會以獨立、隨機且立即清除的合成憑證測試安全儲存的寫入/讀取/清除；未通過不得占用 3000。Codex 沙箱帳戶曾造成 Windows 1312 寫入錯誤及已存憑證誤顯示未保存；重啟正式服務應使用既有 Windows 使用者排程，而非在沙箱中背景啟動。
 - 目前文件解鎖 UI 只收身分證字號及/或生日；內部固定個人 profile 沿用既有 schema，不能把銀行、機構或家庭成員設定重新變成使用者前置步驟。保存 AI key 後，加密 PDF 預覽可分析遮罩提示並在本機組合密碼；不得把這當作 PDF 交易自動入帳。
-- 新增模組應新增自己的 domain/service/schema migration，避免直接操作其他模組資料。
+- 新增模組應新增自己的 domain/service/schema migration，避免直接操作其他模組資料。分類功能必须放在 Finance categorization 边界，不把银行分类逻辑写进 BankStatementParser；V1 以 Category/Rule/TransactionOverride 做 read-time effective category，不把 category 写回 FinanceTransaction identity。
 - 進度以 TASKS.md 與 HANDOFF.md 為準：平台、Excel、`0011_statement_import` 及 Codex MCP 匯入邊界已有實作；中國信託已完成真實 Finance/Excel，2026-09-30 中國信託/國泰/永豐新下載加密帳單皆通過逐列/合計核對及冪等，後兩家未自動確認入帳。第二期盲測、未知版型、Codex 排程真實/跨日及實體手機仍未完成；不得宣稱通用銀行支援。
 - 使用者批准未列日期的利息按明示結帳日認列。只在 `interest` 且 Statement 有 `closing_date` 時適用；用共用 resolver 保持正規化/月彙總一致，來源日期仍為空，API/raw_json 保留認列依據。其他缺日期列仍 pending，不可擴張為所有列自動補日。
-- 近期產品方向以 `ARCHITECTURE_REVIEW_BRIEF.md` 為 review gate：核心目標收斂到每月信用卡帳單自動分析。高階審查完成前，不新增非核心平台能力，也不得把 brief 中的候選簡化直接視為已批准的刪除/重構。
+- 近期產品方向仍以信用卡帳單正確入帳為核心；但 2026-09-30 使用者已單獨批准分類支出扩展，實作時以 `CATEGORY_SPENDING_PLAN.md` 为准。除此之外仍不新增未核准平台能力，也不得把旧 brief 的候选简化直接视为删除/重构授权。
 - Excel 是 SQLite 已提交交易的可重建投影，不是資料來源。只能覆蓋帶應用程式 ownership marker 的專用工作簿；外部修改、檔案佔用與輸出 hash 不一致必須保留可見狀態，不得靜默覆蓋未知檔案或把 Excel 反向匯入 Finance。
 - M5.2 密碼流程必須使用 versioned PasswordRule DSL；禁止直接執行/eval LLM 產生的程式碼，禁止以大量排列組合暴力猜密碼。
 - 修改 AI 密碼規則 provider 前必讀 `FREE_AI_PASSWORD_RULE_PLAN.md` 與 `GROQ_RUNTIME_REVIEW.md`。Groq 是 Recommended / 新設定 Default，不代表 Active Provider；runtime 只認 backend 已保存 profile + SecretStore credential。免費 API 只能解析遮罩後規則；Groq 失敗/429 不得自動 fallback 到可能付費的 OpenAI，也不得把真實身分證、生日、實際 PDF 密碼或帳單全文送給任何 provider。
@@ -57,7 +58,7 @@
 - 三家全部 PASS 才能宣稱真實驗收通過。任一 FAIL 必須先找證據、盡力修復並重跑三家，不得只記錄失敗就結束，也不得降低通過標準。只有缺權限、必要資料、外部服務阻塞或需要使用者決策才可交接；在 HANDOFF 及回覆列出已嘗試修復、具體阻塞及下一步。沒有 Gmail 工具、登入、秘密或受支援版型不是可略過的成功理由。
 - 測試不授權自動確認入帳、付費 AI fallback、公開或保存秘密。正式 Finance 不因重複驗收新增紀錄；入帳/Excel 寫入另在已授權隔離流程驗證。
 
-接手先檢查 Git HEAD/status 並保留未提交修改，再讀本指引、README、HANDOFF、TASKS、IMPLEMENTATION_PLAN、FREE_AI_PASSWORD_RULE_PLAN 與 GROQ_RUNTIME_REVIEW。Groq adapter、S3F-C、S1-S3、Codex import、三銀行已驗證 parser 及 Statement 入帳閘門已有程式/驗證，不因舊紀錄重做。未完成是 Codex 排程真實執行、S3F-B Groq activation、第二期盲測及其他未知版型。
+接手先檢查 Git HEAD/status 並保留未提交修改，再讀本指引、README、HANDOFF、TASKS、IMPLEMENTATION_PLAN、FREE_AI_PASSWORD_RULE_PLAN、GROQ_RUNTIME_REVIEW；若任務涉及分類/圖表，必讀 CATEGORY_SPENDING_PLAN。Groq adapter、S3F-C、S1-S3、Codex import、三銀行已驗證 parser 及 Statement 入帳閘門已有程式/驗證，不因舊紀錄重做。分類功能目前只有规划，未实作；不要把文档勾成完成。
 
 ## 完成標準
 
