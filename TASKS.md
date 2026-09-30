@@ -34,7 +34,20 @@
 
 M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自動化與交付。每步 focused tests，S0/S6/S7/S9 全套 backend/build，schema 另做隔離 migration；更新 HANDOFF 才勾選。缺真實樣本/外部驗收保持未完成，不能拿合成資料代替。S0 已勾是前輪基線，接手仍要重驗。
 
-本輪延後完整 Dashboard、分類/備註、Excel 事件驅動重寫，以及 legacy Gmail History/schema 的破壞性移除。既有 remote source 只作相容，不再驅動日常收件；詳細工作包、固定測試數值與缺件處理只維護在 IMPLEMENTATION_PLAN，避免多份衝突規格。
+本輪仍延後完整 Dashboard 重寫、備註/Tag、AI 分類、Budget、Excel 事件驅動重寫，以及 legacy Gmail History/schema 的破壞性移除。2026-09-30 使用者已明确批准 M12「分类支出＋Donut＋Category → Merchant → Transaction 下钻」，canonical 设计与 Test Matrix 只维护在 `CATEGORY_SPENDING_PLAN.md`，避免多份冲突规格。
+
+## M12：消費分類、Donut 與下鑽
+
+2026-09-30 使用者已明确批准；**目前仅完成规划，尚未实作。** 详细设计与测试矩阵见 `CATEGORY_SPENDING_PLAN.md`。
+
+- [ ] C1：新增 Category / CategoryRule / TransactionCategoryOverride domain 与下一版 Alembic migration；不修改 FinanceTransaction identity。
+- [ ] C2：实现 read-time CategorizationService、description normalization、deterministic precedence、system default 与批次 resolver；禁止 N+1。
+- [ ] C3：新增 categories/rules/spending-by-category/category-merchants/uncategorized APIs，并扩充 transaction effective category/filter。
+- [ ] C4：总览加入 Recharts Donut、Top 5 + 其余类别、退款/抵扣区块、Category → Merchant → Transaction 下钻、未分类整理；加入最小 Vitest + React Testing Library。
+- [ ] C5：Excel 交易明细分类栏＋分类支出 worksheet＋snapshot fingerprint，完成 backup/restore、full backend、frontend tests/build 与当次 E2E-GMAIL-3BANK delivery gate。
+- [ ] P0 分类 Test Matrix 全通过：migration、rule precedence、manual override、refund/payment、多币别、revoke/restore、Statement 重跑、API pagination、Excel fingerprint/security。
+- [ ] P1 日常使用测试通过：Top-N grouping、merchant drill-down、UI rollback/stale request、mobile/keyboard/accessibility、category management、backup/restore。
+
 
 ## M0：產品與架構基線
 
