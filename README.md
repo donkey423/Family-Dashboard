@@ -6,6 +6,8 @@
 
 未列交易日期的利息依使用者批准按帳單明示結帳日認列，明細顯示「結帳日認列」；保留原始缺日期與認列依據。普通消費/費用/繳款缺日期，或利息缺明示結帳日，仍待處理，不拿郵件日猜日期。
 
+**下一階段已核准但尚未實作：** 消費分類、同類商家歸組、支出 Donut、Category → Merchant → Transaction 下鑽與未分類整理。V1 採 read-time Effective Category，不把 category 寫回 FinanceTransaction identity，也不做 AI 分類、Budget、Tag 或多層 subcategory。完整設計與 Test Matrix 見 [CATEGORY_SPENDING_PLAN.md](CATEGORY_SPENDING_PLAN.md)。
+
 密碼規則 provider-neutral/Groq adapter 與 safe-switch 已完成：可先做不落盤的 synthetic 連線測試，保存時會再次 preflight，失敗不會覆蓋舊設定；狀態 API 也會分開回報 profile 與 credential 是否可用。2026-09-30 修正 Windows 啟動帳戶後，Active Provider 仍是 OpenAI / `gpt-4.1-mini`，既有 key 已可從 Windows Credential Manager 讀取（`credential_available=true`）；這只確認本機憑證可讀，未重新驗證供應商授權或額度。Groq runtime activation 與真實 Groq request 仍需使用者提供 Groq API key 後驗收。相關 Active Provider、preflight 與安全切換規格見 [GROQ_RUNTIME_REVIEW.md](GROQ_RUNTIME_REVIEW.md)。Excel 優先的逐步實作與驗收見 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)，下列操作說明描述現有功能。
 
 ## 開發環境
@@ -134,3 +136,4 @@ npm run build
 - [執行問題與處理紀錄](EXECUTION_ISSUES.md)
 - [免費 AI 密碼規則 Provider 規格](FREE_AI_PASSWORD_RULE_PLAN.md)
 - [Groq Runtime 深度審查與切換方案](GROQ_RUNTIME_REVIEW.md)
+- [消費分類、支出 Donut 與下鑽規劃](CATEGORY_SPENDING_PLAN.md)
