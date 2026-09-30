@@ -1,6 +1,6 @@
 # 家庭收支記錄：Excel 優先實作流程
 
-本文件供 Luna max 或其他接手模型逐步實作。2026-09-28 依目前程式重新收斂範圍；2026-09-29 已完成第一個已授權中國信託版型的 S4 parser、S5 statement migration、S6 原子確認／入帳／Excel 與 S7 最小介面。2026-09-30 使用者決定移除網站 Gmail OAuth 主流程，改由 Codex Gmail MCP／排程管理收件；S8 以下以此新決策為準，不再擴充內建同步引擎。
+本文件供 Luna max 或其他接手模型逐步實作。2026-09-28 依目前程式重新收斂範圍；2026-09-29 已完成第一個已授權中國信託版型的 S4 parser、S5 statement migration、S6 原子確認／入帳／Excel 與 S7 最小介面。2026-09-30 使用者決定移除網站 Gmail OAuth 主流程，改由 Codex Gmail MCP／排程管理收件；同日另明确批准分类支出功能，详细设计与完整测试矩阵以 `CATEGORY_SPENDING_PLAN.md` 为准。
 
 **目前執行狀態（2026-09-30）：** 中國信託已完成真實 Finance/Excel；新下載中國信託/國泰/永豐加密帳單通過解鎖、全列/摘要核對及草稿冪等，國泰/永豐未自動確認正式入帳。parser 限上述已驗證文字版型與受限台新零交易。使用者批准未列日期的利息按明示結帳日認列，保留來源日期及認列依據，其他缺日期仍 pending。Codex MCP 匯入邊界已完成，網站 OAuth/scheduler 停用；Codex 自動化已建立，首次真實/跨日執行與第二期 parser 盲測未完成，不能因 API/合成測試成功宣稱無人收件或入帳。
 
@@ -48,7 +48,7 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 | 原子匯入 + 撤銷/恢復 | 誤匯入可排除，失敗不留半份帳單 |
 | Excel ownership/hash/atomic replace/retry | 不覆寫別人的工作簿，Excel 開啟時保留舊檔 |
 
-**本輪不做：** 新家庭 domain、股票 API、多銀行 plugin framework、通用 AI 交易解析、AI 分類、分類/備註 CRUD、完整 Dashboard、全站重排、OCR 擴充、PWA/原生 App、雙向 Excel 同步、保留任意手寫工作表、microservices、Redis/Kafka/Kubernetes/PostgreSQL。
+**本輪仍不做：** 新家庭 domain、股票 API、多銀行 plugin framework、通用 AI 交易解析、AI 分類、備註/Tag、Budget、理財建議、完整 Dashboard 重寫、全站重排、OCR 擴充、PWA/原生 App、雙向 Excel 同步、保留任意手寫工作表、microservices、Redis/Kafka/Kubernetes/PostgreSQL。**分類例外已获使用者明确批准**：只做 `CATEGORY_SPENDING_PLAN.md` 的 Category/Rule/TransactionOverride、read-time effective category、Donut、Merchant drill-down、未分類整理與 Excel 投影。
 
 **凍結 legacy 同步引擎：** 不再擴充 Gmail History、內建 OAuth UI 或網站 scheduler，也不在本輪破壞性移除既有 schema/adapter。新收件只走 Codex MCP import；歷史 remote-only 文件完成本機保存與資料盤點後，才另案評估 dependency/schema 移除。Excel 背景檢查先沿用，不改成事件平台。
 
@@ -365,8 +365,9 @@ S3F 不得擴張成 multi-provider 平台。三銀行明示格式已可本機解
 | M9 / S0-S6 | 一家銀行兩期驗證、原子確認/去重/撤銷、真實 PDF 正確到 Excel | 完整 Dashboard、分類、每日排程 |
 | M10 / S7 | 最小帳戶設定/待處理/確認/Excel 操作，桌面手機可用 | 全站重排、財務管理平台 |
 | M11 / S8-S9 | Codex MCP 受控收件、固定 Windows 入口、授權真實驗收 | Legacy History 重寫、事件平台、原生 App |
+| M12 / C1-C5 | 消費分類、Donut、Category → Merchant → Transaction 下鑽、未分類整理、Excel 分類投影 | AI 分類、Budget、Tag、通用 Dashboard builder |
 
-- 舊 S7 Excel 提前到 S6C；月報圖表及分類/備註不再列本輪待辦。
+- 舊 S7 Excel 已提前到 S6C。2026-09-30 使用者重新把「分類支出＋Donut 下鑽」列为明确产品待办，改由 M12/C1-C5 执行；备注/Tag、Budget 与通用 Dashboard 仍不做。
 - 舊 S8 的 90 天水位、每日/退避新排程、停止 History 取消本輪要求，不刪已有實作。
 - Documents/SecretStore/去重/撤銷是必要可靠性，不為縮短檔案數拆除。
 - 不以測試數量、抽取字數、文件數、Excel 存在判定成功；要逐筆正確、重跑 0 新增、撤銷/恢復一致。
@@ -402,4 +403,40 @@ Alembic heads 只讀 migration 定義；schema 驗證沿用 `test_migrations.py`
 
 ## 18. 給 Luna max 的啟動指示
 
-> 請開始實作「家庭收支記錄」。先讀 `AGENTS.md`、`README.md`、`HANDOFF.md`、`TASKS.md`、`IMPLEMENTATION_PLAN.md`、`FREE_AI_PASSWORD_RULE_PLAN.md`，並重新確認 Git HEAD/status。`main` 已包含 `eeb6883` 的 Groq 程式，禁止重做或覆蓋。先核實 S1-S3、S3F-A 與 Statement contract；如果 runtime 尚未切 Groq，先完成 S3F-C safe-switch preflight，再完成 S3F-B synthetic activation；之後從真正未完成的 S4 接續。目標是信用卡 PDF 正確到 SQLite/Excel，不是擴建家庭平台。S6 必須先交付正確 Excel，不做完整 Dashboard、分類或同步引擎重寫。parser 需要一家銀行兩期授權樣本，缺樣本不得猜格式/假稱通過。使用隔離資料/fake provider，不讀聊天秘密，不自行操作正式 DB、啟用外部服務/排程或改網路；Git 寫入依使用者當次授權。遇必要外部關卡才停並列缺件。
+> 請開始實作「家庭收支記錄」。先讀 `AGENTS.md`、`README.md`、`HANDOFF.md`、`TASKS.md`、`IMPLEMENTATION_PLAN.md`、`FREE_AI_PASSWORD_RULE_PLAN.md`，並重新確認 Git HEAD/status。若當次任務是分類支出／Donut／下鑽，另外必讀 `CATEGORY_SPENDING_PLAN.md`，直接按 C1-C5 執行，不重做 parser/Statement 核心。分類功能採 read-time Effective Category，不把銀行規則塞進 parser，不做 AI 分類、Budget、Tag 或完整 Dashboard 重寫。使用隔離 DB/合成資料验证 schema 与分类；正式交付仍遵守 E2E-GMAIL-3BANK。Git 寫入依使用者當次授權。
+
+## 19. 使用者核准的 M12：分類支出與 Donut 下鑽
+
+2026-09-30 使用者明確要求：每一筆交易要能分類、同類型歸組、總覽以圓餅／Donut 一眼看出花費去向，並可點類別查看商家與逐筆明細。
+
+本功能的 **canonical 規格、資料模型、API、前端、Excel、C1-C5 工作包與完整 Test Matrix** 全部維護在：
+
+- `CATEGORY_SPENDING_PLAN.md`
+
+執行原则：
+
+1. 不改银行 parser 来做商家分类；分类属于 Finance categorization。
+2. V1 不把 category 写回 `FinanceTransaction`，使用 Category + Rule + TransactionOverride 在 read time 解析 Effective Category。
+3. 财务语义与显示分类分离；payment 永远不因改分类而进入消费，refund 仍按既有支出语义冲抵。
+4. 多币别分开，不做未授权汇率换算。
+5. Drill-down 固定为 Category → Merchant subtotal → Transaction rows；第一版不建立 subcategory taxonomy。
+6. V1 不使用 AI 自动分类。
+7. 前端使用独立组件与 Recharts；加入最小 Vitest + React Testing Library，不为了这项功能导入大型 E2E framework。
+8. Web 与 Excel 必须使用同一个 CategorizationService；只改分类也必须触发 Excel snapshot 更新。
+9. C1-C5 真正实作准备交付时，仍需跑本项目现行的 E2E-GMAIL-3BANK delivery gate。
+10. 只更新分类规划文件时，不把文件更新冒称为分类功能已实作或项目验收完成。
+
+建议顺序：
+
+```text
+C1 Category domain + migration
+  ↓
+C2 Categorization engine
+  ↓
+C3 Category APIs
+  ↓
+C4 Donut / drill-down / 未分类整理
+  ↓
+C5 Excel + full regression + delivery gate
+```
+
