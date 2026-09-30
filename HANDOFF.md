@@ -1,5 +1,18 @@
 # 交接
 
+## 2026-09-30 消費分類／Donut 規劃
+
+- 使用者已明确把「每笔交易分类、同类归组、支出 Donut、一层类別点入商家小计再看逐笔明细」批准为下一阶段产品功能。
+- 新增 canonical 规划：`CATEGORY_SPENDING_PLAN.md`。目前**只有设计与 Test Matrix，尚未实作**；没有新增 migration、model、API、chart dependency 或 frontend test dependency。
+- 核心设计：V1 不把 category 写回 `FinanceTransaction`；新增 Category / CategoryRule / TransactionCategoryOverride，由 `CategorizationService` 在 read time 解析 Effective Category。单笔 override > exact rule > contains rule > system default > 未分类。
+- 财务语义与显示分类分开：purchase/fee/interest/refund/payment 继续沿用现有 Finance 语义；分类不能让 payment 进入消费，也不能改变 amount/date/source/row_hash/statement identity。
+- Drill-down 固定为 Category → Merchant subtotal → Transaction；V1 不做 subcategory taxonomy、AI 分类、Budget、Tag、汇率换算或通用 Dashboard builder。
+- Donut 单次只显示一种币别；Top 5 +「其余类别」，真正的 `uncategorized` 显示「未分类」。负净额 category 不画 slice，另列退款／抵扣。
+- 前端计划采用 Recharts，并首次加入最小 Vitest + React Testing Library；不导入大型 E2E framework。
+- Excel 必须复用同一个 CategorizationService，并让 rule/override 变化进入 snapshot fingerprint；只改分类也要触发重建。
+- C1-C5 与完整 P0/P1/P2 Test Matrix 已写入 CATEGORY_SPENDING_PLAN；TASKS 已新增 M12。
+- 本轮是**纯文件规划更新**，没有修改业务程式，因此未重跑 backend/frontend，也未执行新的 E2E-GMAIL-3BANK；按 AGENTS 只能宣称规划文件已更新，不能宣称分类功能或项目验收完成。
+
 ## 2026-09-30 推送前驗證狀態
 
 - 本輪重新執行完整 backend：258 passed、2 個既有相依套件棄用警告；frontend production build 與 `git diff --check` 成功。只提交程式、測試及文件，原始帳單、資料庫、秘密、build 產物及未追蹤測試暫存資料夾不納入 Git。
