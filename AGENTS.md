@@ -11,7 +11,7 @@
 - `ARCHITECTURE_REVIEW_BRIEF.md`：2026-09-28 使用者最新的信用卡帳單優先需求、Overdesign 假說、候選簡化方向與高階模型 review gate。
 - `FREE_AI_PASSWORD_RULE_PLAN.md`：Groq Free 密碼規則解析的 provider 設計、安全邊界與驗收規格；實作/切換前必須重新查官方額度與模型支援。
 - `GROQ_RUNTIME_REVIEW.md`：Groq 已實作後的程式級深度審查；明確區分 Recommended / Default / Active Provider，並定義 safe-switch preflight、runtime activation 與真實 smoke test。
-- `CATEGORY_SPENDING_PLAN.md`：C1-C5 為已核准且已實作的人工分類／商家規則／Donut／下鑽；第 18 節是逐筆自動分類研究、A1-A6 與新測試矩陣，目前未授權實作。分類功能以此文件為 canonical plan。
+- `CATEGORY_SPENDING_PLAN.md`：C1-C5 為已核准且已實作的人工分類／商家規則／Donut／下鑽；第 4/18 節记录 2026-09-30 使用者核准写入的下一版 taxonomy、Donut「未分类保持可见」规则、A1-A6 与 AUTO-01-10，**仅文件/Git 已授权，程式 migration／正式部署仍未授权**。分類功能以此文件為 canonical plan。
 - `backend/src/family_finance_hub`：FastAPI、application use cases、domain services、ports 與 adapters。
 - `backend/tests`：後端自動化測試。
 - `frontend/src`：React/TypeScript Web UI。
@@ -35,7 +35,7 @@
 - 此主機的常態服務由 `FamilyFinanceHub` 互動式登入排程執行。`scripts/start_server.ps1` 會以獨立、隨機且立即清除的合成憑證測試安全儲存的寫入/讀取/清除；未通過不得占用 3000。Codex 沙箱帳戶曾造成 Windows 1312 寫入錯誤及已存憑證誤顯示未保存；重啟正式服務應使用既有 Windows 使用者排程，而非在沙箱中背景啟動。
 - 目前文件解鎖 UI 只收身分證字號及/或生日；內部固定個人 profile 沿用既有 schema，不能把銀行、機構或家庭成員設定重新變成使用者前置步驟。保存 AI key 後，加密 PDF 預覽可分析遮罩提示並在本機組合密碼；不得把這當作 PDF 交易自動入帳。
 - 新增模組應新增自己的 domain/service/schema migration，避免直接操作其他模組資料。分類功能必须放在 Finance categorization 边界，不把银行分类逻辑写进 BankStatementParser；V1 以 Category/Rule/TransactionOverride 做 read-time effective category，不把 category 写回 FinanceTransaction identity。
-- 2026-09-30 使用者另要求交通／圖書／飲食等逐筆自動辨識，並授權將研究與現有成果更新 MD／Git；這不等於開始 A1-A6 程式、正式升級／部署或同意交易資料送雲端。現有 V1 沒有內建商家字典或 AI 分類；接手先讀 canonical plan 第 18 節，避免將 C1-C5 通過當成自動辨識已完成。
+- 2026-09-30 使用者另要求交通／圖書／飲食等逐筆自動辨識，并核准 taxonomy 建议写入 MD/Git：新增规划中的 `books`／`insurance`，收敛显示名称与边界，Donut 在类别很多时保留「未分类」独立 slice。這不等於開始 A1-A6 程式、正式升級／部署或同意交易資料送雲端；当前正式 0012 仍维持既有分类。
 - 進度以 TASKS.md 與 HANDOFF.md 為準：平台、Excel、`0011_statement_import` 及 Codex MCP 匯入邊界已有實作；中國信託已完成真實 Finance/Excel，2026-09-30 中國信託/國泰/永豐新下載加密帳單皆通過逐列/合計核對及冪等，後兩家未自動確認入帳。第二期盲測、未知版型、Codex 排程真實/跨日及實體手機仍未完成；不得宣稱通用銀行支援。
 - 使用者批准未列日期的利息按明示結帳日認列。只在 `interest` 且 Statement 有 `closing_date` 時適用；用共用 resolver 保持正規化/月彙總一致，來源日期仍為空，API/raw_json 保留認列依據。其他缺日期列仍 pending，不可擴張為所有列自動補日。
 - 近期產品方向仍以信用卡帳單正確入帳為核心；但 2026-09-30 使用者已單獨批准分類支出扩展，實作時以 `CATEGORY_SPENDING_PLAN.md` 为准。除此之外仍不新增未核准平台能力，也不得把旧 brief 的候选简化直接视为删除/重构授权。
