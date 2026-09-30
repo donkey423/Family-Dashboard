@@ -11,7 +11,7 @@
 ## 本輪成果與 Git 狀態
 
 - 已讀取遠端 `origin/main @ bf3d4f6` 的七個 MD-only 提交，依已核准的 C1-C5 實作消費分類、Donut、商家／逐筆下鑽與 Excel 分類投影。
-- 分類實作起點為 `f34550d`。本次已收到使用者更新 MD 與推送 Git 的授權；遠端七個 MD-only 提交須保留，整合另依當次核准，不 force push 或 reset。目前 HEAD／提交範圍及遠端同步結果由 `git status`、`git log`、`git ls-remote origin refs/heads/main` 確認，不在文件固定一個會過時的 HEAD。
+- 分類實作起點為 `f34550d`。使用者已授權更新 MD、推送 Git，並於確認分岔後明確授權 `merge`；本次以正常 merge 保留遠端七個 MD-only 提交與本機兩個提交，不 force push 或 reset。目前 HEAD／提交範圍及遠端同步結果由 `git status`、`git log`、`git ls-remote origin refs/heads/main` 確認，不在文件固定一個會過時的 HEAD。
 - 推送只包含程式、測試、腳本及 MD；不加入 Downloads、data、DB／帳單／工作簿／秘密、build／dependencies 或原有未追蹤 `pytest-of-brad/`、`tmpe9fanwiq/`，不刪這些內容。
 - M12 正式部署及本輪三銀行關卡已完成；預覽不是日常資料入口，不把合成資料加入正式資料庫。
 - 已新增 Gmail 網頁附件下載檢查點／驗證工具及受控三銀行隔離驗收腳本；不改正式匯入契約、重新導入 OAuth 或更動排程。後續必測步驟見 IMPLEMENTATION_PLAN 4.1。
@@ -31,7 +31,9 @@
 - 待提交檔案掃描未發現長格式 API key／私鑰或 MD 中證號；仍須人工確認 staged 路徑，只納入原始碼／測試／腳本／文件，排除 data、DB、PDF、Excel、暫存與 build。此掃描不是萬用秘密檢測保證。
 - 正常帳戶 fetch 已讀到 `origin/main @ bf3d4f6`；沙箱 Schannel `SEC_E_NO_CREDENTIALS` 與正常帳戶 repo ownership 檢查，透過當次提升權限及命令限定的 `safe.directory` 處理，不關閉 TLS 或更動全域 Git 信任設定。整合及 push 須依當次核准，推送成功另以遠端 SHA 核對。
 
-**Git 發佈目前阻塞：** 功能與文件已建立本機 commit `75f7b72`；正常 `push origin HEAD:main` 被 `non-fast-forward` 拒絕，遠端七個 MD-only 提交與本機提交都須保留。已詢問使用者是否允許 merge `origin/main`，尚未取得答覆；不能把 commit 成功當成已上傳，也不 force push／reset。下一步在取得整合授權後處理文件衝突、核對遠端內容保留及 diff，再正常 push 並用 `git ls-remote` 確認 GitHub main SHA 與本機 HEAD 相同。原有兩個未追蹤暫存目錄保留，不加入提交。
+**Git 整合已獲授權：** 先前 `non-fast-forward` 原因是本機兩個提交與遠端七個 MD-only 提交分岔。使用者已明確要求 `merge`，本次保留兩邊歷史及遠端分類規格／測試矩陣；文件衝突採目前程式可驗證的實作狀態，避免退回「分類尚未實作」或重做 C1-C5。發布採正常 `push origin HEAD:main`，以 `git ls-remote origin refs/heads/main` 與本機 HEAD 相同作成功證據，不 force push／reset。原有 `pytest-of-brad/`、`tmpe9fanwiq/` 保留且不加入提交。
+
+本次合併驗證：backend **326 passed，2 warnings**、frontend **29 passed**、TypeScript／Vite production build 成功（輸出 `dist-category-preview`）；本機及私有 HTTPS 首頁／health 產品識別相符。合併沒有改動業務程式、正式 schema、部署、帳本或秘密；未重新執行 Gmail 三銀行，依 canonical plan 第 15 節只宣稱文件／Git 整合及上述回歸，前次真實 Gmail PASS 不算本次驗收。
 
 ## M12 已實作
 
