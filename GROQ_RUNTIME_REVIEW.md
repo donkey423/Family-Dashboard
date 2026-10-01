@@ -1,6 +1,6 @@
-# Groq Runtime 深度審查與切換方案
+# 家庭收支記錄：Groq Runtime 審查與切換
 
-> 更新日期：2026-09-30
+> 程式／runtime 審查日期：2026-09-30；文件整理：2026-10-01。本文未重新呼叫供應商；當時 provider、免費額度及模型狀態不是今日保證。最新完整測試及部署見 [HANDOFF.md](HANDOFF.md)。
 >
 > Groq 實作 commit：`eeb6883`。本次程式級審查最初以 `b40163d` 為基準，之後的文件 commit 只更新規格與交接，不代表 Groq provider 被重新實作。開始工作前仍須讀取最新 `main`。
 
@@ -11,7 +11,7 @@ Groq provider 與 S3F-C safe-switch **已實作**。現在剩下的問題是兩�
 1. runtime 是否真的已切到 Groq；
 2. 真實 Groq request、verified cache 與 synthetic encrypted PDF 是否完成端到端驗收。
 
-目前資料庫中的 Active Provider 仍指向 OpenAI / `gpt-4.1-mini`。2026-09-30 已確認先前服務誤以 Codex 沙箱帳戶執行，讀不到使用者的憑證；改由互動式登入排程啟動後，既有 key 已可讀（`credential_available=true`）。本次只查本機憑證狀態，未重新驗證 provider 授權或額度，也未切換 Groq。不能因 UI 預設 Groq 或 Git 已包含 Groq adapter，就宣稱真實 PDF 已經走 Groq。
+2026-09-30 最後有證據的資料庫 Active Provider 指向 OpenAI / `gpt-4.1-mini`。2026-09-30 已確認先前服務誤以 Codex 沙箱帳戶執行，讀不到使用者的憑證；改由互動式登入排程啟動後，既有 key 已可讀（`credential_available=true`）。本次只查本機憑證狀態，未重新驗證 provider 授權或額度，也未切換 Groq。不能因 UI 預設 Groq 或 Git 已包含 Groq adapter，就宣稱真實 PDF 已經走 Groq。
 
 ## 2. Recommended / Default / Active 必須分開
 
@@ -49,7 +49,7 @@ Backend `AIProviderInput.provider="openai"` 的 default 只作舊 client 相容�
 
 ### 已有驗證
 
-- 最新完整 backend 測試紀錄：211 passed。
+- S3F-C 當時完整 backend：211 passed；這是歷史結果，最新完整 suite 結果見 HANDOFF。
 - frontend production build 成功。
 - 合成測試覆蓋 Groq/OpenAI dispatch、Groq endpoint/schema、legacy profile、設定 API、不自動 fallback 等。
 - 這些都**不是**真實 Groq credential/request 或真實銀行 PDF 驗收。

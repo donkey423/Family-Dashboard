@@ -1,8 +1,10 @@
 # 家庭收支記錄：Excel 優先實作流程
 
-本文件供 Luna max 或其他接手模型逐步實作。2026-09-28 依目前程式重新收斂範圍；2026-09-29 已完成第一個已授權中國信託版型的 S4 parser、S5 statement migration、S6 原子確認／入帳／Excel 與 S7 最小介面。2026-09-30 使用者決定移除網站 Gmail OAuth 主流程，改由 Codex Gmail MCP／排程管理收件；同日另明确批准分类支出功能，详细设计与完整测试矩阵以 `CATEGORY_SPENDING_PLAN.md` 为准。
+本文件供 Luna max 或其他接手模型逐步實作。2026-09-28 依目前程式重新收斂範圍；2026-09-29 已完成第一個已授權中國信託版型的 S4 parser、S5 statement migration、S6 原子確認／入帳／Excel 與 S7 最小介面。2026-09-30 使用者決定移除網站 Gmail OAuth 主流程，改由 Codex Gmail MCP／排程管理收件；同日另明確批准分類支出功能，完整設計與測試矩陣以 `CATEGORY_SPENDING_PLAN.md` 為準。
 
-**目前執行狀態（2026-09-30）：** 中國信託已完成真實 Finance/Excel；新下載中國信託/國泰/永豐加密帳單通過解鎖、全列/摘要核對及草稿冪等，國泰/永豐未自動確認正式入帳。parser 限上述已驗證文字版型與受限台新零交易。使用者批准未列日期的利息按明示結帳日認列，保留來源日期及認列依據，其他缺日期仍 pending。Codex MCP 匯入邊界已完成，網站 OAuth/scheduler 停用；Codex 自動化已建立，首次真實/跨日執行與第二期 parser 盲測未完成，不能因 API/合成測試成功宣稱無人收件或入帳。
+**2026-10-01 更新：** M12 C1-C5 正式部署完成；M13 A2／A3 的 16 類 taxonomy、本機明確規則、逐筆／批次確認與未分類槽位已隔離實作。A1 分類品質、A5 正式部署與可選 A4 未完成，不重做已有工作。開發 head 0013、正式服務／DB 0012；Git merge／push 不授權正式升級或交易資料送雲端。詳見 [HANDOFF](HANDOFF.md)／[TASKS](TASKS.md)。
+
+**核心流程狀態（2026-10-01；三銀行實測為當日分類實作驗收）：** 中國信託已完成真實 Finance/Excel；新下載中國信託/國泰/永豐加密帳單通過解鎖、全列/摘要核對及草稿冪等，國泰/永豐未自動確認正式入帳。parser 限上述已驗證文字版型與受限台新零交易。使用者批准未列日期的利息按明示結帳日認列，保留來源日期及認列依據，其他缺日期仍 pending。Codex MCP 匯入邊界已完成，網站 OAuth/scheduler 停用；Codex 自動化已建立，首次真實/跨日執行與第二期 parser 盲測未完成，不能因 API/合成測試成功宣稱無人收件或入帳。
 
 ## 1. 交付目標與授權
 
@@ -26,12 +28,12 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 | 項目 | 已觀察狀態 | 不可誤認為 |
 | --- | --- | --- |
-| Git | 分類規劃基準 `f34550d`，遠端文件基準 `origin/main @ bf3d4f6`；使用者已要求將現有成果與研究更新 MD／Git，當前 refs 由 Git 命令驗證 | 不能假定舊 HEAD 仍為目前版本、強推覆蓋遠端或移除未提交內容 |
+| Git | 分類規劃基準 `f34550d`，遠端 taxonomy 基準 `430ef5c` 的六個文件提交，以正常 merge 整合；實作保存 commit `90328b0`。當前／推送結果須由 Git 命令驗證，不固定為舊 HEAD | 不能假定舊 HEAD 仍為目前版本、強推覆蓋遠端或移除未提交內容 |
 | S1-S3 | Gmail 自訂查詢隔離、提示上下文/遮罩、共用 PDF 解鎖用例已有程式與合成測試 | 需要全部重寫 |
 | S4 | 契約、月支出、穩定列 hash、pending 閘門及中國信託/國泰/永豐已驗證文字版型、受限台新零交易；三銀行新下載解鎖/解析/核對通過 | 已完成第二期盲測、國泰/永豐正式入帳或所有銀行 |
 | PDF | 來源讀取、本機解密、文字抽取/預覽，OCR 有介面及 adapter | 已建立 Finance 交易 |
 | Gmail | Codex MCP 本機匯入 API 已完成；網站 OAuth/scheduler 預設停用，legacy 程式只供相容 | Codex 排程已完成真實／跨日驗收，或 PDF 可自動入帳 |
-| SQLite | 正式 `family-finance-hub-live.db` 已為 `0012_transaction_categories`，18 筆既有交易保留；Statement 與分類各自擁有資料 | 可以自動確認草稿、恢復已撤銷資料或升級舊 DB |
+| SQLite | 開發 head 0013；正式 `family-finance-hub-live.db`／正在執行的 M12 仍為 0012、18 筆。Statement 與分類各自擁有資料 | 可直接重啟正式服務、自動 confirm／恢復已撤銷資料或升級舊 DB |
 | Excel | 已有快照、背景檢查、ownership marker、原子替換及佔用重試；正式分類投影已核對交易／每期 API parity | 可把付款當收入，或將 legacy CSV 正值一律視為信用卡退款 |
 | 驗證 | 帳單／入帳與 Codex MCP import 有聚焦測試，frontend production build 成功；Groq/OpenAI dispatch 等以合成資料覆蓋 | 已完成第二期盲測、Groq runtime activation、Codex Gmail 真實長期自動化 |
 
@@ -175,7 +177,7 @@ API 需保持執行，兩個命令在不同終端執行。`$run/cases.json` 是 
 
 ## 7.1 S3F：免費 AI 密碼規則 Provider
 
-**目的：** 將目前 OpenAI-only 的密碼提示解析改成免費 API 優先；完整規格見 [FREE_AI_PASSWORD_RULE_PLAN.md](FREE_AI_PASSWORD_RULE_PLAN.md)。
+**目的（已實作）：** 將原 OpenAI-only 密碼提示解析改成免費 API 優先；完整規格見 [FREE_AI_PASSWORD_RULE_PLAN.md](FREE_AI_PASSWORD_RULE_PLAN.md)。
 
 **目前狀態（2026-09-30）：** provider-neutral／Groq adapter 與 safe-switch 程式均已完成；真實 Groq activation／request 仍未驗收，上次正常帳戶 runtime 是已保存 OpenAI profile。明示格式不需要 AI，中國信託已完成 Finance／Excel；國泰／永豐本輪新下載解鎖、逐列核對與草稿冪等成功，沒有自動 confirm。最新測試數／部署狀態以 HANDOFF 為準，不由 UI 預設推定 provider 切換。
 
@@ -185,13 +187,13 @@ API 需保持執行，兩個命令在不同終端執行。`$run/cases.json` 是 
 - Groq 401/403/429/timeout/5xx 或 schema failure 均 fail closed，留 pending/manual；禁止自動 fallback 到可能付費的 OpenAI。OpenAI 只有使用者明確選擇時使用。
 - 驗收包含 synthetic prompt、payload 脫敏、provider dispatch、verified cache、不自動 fallback 及前端 production build。
 
-**S3F 剩餘工作：**
+**S3F 驗收與已完成契約：**
 
 - **S3F-B Runtime activation**：本機明確啟用 Groq，保存後確認 Active Provider/Model，先以 synthetic prompt 呼叫真實 Groq；第二次相同提示必須命中 cache，不再 remote call。
-- **S3F-C Safe switch hardening**：新增 `/api/security/ai-provider/test` 或等價 preflight；新 provider 設定驗證失敗時，舊 active credential 必須完整保留。
+- **S3F-C Safe switch hardening（已實作）**：`/api/security/ai-provider/test` 與 configure preflight、credential status、Active Provider UI 已有；後续只回歸，失敗保留舊 active credential。
 - 將 provider 失敗轉成穩定 reason code；429/網路/schema/model 問題只留 pending/manual，不可偷偷改呼叫 OpenAI。
 - Recommended/Default/Active Provider 必須分開：Groq 是建議與新設定預設，runtime 只認已保存 Active Provider。
-- Groq Responses API 目前官方仍標示 beta；`openai/gpt-oss-20b` 支援 strict Structured Outputs，但實際相容性以 synthetic smoke test 為準。
+- 2026-09-29 查閱時 Groq Responses API 標示 beta；實際切換前重查，`openai/gpt-oss-20b` 支援 strict Structured Outputs，但實際相容性以 synthetic smoke test 為準。
 
 S3F 不得擴張成 multi-provider 平台。三銀行明示格式已可本機解鎖，S3F-B 不是其前置；只有來源規則必須用 AI 時才要求真實 provider 驗收。S4 剩餘主要關卡是第二期獨立盲測，不重做已驗證 parser。
 
@@ -396,6 +398,7 @@ S3F 不得擴張成 multi-provider 平台。三銀行明示格式已可本機解
 | M10 / S7 | 最小帳戶設定/待處理/確認/Excel 操作，桌面手機可用 | 全站重排、財務管理平台 |
 | M11 / S8-S9 | Codex MCP 受控收件、固定 Windows 入口、授權真實驗收 | Legacy History 重寫、事件平台、原生 App |
 | M12 / C1-C5 | 消費分類、Donut、Category → Merchant → Transaction 下鑽、未分類整理、Excel 分類投影 | AI 分類、Budget、Tag、通用 Dashboard builder |
+| M13 / A1-A6 | A2／A3 已隔離完成；接續人工標註盲測、既有資料 dry-run 及取得授權後正式部署 | 雲端分類作前置、猜多用途商家、因 Git merge 自動升級正式 DB |
 
 - 舊 S7 Excel 已提前到 S6C。2026-09-30 使用者重新把「分類支出＋Donut 下鑽」列为明确产品待办，改由 M12/C1-C5 执行；备注/Tag、Budget 与通用 Dashboard 仍不做。
 - 舊 S8 的 90 天水位、每日/退避新排程、停止 History 取消本輪要求，不刪已有實作。
@@ -435,7 +438,7 @@ Alembic heads 只讀 migration 定義；schema 驗證沿用 `test_migrations.py`
 
 ## 18. 給 Luna max 的啟動指示
 
-> 請先讀 `AGENTS.md`、`README.md`、`HANDOFF.md`、`TASKS.md`、`IMPLEMENTATION_PLAN.md`、`FREE_AI_PASSWORD_RULE_PLAN.md`，並重新確認 Git HEAD/status。C1-C5 分類支出／Donut／下鑽已實作，不要重做；若使用者另行批准逐筆自動分類，依 `CATEGORY_SPENDING_PLAN.md` 第 18 節及 TASKS M13 執行 A1-A6，否則只研究與交接。分類採 read-time Effective Category，不把商家規則塞進銀行 parser，不做 Budget、Tag 或完整 Dashboard 重寫。AI 消費用途與雲端傳送另取同意；使用隔離 DB/合成資料验证 schema 与分类，正式交付仍遵守 E2E-GMAIL-3BANK。Git 寫入依使用者當次授權。
+> 請先讀 `AGENTS.md`、`README.md`、`HANDOFF.md`、`TASKS.md`、`IMPLEMENTATION_PLAN.md`、`FREE_AI_PASSWORD_RULE_PLAN.md`，並重新確認 Git HEAD/status。C1-C5 分類支出／Donut／下鑽已實作，不要重做；M13 A2／A3 已隔離實作；依 `CATEGORY_SPENDING_PLAN.md` 第 18 節及 TASKS 的未完成項目接續，不重做 migration／規則／批次確認；A1 需人工標註樣本，正式部署及消費雲端用途另取同意。分類採 read-time Effective Category，不把商家規則塞進銀行 parser，不做 Budget、Tag 或完整 Dashboard 重寫。AI 消費用途與雲端傳送另取同意；使用隔離 DB/合成資料验证 schema 与分类，正式交付仍遵守 E2E-GMAIL-3BANK。Git 寫入依使用者當次授權。
 
 ## 19. 使用者核准的 M12：分類支出與 Donut 下鑽
 

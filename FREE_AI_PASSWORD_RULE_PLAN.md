@@ -1,8 +1,8 @@
-# 免費 AI 密碼規則解析導入計畫
+# 家庭收支記錄：免費 AI 密碼規則解析計畫
 
-> 狀態：**Groq 第一階段程式已合併至 `main`（實作 commit `eeb6883`；`b40163d` 是本輪程式審查基準，不是永久的最新 HEAD），合成測試已通過；最後一次可驗證 runtime 仍是既有 OpenAI profile。S3F-C safe switch、S3F-B 真實 Groq runtime activation、Groq 解鎖與交易入帳仍待驗收。**
+> 狀態（文件整理：2026-10-01）：Groq adapter／provider-neutral 與 S3F-C safe-switch 程式已完成、合成測試通過；真實 Groq runtime activation／request／cache 尚未驗收。最後有證據的 provider 觀察是 2026-09-30 的 OpenAI profile，本次文件整理未重新呼叫供應商。
 >
-> 更新日期：2026-09-29。免費額度、模型與 API 相容性會變動；真正實作或切換模型前，必須重新確認 provider 官方文件，不可把本文數字當永久保證。
+> 額度、模型與 API 能力資料查閱於 2026-09-29，是歷史決策依據，不是今日保證；切換前重新查官方文件。現況／切換契約以 [GROQ_RUNTIME_REVIEW.md](GROQ_RUNTIME_REVIEW.md) 為準，完整測試數與正式部署見 [HANDOFF.md](HANDOFF.md)。本計畫只處理密碼規則，不授權消費 AI 或自動確認入帳。
 
 ## 1. 目的
 
@@ -115,15 +115,12 @@ Cloudflare REST API 還需要 Account ID，設定面比 Groq 多，因此**不�
 
 目前採單一 Active Provider，這是本專案最小且合適的設計。`AIProviderProfile` 雖沿用 legacy row id `openai`，真正 provider 由 `provider` 欄位判斷，因此目前沒有必要只為命名新增 migration。`GroqResponsesInterpreter` 也只重用既有 Responses adapter，沒有建立多 provider 平台。
 
-真正需要補強的是**切換前驗證**：
+切換前驗證與錯誤語意已完成，以下作回歸契約，不再列為待開發：
 
-1. 現行 `AIProviderService.configure()` 會先保存新 key / 更新 active profile，之後刪除舊 credential；它不會先驗證新 provider 的 key/model。
-2. 若 Groq key 打錯、模型下架或 schema 不相容，Active Provider 可能已切換，而舊可用 credential 已被刪除。
-3. 建議新增最小 `POST /api/security/ai-provider/test` 或等價 preflight：只接 provider/api_key/model，以固定 synthetic password instruction + 現有 PasswordRule schema 測試，不讀 Gmail、不讀身分資料、不持久化 key。
-4. 驗證成功後才允許「保存並切換」；驗證失敗時舊 provider/key 必須保持原樣。
-5. 這不是 multi-provider fallback；系統仍只保留一個 Active Provider。
-
-Provider error 也建議轉成穩定且不含 upstream body 的 reason code，例如 `ai_auth_failed`、`ai_rate_limited`、`ai_quota_unavailable`、`ai_model_unavailable`、`ai_schema_invalid`、`ai_timeout`、`ai_service_unavailable`。UI 可以依 Active Provider 顯示下一步，但不可因此自動改呼叫其他 provider。
+1. `POST /api/security/ai-provider/test` 以固定 synthetic 提示測試 key/model，不讀 Gmail、個資或持久化新設定。
+2. `configure()` 保存前會再次 preflight；失敗不替換 Active Provider／credential。
+3. status 分開回報 profile、credential availability 與 Active Provider；不回傳 key。
+4. provider 失敗使用穩定 reason code，禁止自動 fallback。S3F-B 真實 Groq request／cache／解鎖仍需另行驗收，不能從合成測試推定。
 
 ### 4.4 2026-09-29 官方能力重新確認
 
@@ -137,7 +134,7 @@ Provider error 也建議轉成穩定且不含 upstream body 的 reason code，�
 
 ## 5. 實作順序
 
-> Phase A-C 已由 `eeb6883` 完成並合併 `main`。以下保留作設計契約與回歸檢查，不可再次另起一套實作；現在的順序是 **先 safe-switch hardening，再 runtime activation，再真實 PDF**。程式級細節以 `GROQ_RUNTIME_REVIEW.md` 為準。
+> Phase A-C 已由 `eeb6883` 完成並合併 `main`。以下保留作設計契約與回歸檢查，不可再次另起一套實作；現在的順序是 **核對既有 safe-switch，取得授權後 runtime activation，再驗真實 Groq 路徑**。來源明示格式的本機解鎖不以 Groq 為前置。程式級細節以 `GROQ_RUNTIME_REVIEW.md` 為準。
 
 ### Phase A（已實作）：讓 AI provider 真正 provider-neutral
 
@@ -241,11 +238,11 @@ failure → pending/manual review
 1. 建立/登入 Groq 帐号。
 2. 在 Groq Console 建立 API key。
 3. 不把 key 写进 `.env`、PowerShell script、GitHub Secret 或 repo 文件。
-4. 开启 Family Dashboard → 设置 → AI 密码规则辨识。
+4. 開啟「家庭收支記錄 → 設定 → 進階設定」。
 5. Provider 选 `Groq（免费优先）`。
 6. 贴入 Groq API key。
 7. Model 使用 `openai/gpt-oss-20b`，除非官方已调整支持模型。
-8. 点击保存。
+8. 先按「測試連線」，成功後按「保存並切換」；後端保存前再次 preflight，失敗保留舊設定。
 9. Backend 将 API key 写入现有 Windows `SecretStore` / Credential Manager，并只在 SQLite 保存 credential reference。
 10. 使用**合成密码提示**测试，不先使用真实身分资料。
 11. 测试成功后再用授权的真实 Gmail 提示/PDF 做本机验收；日志与测试报告不得包含提示全文、个人秘密或实际 PDF 密码。
@@ -257,7 +254,7 @@ failure → pending/manual review
 後續模型/部署者應依序做：
 
 1. 先確認目前 Active Provider：讀取 `/api/security/ai-provider`，不要只看 UI 預設。
-2. 若仍是 OpenAI，先使用 Groq key 做 synthetic preflight；完成 S3F-C 後應由「測試連線」完成，且不持久化 key。
+2. 若仍是 OpenAI，先使用 Groq key 做 synthetic preflight；由已實作的「測試連線」完成，且不持久化 key。
 3. Preflight 成功後才保存並切換到 `groq` + `openai/gpt-oss-20b`。
 4. 保存後再次讀取 `/api/security/ai-provider`，確認 Active Provider/Model 已真正變成 Groq。
 5. 用 synthetic 密碼提示做一次真實 Groq request，確認 Structured Output 可被 `PasswordRule` 驗證。
@@ -317,17 +314,19 @@ failure → pending/manual review
 7. 移除/停用 Groq key 后核心文件与 Finance 功能仍可使用。
 8. backend tests 与 frontend production build 通过。
 
-### 9.1 本次驗收結果
+### 9.1 驗收狀態
+
+原 Phase A-C 時的 187 passed 是歷史結果，最新完整測試見 HANDOFF，不以測試數當真實 runtime 證明。
 
 - [x] `backend/tests` 完整測試：187 passed；2 個既有 FastAPI/anyio 相依套件棄用警告，不是失敗。
 - [x] `npm --prefix frontend run build` production build 成功。
 - [x] Groq/OpenAI dispatch、遮罩 payload、verified cache、失敗不 fallback 與設定 API/UI 有合成測試覆蓋。
 - [x] Groq 程式實作 `eeb6883` 已合併進目前 `main`。
 - [ ] Runtime activation：保存 Groq key、確認 Active Provider/Model、真實 synthetic request、cache hit 0 remote call。
-- [ ] Safe switch hardening：新增 provider preflight/test connection，新設定失敗時不得覆蓋或刪除舊 active credential。
+- [x] Safe switch hardening：provider preflight/test connection、credential availability 與 Active Provider 顯示已實作，失敗保留舊設定；真實 Groq 驗收仍未完成。
 - [ ] 真實 Groq 加密 PDF 解鎖尚未驗收。
 - [x] 實際中國信託加密 PDF 已用來源郵件明示規則、Windows SecretStore 與關閉 AI 的預覽路徑解鎖，完成逐筆 parser、核對、Finance 匯入與 Excel 重建；FamilyHub 內建 Gmail OAuth 仍未驗收。
-- [ ] 第二期盲測、其他銀行版型及 Gmail OAuth 長期自動化尚未完成。
+- [ ] 第二期 parser 盲測、更多已授權版型與 Codex Gmail 長期自動化尚未完成；網站 OAuth 預設停用，不作待驗收主流程。
 
 ## 10. 实作优先级
 

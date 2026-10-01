@@ -2,11 +2,11 @@
 
 家庭收支記錄以 Windows 家用電腦為主機，近期目標是將信用卡 PDF 解鎖、解析與核對後，更新每月支出 Excel。SQLite 保留可追溯資料；Web 用於設定、核對確認與處理例外，完整 Dashboard 不是交付前置。
 
-**目前狀態：** 已有文件匣、通用 CSV 匯入、總覽/搜尋/工作紀錄、Codex MCP Gmail 收件邊界、個人資料輔助的加密 PDF 預覽、帳單分析／核對／確認及專用 Excel；解鎖設定不要求銀行或家庭成員。郵件明確描述完整證號與字母大小寫，或明確區分本國籍證號/外籍生日格式時，可先本機解鎖，不需 AI。中國信託已完成真實 Finance/Excel；2026-09-30 新下載的中國信託、國泰世華、永豐加密帳單均通過逐列/合計核對及冪等，後兩家草稿尚待人工確認。支援上述已驗證文字版型及受限台新零交易，未知版型仍待處理；Codex 排程真實/跨日收件尚未驗收。
+**目前狀態：** 已有文件匣、通用 CSV 匯入、總覽/搜尋/工作紀錄、Codex MCP Gmail 收件邊界、個人資料輔助的加密 PDF 預覽、帳單分析／核對／確認及專用 Excel；解鎖設定不要求銀行或家庭成員。郵件明確描述完整證號與字母大小寫，或明確區分本國籍證號/外籍生日格式時，可先本機解鎖，不需 AI。中國信託已完成真實 Finance/Excel；2026-10-01 分類實作驗收新下載的中國信託、國泰世華、永豐加密帳單均通過逐列/合計核對及冪等，後兩家草稿尚待人工確認。支援上述已驗證文字版型及受限台新零交易，未知版型仍待處理；Codex 排程真實/跨日收件尚未驗收。
 
 未列交易日期的利息依使用者批准按帳單明示結帳日認列，明細顯示「結帳日認列」；保留原始缺日期與認列依據。普通消費/費用/繳款缺日期，或利息缺明示結帳日，仍待處理，不拿郵件日猜日期。
 
-**分類功能已正式部署：** 原私有網址已有消費分類、Donut、Category → Merchant → Transaction 下鑽、未分類整理與 Excel 分類投影；既有 18 筆交易與來源保留。V1 採 read-time Effective Category，不改 FinanceTransaction identity，也不做 AI 分類、Budget、Tag 或多層 subcategory。完整設計及測試對照見 [CATEGORY_SPENDING_PLAN.md](CATEGORY_SPENDING_PLAN.md)。
+**M12 分類功能已正式部署：** 原私有網址已有消費分類、Donut、Category → Merchant → Transaction 下鑽、未分類整理與 Excel 分類投影；既有 18 筆交易與來源保留。V1 採 read-time Effective Category，不改 FinanceTransaction identity，也不做 AI 分類、Budget、Tag 或多層 subcategory。完整設計及測試對照見 [CATEGORY_SPENDING_PLAN.md](CATEGORY_SPENDING_PLAN.md)。
 
 日常開啟 [家庭收支記錄](https://desktop-vcgfqnq.tailb47104.ts.net/)，在總覽選月份並查看「分類支出」。既有消費尚未設分類，因此圓環會顯示「未分類」；點「待分類商家」指定分類，可選擇記住商家，讓後續同商家交易套用規則。點分類、商家可一路查看交易與原始文件。「設定 → 消費分類」管理類別與規則。
 
@@ -21,7 +21,7 @@
 & C:\Users\brad\.codex\scripts\register-mobile-preview.ps1 -LocalPort 3002 -ExpectedText '家庭收支記錄'
 ```
 
-新 [M13 分類預覽](https://desktop-vcgfqnq.tailb47104.ts.net:8444/?month=2026-09) 僅供測試，不是日常帳本。3002 同源代理到 API 8032；獨立 `data/category-preview-20261001/synthetic.db` 為 0013、18 筆合成交易，SecretStore 與 Excel 關閉。合成帳本中的分類可操作；勾選逐筆後可批次預覽／確認，不建立商家規則，人工例外保留。實際 CSS 320px／390px 與桌面已驗，實體手機未驗收。服务须保持启动，裝置須加入同一 Tailscale；上述 HTTPS 埠是本機當次已註冊路由，不保證其他主機相同。
+新 [M13 分類預覽](https://desktop-vcgfqnq.tailb47104.ts.net:8444/?month=2026-09) 僅供測試，不是日常帳本。3002 同源代理到 API 8032；獨立 `data/category-preview-20261001/synthetic.db` 為 0013、18 筆合成交易，SecretStore 與 Excel 關閉。合成帳本中的分類可操作；勾選逐筆後可批次預覽／確認，不建立商家規則，人工例外保留。實際 CSS 320px／390px 與桌面已驗，實體手機未驗收。服務須保持啟動，裝置須加入同一 Tailscale；上述 HTTPS 埠是本機當次已註冊路由，不保證其他主機相同。
 
 舊 M12 預覽 3001／8030／HTTPS 8443 的 `data/category-preview/synthetic.db` 合成來源已撤銷，有效交易 0 筆；不得自行恢復以補圖。啟動腳本保留原預設，M13 須明確提供新參數。若無法查看占用程序，腳本會停止，不猜測埠是空的。
 
@@ -37,19 +37,26 @@
 - Python 3.11 或更新版本（需先安裝 Windows Python runtime）
 - Node.js 22.12+（或 20.19+）與 npm
 
-## 啟動
+## 新安裝開發環境
+
+以下只用於新的隔離開發帳本，不是此主機正式服務的重啟指令。已有資料庫須另行備份與授權升級；正式 M12 DB 仍為 0012，禁止以目前 head 0013 直接重啟。
 
 在 repository 根目錄開啟兩個 PowerShell 視窗：
 
 ```powershell
-py -3 -m venv .venv
+if (-not (Test-Path .venv)) { py -3 -m venv .venv }
 .\.venv\Scripts\Activate.ps1
-python -m pip install -e "backend[dev,ocr]"
+python -m pip install -e "backend[dev]"
+$devDb = Join-Path (Get-Location).Path "data/development-new.db"
+if (Test-Path $devDb) { throw "既有資料庫：停止並先核對，不重建或直接升級。" }
+$env:FAMILY_FINANCE_HUB_DATABASE_URL = "sqlite:///" + ($devDb -replace "\\", "/")
+$env:FAMILY_FINANCE_HUB_STORAGE_ROOT = Join-Path (Get-Location).Path "data/development-new-documents"
 alembic -c backend\alembic.ini upgrade head
+if ($LASTEXITCODE -ne 0) { throw "Migration failed" }
 uvicorn family_finance_hub.main:app --app-dir backend\src --host 127.0.0.1 --port 8000
 ```
 
-`alembic upgrade head` 會更新資料庫結構。若你已有舊資料庫，先停止 API 並備份 SQLite 檔與 `data\documents`，再執行 migration；不要刪除或重建舊資料庫。
+`alembic upgrade head` 只更新上述新開發 DB；不要刪除、重建或順手升級既有正式資料。後續啟動此開發帳本時沿用同一組環境變數，不必再執行新建段落。OCR 是選配，runtime 安裝與實測另見下文。
 
 若以 `FAMILY_FINANCE_HUB_DATABASE_URL` 指定 SQLite 路徑，API 與 Alembic migration 會使用同一個值。
 
@@ -66,14 +73,9 @@ npm run dev -- --host 127.0.0.1
 
 ## 此 Windows 主機的網站網址
 
-目前此主機的 Tailscale Serve 將私有 HTTPS 網址轉送至 `localhost:3000`，此入口目前由家庭收支記錄使用；它不是未來所有新專案各自的網址。要讓本專案的網頁與 API 使用同一網址，先在 repository 根目錄建置前端，再啟動單一服務：
+目前此主機的 Tailscale Serve 將私有 HTTPS 網址轉送至 `localhost:3000`，此入口目前由家庭收支記錄使用；它不是未來所有新專案各自的網址。目前正式服務維持 M12／0012，**本次 Git 更新不是部署授權**。不要重新建置正式 `frontend/dist`、執行正式 `start_server.ps1` 或登入排程重啟；共享 checkout 已是 head 0013，重啟前須依 [操作與部署](docs/operations.md) 取得授權、成對備份、副本 migration／回退與同步 build。要查看新功能，使用上方獨立 M13 分類預覽。
 
-```powershell
-npm --prefix frontend run build
-.\scripts\start_server.ps1 -DatabasePath data/family-finance-hub-live.db
-```
-
-`data/family-finance-hub-live.db` 是此主機由舊版資料庫的線上一致性快照升級而來的新版資料庫；舊 `data/family-finance-hub.db` 保留未改動，不可直接用新版程式啟動。啟動腳本不會自動執行 migration。其他新安裝環境應先依上方步驟建立資料庫並升級至 Alembic head，再用預設的 `data/family-finance-hub.db` 啟動。
+`data/family-finance-hub-live.db` 是由舊 DB 快照升級而來的正式帳本；舊 `data/family-finance-hub.db` 保留未改動，不可用新版程式啟動。啟動腳本不會自動 migration；新安裝也須明確指定自己的隔離 DB 與 storage，不沿用此主機正式路徑。
 
 本站僅限同一 Tailscale 網路的已授權裝置，不是公開網站。Windows 必須開機且服務正在執行；此主機已設定使用者登入時自動啟動。請只用新的 Tailscale 網址操作，其他舊開發連接埠可能仍指向舊資料庫，兩者不會自動同步。部署細節見 [操作與部署](docs/operations.md)。
 
@@ -117,7 +119,7 @@ AI API 設定在「設定 → 進階設定」，屬可選功能；目前 UI 對�
 
 ## Excel 自動更新
 
-「設定 → 連線服務」可啟用專用 Excel 自動更新。預設關閉；啟用後 Backend 每 30 秒檢查一次已提交的 SQLite 資料，並將所有有效交易完整重建到 `data\exports\家庭收支記錄.xlsx`。可用 `FAMILY_FINANCE_HUB_EXCEL_PATH` 指定其他 `.xlsx` 路徑。
+「設定 → 自動化」可啟用專用 Excel 自動更新。預設關閉；啟用後 Backend 每 30 秒檢查一次已提交的 SQLite 資料，並將所有有效交易完整重建到 `data\exports\家庭收支記錄.xlsx`。可用 `FAMILY_FINANCE_HUB_EXCEL_PATH` 指定其他 `.xlsx` 路徑。
 
 工作簿包含「月份幣別摘要」、「交易明細」、「文件狀態」、「信用卡月支出」及「分類支出」；交易明細在原欄位後新增「分類」。分類與 Web 共用 resolver，按月／幣別分開，付款不進分類支出，退款沖抵。分類或規則修改也會讓輸出待更新；此主機正式工作簿已重建並核對 18 筆交易、分類與每期合計。日期／金額保留為可計算類型，穩定 ID 保留；撤銷／恢復及重跑仍不複製交易。
 
@@ -130,7 +132,7 @@ SQLite 仍是唯一事實來源，Excel 是可重建的輸出。應用程式只�
 1. 在「新增資料」手動收錄 PDF，或由 Codex Gmail 自動化匯入；PDF 先進共用文件匣，SHA-256 相同的檔案不會重複收錄。
 2. 打開文件詳情，按「分析帳單」。系統只在本機解鎖，使用來源郵件的密碼提示及 Windows Credential Manager 內的個人資料。
 3. 對支援的版型，畫面會顯示日期、項目與金額；確認交易列與帳單核對狀態後按「確認匯入」。
-4. 確認後才建立 Finance 交易；再到「設定 → 連線服務」啟用 Excel，或按「立即更新」，輸出到 `data\exports\家庭收支記錄.xlsx`。
+4. 確認後才建立 Finance 交易；再到「設定 → 自動化」啟用 Excel，或按「立即更新」，輸出到 `data\exports\家庭收支記錄.xlsx`。
 
 Codex MCP 自動化負責發現並收錄 Gmail 附件；「收錄 PDF」與「確認帳單入帳」仍是兩個有意分開的步驟。這可避免錯誤版型或錯誤密碼把資料直接寫進家庭收支。未知銀行會停在待處理，不能以成功解鎖代替交易解析。
 
@@ -148,11 +150,11 @@ npm test
 npm run build -- --outDir dist-category-preview
 ```
 
-以上短暫存路徑適用此 Windows 主機，其他主機改為自己可寫的短路徑。2026-10-01 本輪 backend **376 passed**（2 個既有相依套件警告）、frontend **37 passed**、TypeScript／Vite build 至 `dist-category-preview` 成功，未覆蓋正式 dist。本次重新從 Gmail 下載中國信託／國泰／永豐帳單，隔離解析 1／19／31 列、獨立逐列／摘要及冪等全 PASS；正式 Finance 18 → 18／0012 不變。Recharts 真實 SVG 6 slices、逐筆與批次寫入、桌面／CSS 320px／390px 另以隔離瀏覽器驗證，實體手機與 screen reader 未驗收。
+以上短暫存路徑適用此 Windows 主機，其他主機改為自己可寫的短路徑。2026-10-01 分類實作驗證 backend **376 passed**（2 個既有相依套件警告）、frontend **37 passed**、TypeScript／Vite build 至 `dist-category-preview` 成功，未覆蓋正式 dist。同次分類實作驗收重新從 Gmail 下載中國信託／國泰／永豐帳單，隔離解析 1／19／31 列、獨立逐列／摘要及冪等全 PASS；正式 Finance 18 → 18／0012 不變。Recharts 真實 SVG 6 slices、逐筆與批次寫入、桌面／CSS 320px／390px 另以隔離瀏覽器驗證，實體手機與 screen reader 未驗收。
 
 每次交付另外必跑 **E2E-GMAIL-3BANK**：從 Gmail 重新下載三家不同銀行的真實信用卡對帳單，先確認郵件密碼格式，再完成本機解鎖、交易解析/核對與冪等重跑。三家全部通過才算真實驗收完成；unit tests/build、舊結果或只解鎖不算替代。完整步驟見 [實作流程第 4.1 節](IMPLEMENTATION_PLAN.md#41-必測e2e-gmail-3bank-三銀行真實-gmail-驗收)，本次結果與阻塞見 [交接](HANDOFF.md)。測試不得自動確認正式入帳。
 
-本次三銀行新下載證據在 Git 忽略的 `data/gmail-acceptance/retest-20261001-taxonomy/`；AI／confirm 皆 0 次。它是解鎖／解析回歸，不是分類 precision／coverage 盲測或正式新增交易／Excel 入帳。遠端最新六個 MD-only 提交已讀取但未執行 Git merge／pull；本輪修改也未 commit／push。
+分類實作驗收的三銀行新下載證據在 Git 忽略的 `data/gmail-acceptance/retest-20261001-taxonomy/`；AI／confirm 皆 0 次。這是解鎖／解析回歸，不是分類品質盲測或正式新增交易／Excel 入帳。本次文件／Git 整合重新跑 backend 376、frontend 37 及隔離 build 均通過，但新的三銀行下載未取得新原件，關卡 **BLOCKED／audit FAIL**，解密與解析未開始。完整重試、剩餘限制及推送核對見 [HANDOFF.md](HANDOFF.md)，不可由上述舊紀錄推定當次真實驗收通過。Git 採保存本機實作 `90328b0` 後正常 merge 遠端 `430ef5c`，保留双方歷史；發布結果以當次遠端 ref 核對為準。
 
 ## 家用網路使用
 
@@ -160,6 +162,10 @@ npm run build -- --outDir dist-category-preview
 
 ## 文件
 
+接手先讀 README → AGENTS → HANDOFF／TASKS，再依任務讀 canonical plan；歷史審查與問題紀錄不覆蓋當前交接。
+
+- [協作者指引](AGENTS.md)
+- [架構審查背景與未決議題](ARCHITECTURE_REVIEW_BRIEF.md)
 - [專案目標](PROJECT.md)
 - [架構](ARCHITECTURE.md)
 - [里程碑與待辦](TASKS.md)

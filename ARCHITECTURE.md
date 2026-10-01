@@ -18,7 +18,7 @@ Codex 排程 + Gmail MCP  ----------------------->  Codex MCP import API
 MacBook / iPhone  -- Tailscale private network --> Windows 主機
 ```
 
-開發預設只綁定 loopback。遠端使用時，依部署文件設定主機監聽介面與 Windows 防火牆，僅允許 Tailscale 網路。
+開發與此主機正式服務均綁定 loopback，透過 Tailscale Serve 私有 HTTPS 提供同源 Web／API，不需 `0.0.0.0`。僅直接存取 Tailscale IP 的替代部署才需另設定監聽介面與防火牆。
 
 ## 依賴方向
 
@@ -71,13 +71,17 @@ SQLAlchemy 持久化 model 集中在 infrastructure/schema 邊界，由各 domai
 
 `finance/categories/domain.py` 定義純 merchant normalization／EffectiveCategory resolver；`service.py` 是批次資料存取與月／幣別彙總，`api.py` 為 HTTP adapter。銀行 parser 不做商家分類，分類不能改交易事實。
 
-`0012_transaction_categories` 新增 `finance_categories`、`finance_category_rules`、`transaction_category_overrides`；不在 FinanceTransaction 增加分類欄。單筆 override > normalized exact > contains（priority／長度／穩定 ID）> system default > 未分類，停用類別安全 fallback。SQLite foreign_keys 開啟，Category／transaction references 由 FK 保護；停用不刪既有引用。
+`0012_transaction_categories` 新增 `finance_categories`、`finance_category_rules`、`transaction_category_overrides`；不在 FinanceTransaction 增加分類欄。M13 優先序為單筆 override > 使用者 normalized exact > 使用者 contains（priority／長度／穩定 ID）> system semantic > 內建明確規則 > 未分類，停用類別安全 fallback。`builtin.py` 只對完整匹配的明確描述分類，多用途商家／支付平台不猜用途；`FAMILY_FINANCE_HUB_BUILTIN_CATEGORY_RULES=false` 可停用。SQLite foreign_keys 開啟，Category／transaction references 由 FK 保護；停用不刪既有引用。
 
 每個查詢批次載入 categories、rules、overrides，不逐筆查 DB。API 依有效文件、日期／幣別和既有 consumption expression 選交易，再解析分類與商家；分類篩選在分頁之前。退款有符號沖抵，payment 不進消費；分類總額與 Dashboard expense 一致。V1 仍於記憶體解析選定交易；萬筆規模冷啟動 API 尚有優化空間，不新增快取平台。
 
-Web／Excel 共用 CategorizationService；分類名稱／規則／override 也進入 snapshot fingerprint，不只有 amount/date 變更才刷新輸出。Excel ownership／hash／sanitizer／原子替換保持原邊界。React chart 與 drill-down 分離、Recharts lazy load，Top-N 百分比使用整數 cents 分配，負／零淨額不畫 slice。
+`0013_category_taxonomy` 在隔離環境新增 books／insurance，只改仍為舊預設值的顯示名稱及排序；保留自訂名稱、ID、引用與交易事實。降級保留已有引用或自訂的新類別，不破壞人工資料。
 
-正式 DB 與程式已於授權部署後同步為 0012，入口維持 3000／私有 HTTPS 443；分類 Web／Excel 共用 resolver，原有交易與文件保留。分類預覽仍獨立使用 0012 合成 DB、3001／8030／HTTPS 8443，停用 secrets／Excel；其合成來源已撤銷，有效交易 0 筆。後續 schema 變更仍需當次授權、成對備份、同步 build 與正常登入帳戶啟動，測試脚本不可靜默升級正式 DB。
+單筆操作預設 transaction scope；merchant scope 先以 `GET /api/finance/transactions/{id}/category-impact` 預覽跨月影響，確認帶 token。批次 `POST /api/finance/transactions/category-batch/preview` 與 `PATCH /api/finance/transactions/category-batch` 最多 50 筆，於同一 SQLite `BEGIN IMMEDIATE` transaction 重算 token 後原子更新；人工 override（含停用類別）受保護，過期、撤銷、途中失敗拒絕或回滾整批，不建立商家規則。
+
+Web／Excel 共用 CategorizationService；分類名稱／規則／override、內建規則版本／內容 hash／啟用狀態也進入 snapshot fingerprint，不只有 amount/date 變更才刷新輸出。Excel ownership／hash／sanitizer／原子替換保持原邊界。React chart 與 drill-down 分離、Recharts lazy load，Top-N 百分比使用整數 cents 分配，負／零淨額不畫 slice。
+
+正在執行的正式 M12 服務／DB 仍為 0012，3000／私有 HTTPS 443、18 筆交易及原正式 dist／Excel 保留；repository 開發 head 已是 0013，不能直接重啟到舊 schema。M13 使用獨立 0013 合成 DB、3002／8032／HTTPS 8444，18 筆合成資料，secrets／Excel 關閉。舊 M12 預覽 3001／8030／8443 的來源已撤銷，有效 0 筆，不自行恢復。後續正式升級須當次授權、成對備份、副本 migration／回退、同步 build 與正常登入帳戶啟動；測試腳本不得靜默升級正式 DB。Donut 最多六片、正額未分類獨立保留，負淨額另列。
 
 ## v0.1 本機匯入流程
 

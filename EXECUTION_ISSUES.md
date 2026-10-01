@@ -1,12 +1,14 @@
-# 執行問題與處理紀錄
+# 家庭收支記錄：執行問題與處理
 
-> 更新日期：2026-09-30
+> 更新日期：2026-10-01
 >
 > 本文件只記錄工程執行時可觀察到的問題、處理方式與剩餘限制，不保存帳單內容、身分資料、生日、PDF 密碼、API key、OAuth token 或其他秘密。
 
 ## 0. 目前問題與處理
 
-依遠端 `main @ bf3d4f6` 的 MD 完成分類支出 C1-C5 後，使用者授權將功能部署到原正式網址；已完成備份、副本還原／migration、正式 0012／同步 build／正常帳戶啟動及 Web／Excel 回歸。既有 18 筆交易與來源保留；本次另獲 MD／Git 封存授權，提交與遠端同步以 Git refs 確認。部署前 backend **326 passed**（既有 310 + 16 項下載回歸）、frontend **29 passed**、production build 通過；部署後三銀行驗收在 `retest-20260930-1903` 通過，不冒稱是純文件更新的新結果。最新狀態以本節與 `HANDOFF.md` 為準，下方 1-4 節是歷史紀錄，不是目前待執行指令。
+目前正式 M12／live.db 仍為 0012／18 筆，已完成的 C1-C5 保留。M13 A2／A3 已隔離實作、開發 head 0013；backend 376 passed、frontend 37 passed 與隔離 build 通過。2026-10-01 分類實作驗收從 Gmail 新下載三銀行，全列／摘要／API／冪等 PASS，證據在 ignored `data/gmail-acceptance/retest-20261001-taxonomy/`。本次文件／Git 整理已重新跑相同數目的全套 tests／隔離 build，但當次三銀行原信下載未產生新完整 PDF，關卡 BLOCKED／audit FAIL；不是再次三銀行 PASS 或正式部署，重試證據見 0.9 及 [HANDOFF](HANDOFF.md)。
+
+0.1-0.6 是已解決的 M12 問題及殘餘限制；1-4 節是 2026-09-29 歷史，不是今日待执行指令。未完成的實際工作為品質盲測、授權正式升級、長期 MCP、Groq runtime 及實體裝置驗收；不要因舊記錄再次要求網站 OAuth。
 
 ### 0.1 Gmail 下載事件逾時，完整附件以 `.tmp` 留在 Downloads
 
@@ -49,11 +51,27 @@
 - **隔離：** 預覽仍用獨立 synthetic.db；合成來源已撤銷，有效交易 0 筆，SecretStore／Excel 關閉，未自行恢復。正式資料使用 3000／443。
 - **限制：** 沙箱 Windows 帳戶曾因 TLS／Credential Manager 環境失敗，正常登入帳戶 HTTPS／安全憑證狀態已重驗；沒有關閉憑證驗證。實體手機／screen reader／重開機仍未驗收，後續新部署仍需當次授權及備份。
 
-### 0.7 圓環全部未分類：分類工具不等於自動辨識（待實作）
+### 0.7 圓環全部未分類（M13 已隔離實作，正式部署待授權）
 
-- **證據：** 正式唯讀 API 有 14 類、没有 books，規則／有效單筆 override 為 0；九月六筆支出均未分類且合計與 Dashboard 一致。`CategoryResolver` 沒有內建商家知識或消費 AI，現有 tests 主要驗規則／人工指定／投影正確，不證明能辨識真實用途。
+- **證據：** 正式唯讀 API 有 14 類、没有 books，規則／有效單筆 override 為 0；九月六筆支出均未分類且合計與 Dashboard 一致。這是 M12／0012 的觀察，不是最新 M13 resolver；當時只有分類工具、沒有內建用途規則，不證明能辨識真實用途。
 - **規劃：** `CATEGORY_SPENDING_PLAN.md` 第 18 節及 TASKS M13 定義 A1-A6：先本機明確規則、圖書與逐筆整理，再決定可選 AI。多用途商家不得套用同一商品類別，預設只改單筆、記住商家前看影響範圍。
-- **狀態：** 本次只更新文件及 Git，未修自動分類程式或改正式帳本。舊 CSV 缺 kind 的會計缺口須以來源另核對，不藉分類改金額／日期／類型。AI schema 正確不等於用途判斷正確，雲端用途同意與品質盲測尚未完成。
+- **實作／驗證：** M13 隔離環境已完成 0013／16 類、小型版本化明確 fullmatch 規則、單筆／批次影響預覽及原子確認、Donut 未分類獨立槽位；多用途商家仍未知、人工優先，規則版本／hash／啟停納入 Excel fingerprint，測試／隔離瀏覽器通過。
+- **剩餘：** 正式尚未升級，仍可見未分類；A1 人工標註盲測與 A5 正式資料 dry-run／部署待完成。舊 CSV 缺 kind 須以來源核對，不藉分類改金額／日期／類型。未使用消費 AI，也未批准雲端用途。
+
+### 0.8 文件狀態與遠端 taxonomy 衝突
+
+- **證據：** 舊 Groq 計畫將已完成的 S3F-C 列為待辦，部署文件仍把 head 寫成 0012；本機分類實作與遠端六個 MD-only 提交同時修改五份文件。
+- **處理：** 先保存實作 commit `90328b0`，正常 merge `origin/main`，逐段保留遠端用途邊界／AUTO-09-10 並同步隔離實作狀態；README 建立文件索引，所有 current／歷史／待驗收資訊分開。
+- **停止條件：** 新 head 0013 不可直接重啟正式 0012 服務。Git 整合不等於正式部署／分類套用或三銀行重新驗收；推送結果以 remote SHA 核對，不把本機 commit 當 push 成功。
+
+### 0.9 本次 Git 整合：三家 Gmail 下載無新原件（BLOCKED）
+
+- **實際範圍：** 2026-10-01 使用已登入的 Gmail 網頁，in:anywhere、不限日期搜尋；只選中國信託／國泰／永豐九月信用卡月帳單，不把每日消費通知、銀行綜合對帳單、證券文件或繳款聯當樣本。三家均先讀郵件密码格式，才嘗試下載指定帳單附件。
+- **可觀察證據：** 各銀行 prepare 記錄 Downloads，指定下載按鈕 enabled 且 Gmail 顯示已通過掃描；collect 30 秒後均 DownloadNotReady。Downloads 最新檔仍是既有 9/30 原件，沒有可通過新 checkpoint 的完整 PDF，不能由按鈕 active 宣稱下載成功。
+- **重試：** 國泰原信重新載入、確認掃描／指定按鈕、重建 checkpoint、正常 Windows 使用者 collect，仍無新檔；可見原始附件連結的支援下載工具 30 秒逾時。沒有讀取 cookies／隱藏 session、繞過下載保護或使用舊檔。瀏覽器內部下載頁不允許操作，且此次原生視窗操作不可用；已詢問使用者是否有另存新檔／提示，尚未取得回覆。這些限制不證實內部根因。
+- **Fail closed：** ignored `data/gmail-acceptance/retest-20261001-merge/` 留有三家 checkpoint、隔離 log 與 audit FAIL（FileNotFoundError，缺 fresh receipt）。實際執行驗收腳本為非零退出，未進入文件收錄、解密、parser 或正式 confirm；不把缺檔說成解析失敗，不修改腳本放寬 freshness。
+- **已完成與剩餘：** 整合後 backend 376／frontend 37、隔離 build、13 MD／38 本機檔案連結及預覽 Web／API 通過；不代替必測三銀行。臨時 8031 已停止，正式仍 18 筆，其他服務未重啟；沒有秘密修改、外部 AI 或 Excel 輸出。本次只同步 Git，不能宣稱真實驗收／正式部署完成。
+- **接手：** 確認使用者瀏覽器的下載提示及實際保存位置，或在 Gmail MCP 工具真正可呼叫後使用附件下載 API；當前工具清單沒有 Gmail。另建 retest 目錄、新 checkpoint／receipt，重跑三家解密、逐列／摘要／API 及冪等，不沿用上輪 PASS。
 
 ## 1. 歷史範圍（2026-09-29）
 
@@ -106,7 +124,7 @@
 - **現象：** 使用者可在 Gmail 網頁看到並下載授權的 PDF，但 FamilyHub 的內建 Gmail OAuth 狀態仍未設定/未授權。
 - **原因：** Gmail 網頁登入、ChatGPT/Gmail app 連線與 FamilyHub 自己保存的 readonly OAuth token 是不同的授權邊界，不能互相推定已連線。
 - **處理：** 本次只把 Gmail 網頁下載的 PDF 交給 FamilyHub 文件入口；沒有把它記成內建 Gmail scheduler 已成功抓取，也沒有改寫 FamilyHub OAuth 設定。
-- **後續：** 若要驗收長期自動化，仍需在 Windows 本機完成 FamilyHub readonly OAuth，並另外驗證手動同步、定時同步與 token refresh。
+- **當時後續／現已取代：** 這是改用 Codex MCP 前的 OAuth 路線；2026-09-30 起不再要求 FamilyHub OAuth，長期驗收改由 Codex connector／外部排程進行。
 
 ### 2.6 真實 PDF 的 AI 路徑受阻，但明示規則可在本機解鎖
 

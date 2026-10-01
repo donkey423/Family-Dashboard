@@ -4,9 +4,9 @@
 
 ## 本輪範圍與 Git
 
-- 使用者要求閱讀最新 Git／MD 並繼續實作。已交叉核對遠端 taxonomy 與目前程式，完成 M13 A2／A3 的隔離實作，不新增雲端分類平台。
-- 本機基準 HEAD `5545523`；遠端 main 當次核對為 `430ef5c`，本機落後六個 MD-only 提交。已唯讀閱讀，未 pull／merge。此次 local MD 同步實作狀態，不表示 Git 歷史已整合。
-- 本輪沒有 commit／push／reset、正式 migration／部署、正式 confirm／撤銷／恢復，也沒有把交易描述送外部 AI。後續 Git 寫入或正式部署須當次授權。
+- 使用者本次要求整理所有文件、推送與 merge。已檢查全部 13 份 tracked MD 與程式／設定，統一實作、隔離驗證、待驗收與歷史紀錄；不新增產品功能。
+- 先將既有 M13 A2／A3 實作保存為 `90328b0`，再正常 merge 遠端 `main @ 430ef5c` 的六個 MD-only 提交。五份文件衝突逐段整合，保留遠端 taxonomy 邊界及 AUTO-09／10 測試要求，不 reset／rebase／force push。
+- 本次 Git 操作有明確授權；不包含正式 migration／部署、正式 confirm／撤銷／恢復或交易描述送外部 AI。Git 更新不等於正式服務已升級；發布 SHA 與整合後驗證見下節。
 - 原有未追蹤 `pytest-of-brad/`、`tmpe9fanwiq/` 保留；data、Downloads、DB、帳單、工作簿、秘密、build 與 dependencies 不加入 Git。
 
 ## 已實作：M13 A2／A3
@@ -19,7 +19,9 @@
 - 批次最多 50 筆，先選真實交易再選類別及預覽；SQLite `BEGIN IMMEDIATE` 下重算 token、一次原子寫入。包含停用類別的人工 override 均受保護；錯誤／撤銷／過期預覽拒絕整批，途中失敗完整 rollback。不自動建立商家規則。
 - `category_preview.py` 僅接受 data 下專用 category-preview 目錄；schema migration 不受外部正式 DB 環境變數誤導。18 筆合成資料不進正式帳本，撤銷來源不因重啟被恢復。啟動器可指定前後端埠與資料目錄，占用或不能查埠時拒絕啟動，不停止既有服務。
 
-## 驗證結果
+## 分類實作驗證結果（2026-10-01）
+
+以下是文件整理前的分類實作驗證，不自動代替本次 Git 整合關卡。
 
 - 完整 backend：**376 passed，2 warnings**，兩個既有 Starlette/httpx／anyio 棄用警告。
 - Frontend：**37 passed**；TypeScript／Vite build 成功，輸出 `frontend/dist-category-preview`，沒有替換正式 dist。
@@ -29,9 +31,9 @@
 - 真實瀏覽器驗過桌面、CSS 320px／390px Donut、逐筆與批次實際操作；沒有對話框文字溢出。預覽總額維持 TWD 10,205／USD 25 分開計算，未知 7-ELEVEN 保留；不是實體手機或螢幕閱讀器驗收。
 - 這些技術測試不是分類 precision／coverage 的真實盲測，M13 尚未全部完成。
 
-## 本輪必測：Gmail 三銀行 PASS 3/3
+## 2026-10-01 分類實作驗收：Gmail 三銀行 PASS 3/3
 
-本輪沒有可呼叫的 Gmail MCP 工具，依 repository 允許的 fallback 使用已登入 Gmail 網頁。搜尋 `in:anywhere has:attachment filename:pdf {subject:信用卡 subject:帳單 subject:對帳單}`，沒有日期篩選，可涵蓋可存取最早信件至當下；實際驗所選九月月帳單，不宣稱逐封審完整個信箱。
+該次沒有可呼叫的 Gmail MCP 工具，依 repository 允許的 fallback 使用已登入 Gmail 網頁。搜尋 `in:anywhere has:attachment filename:pdf {subject:信用卡 subject:帳單 subject:對帳單}`，沒有日期篩選，可涵蓋可存取最早信件至當下；實際驗所選九月月帳單，不宣稱逐封審完整個信箱。
 
 | 銀行／帳期 | 新下載、郵件提示、解鎖 | 全列與摘要核對 | 冪等 |
 | --- | --- | --- | --- |
@@ -48,15 +50,27 @@
 - 隔離 Finance 0、confirm 0、外部 AI 0，未產生隔離 Excel。正式 Finance **18 → 18**、交易 fingerprint 及 schema **0012** 不變。
 - 此結果不是分類盲測、正式新增入帳／Excel、MCP 排程或第二期 parser 盲測驗收。後續程式交付仍須當次新下載三銀行，不永久沿用 PASS。
 
+## 本次文件整理與 Git 整合驗證
+
+- 13 份文件已整理；README 提供完整索引，TASKS 保留未完成項目，舊審查／測試數字明示日期。
+- 已修正 Groq safe-switch 過時待辦、legacy OAuth 歷史狀態、M13／正式 M12 差異及可能誤重啟正式服務的指令。
+- 整合後重新跑完整 backend：**376 passed，2 warnings**（33.42 秒）；frontend：**37 passed**（2.80 秒），TypeScript／Vite 隔離 build 成功。沒有覆蓋正式 dist。
+- 13 份 tracked MD 的 38 個本機檔案連結、3 個章節錨點均通過；沒有 merge conflict markers 或 diff whitespace errors。Alembic 唯讀 heads 為 `0013_category_taxonomy`。
+- **本次 E2E-GMAIL-3BANK：BLOCKED，audit 為 FAIL，不能交付成當次三銀行 PASS。** 三家九月原信與密碼規則均已重新閱讀，分別 prepare／按指定帳單附件／collect；國泰另做重新載入、更新 checkpoint、正常 Windows 帳戶 collect 與可見附件連結下載。沒有任何新穩定完整 PDF；未拿旧 Downloads 或上節 taxonomy 原件代替。
+- 本輪證據在 ignored `data/gmail-acceptance/retest-20261001-merge/`：三家 checkpoint、隔離 server log 及 `audit-result.json`。collect 均 `DownloadNotReady`；receipt 缺失使 acceptance 明確非零退出／`FAIL: FileNotFoundError`，未進入文件收錄／解密／parser；這不是 parser 失敗。瀏覽器內部根因未證實，詳見 EXECUTION_ISSUES 0.9。
+- 臨時 8031 acceptance API 已停止；沒有新正式入帳、秘密變更、外部 AI 或 Excel 輸出。正式 API 仍 18 筆；正式服務與合成預覽未重啟。
+- 本次唯讀核對正式 3000／HTTPS 443、預覽 3002／HTTPS 8444，首頁 title 均為家庭收支記錄；預覽同源 API 18 筆、瀏覽器非空 Donut／圖書／保險／未知類別正常。實體手機未測。
+- 正常 merge 保留 `90328b0` 與 `430ef5c` 的雙方歷史；以 `git push origin HEAD:main` 發布。發布後須核對 `git ls-remote origin refs/heads/main` 與本機 HEAD 相同，實際 commit／遠端核對結果見此次交付回覆及 Git log。Git 同步不等於真實驗收或正式部署完成。
+
 ## 執行與資料隔離
 
 | 環境 | 本機入口 | SQLite／用途 | 私有 HTTPS |
 | --- | --- | --- | --- |
 | 正式日常服務 | 127.0.0.1:3000，既有 FamilyFinanceHub 排程 | `data/family-finance-hub-live.db`：0012、18 筆；既有正式 dist／Excel | `https://desktop-vcgfqnq.tailb47104.ts.net/`，443 → 3000 |
 | 舊 M12 預覽 | 前端 3001 → API 8030 | `data/category-preview/synthetic.db`：有效 0 筆，來源已撤銷；不可自行恢復 | `https://desktop-vcgfqnq.tailb47104.ts.net:8443/` |
-| 本輪 M13 預覽 | 前端 3002 → API 8032 | `data/category-preview-20261001/synthetic.db`：0013、18 筆合成；秘密／Excel 關閉 | `https://desktop-vcgfqnq.tailb47104.ts.net:8444/?month=2026-09` |
+| M13 隔離預覽 | 前端 3002 → API 8032 | `data/category-preview-20261001/synthetic.db`：0013、18 筆合成；秘密／Excel 關閉 | `https://desktop-vcgfqnq.tailb47104.ts.net:8444/?month=2026-09` |
 
-本輪 M13 本機及私有 HTTPS 均已驗為此產品，保留原 443／8443 路由，沒有 Funnel。實體 Mac／手機未驗收；Tailscale 路由不會啟動程式，預覽仍須保持執行。
+分類實作驗收已確認 M13 本機及私有 HTTPS 為此產品，保留原 443／8443 路由，沒有 Funnel。實體 Mac／手機未驗收；Tailscale 路由不會啟動程式，預覽仍須保持執行。
 
 若指定埠空閒才啟動：
 

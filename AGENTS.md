@@ -1,4 +1,4 @@
-# 專案指引
+# 家庭收支記錄協作者指引
 
 ## 專案導覽
 
@@ -6,6 +6,8 @@
 - `PROJECT.md`：信用卡 PDF 到 Excel 的近期目標、歷史 v0.1 範圍與明確排除項目。
 - `ARCHITECTURE.md`：模組邊界、資料流、依賴方向與部署設計。
 - `TASKS.md`：目前里程碑與待辦。
+- `docs/operations.md`：此主機的埠、資料隔離、備份與部署停止條件。
+- `EXECUTION_ISSUES.md`：問題證據、處理狀態與仍待驗收限制。
 - `HANDOFF.md`：當前可驗證狀態、下一步與風險。
 - `IMPLEMENTATION_PLAN.md`：Excel 優先的 S0-S9 工作包、檔案落點、固定驗收數值、停止條件及 Luna max 啟動指示。
 - `ARCHITECTURE_REVIEW_BRIEF.md`：2026-09-28 使用者最新的信用卡帳單優先需求、Overdesign 假說、候選簡化方向與高階模型 review gate。
@@ -15,7 +17,7 @@
 - `backend/src/family_finance_hub`：FastAPI、application use cases、domain services、ports 與 adapters。
 - `backend/tests`：後端自動化測試。
 - `frontend/src`：React/TypeScript Web UI。
-- `scripts/start_server.ps1`：建置前端後，在 `127.0.0.1:3000` 同時提供 Web 與 API；此主機的登入排程指定 `data/family-finance-hub-live.db`。
+- `scripts/start_server.ps1`：正式 Web／API 單一入口；此主機的登入排程指定 `data/family-finance-hub-live.db`。當前正式仍是 M12／0012，未授權升級不可用 head 0013 重啟。
 
 ## 邊界與限制
 
@@ -36,7 +38,7 @@
 - 目前文件解鎖 UI 只收身分證字號及/或生日；內部固定個人 profile 沿用既有 schema，不能把銀行、機構或家庭成員設定重新變成使用者前置步驟。保存 AI key 後，加密 PDF 預覽可分析遮罩提示並在本機組合密碼；不得把這當作 PDF 交易自動入帳。
 - 新增模組應新增自己的 domain/service/schema migration，避免直接操作其他模組資料。分類功能必须放在 Finance categorization 边界，不把银行分类逻辑写进 BankStatementParser；V1 以 Category/Rule/TransactionOverride 做 read-time effective category，不把 category 写回 FinanceTransaction identity。
 - 2026-10-01 使用者要求依最新 Git／MD 繼續實作，已新增本機版本化明確規則與逐筆／批次確認；這不等於授權正式升級／部署或交易描述送雲端。新規則只對完整明確描述匹配；多用途商家／支付平台維持未分類，人工優先。規則版本／hash／啟停進入 Excel fingerprint，`FAMILY_FINANCE_HUB_BUILTIN_CATEGORY_RULES=false` 可停用。真實分類 precision／coverage 尚無人工標註盲測，不宣稱準確率。
-- 進度以 TASKS.md 與 HANDOFF.md 為準：平台、Excel、`0011_statement_import` 及 Codex MCP 匯入邊界已有實作；中國信託已完成真實 Finance/Excel，2026-09-30 中國信託/國泰/永豐新下載加密帳單皆通過逐列/合計核對及冪等，後兩家未自動確認入帳。第二期盲測、未知版型、Codex 排程真實/跨日及實體手機仍未完成；不得宣稱通用銀行支援。
+- 進度以 TASKS.md 與 HANDOFF.md 為準：平台、Excel、`0011_statement_import` 及 Codex MCP 匯入邊界已有實作；中國信託已完成真實 Finance/Excel，2026-10-01 分類實作驗收的中國信託/國泰/永豐新下載加密帳單皆通過逐列/合計核對及冪等，後兩家未自動確認入帳。第二期盲測、未知版型、Codex 排程真實/跨日及實體手機仍未完成；不得宣稱通用銀行支援。
 - 使用者批准未列日期的利息按明示結帳日認列。只在 `interest` 且 Statement 有 `closing_date` 時適用；用共用 resolver 保持正規化/月彙總一致，來源日期仍為空，API/raw_json 保留認列依據。其他缺日期列仍 pending，不可擴張為所有列自動補日。
 - 近期產品方向仍以信用卡帳單正確入帳為核心；但 2026-09-30 使用者已單獨批准分類支出扩展，實作時以 `CATEGORY_SPENDING_PLAN.md` 为准。除此之外仍不新增未核准平台能力，也不得把旧 brief 的候选简化直接视为删除/重构授权。
 - Excel 是 SQLite 已提交交易的可重建投影，不是資料來源。只能覆蓋帶應用程式 ownership marker 的專用工作簿；外部修改、檔案佔用與輸出 hash 不一致必須保留可見狀態，不得靜默覆蓋未知檔案或把 Excel 反向匯入 Finance。

@@ -1,14 +1,23 @@
-# 架構重新審查 Brief：信用卡帳單優先
+# 家庭收支記錄：架構重新審查 Brief
 
 > 狀態：**原始 scope-reset / Overdesign 分析已保留作背景；2026-09-30 使用者已決定將 Gmail 授權、搜尋與排程移到 Codex MCP，自此不再擴充網站內建 OAuth/History/scheduler。實際工作以 `ARCHITECTURE.md`、`IMPLEMENTATION_PLAN.md`、`TASKS.md`、`HANDOFF.md` 與最新 repo 為準。**
 >
 > 原始分析基準：`488cee7`。目前 GitHub `main` 已包含 Groq provider 實作 `eeb6883`；本文中早期假說若與最新程式衝突，以最新程式與執行文件為準。
 
-## 1. 使用者目前真正需求（最高優先級）
+## 現況與閱讀方式
+
+本文件保留原始 scope-reset 的審查問題，不是未完成工作的執行清單。第 3-10 節的「目前」指原分析基準，不代表最新 runtime；已完成的 parser、上下文擷取、個人解鎖與 Codex 收件邊界不得重做。最新事實見 [架構](ARCHITECTURE.md)、[交接](HANDOFF.md)、[里程碑](TASKS.md)。
+
+- 中國信託已完成真實 Finance／Excel；中國信託／國泰／永豐三銀行真實下載、解鎖、全列／合計／冪等已驗，第二期 parser 盲測與無人收件仍待驗。
+- 新 UI 只需身分證及／或生日，不要求銀行／家庭成員；來源郵件明示格式先本機確認，AI 只解析遮罩規則。
+- Gmail OAuth／History／scheduler 已凍結，主流程由 Codex MCP 管理；不是後續必做的 OAuth 授權。
+- M12 分類已正式部署；M13 A2／A3 已隔離實作，A1 品質、A5 正式部署待完成，細節見 [分類計畫](CATEGORY_SPENDING_PLAN.md)。
+
+## 1. 使用者真正需求（最高優先級）
 
 這個專案目前最重要的產品目標不是建立通用家庭資料平台，而是：
 
-> **每個月自動取得信用卡帳單，解鎖 PDF，正確解析當月消費，讓使用者快速知道這個月花了什麼、花多少；需要時再輸出 Excel。**
+> **每個月自動取得信用卡帳單，解鎖 PDF，正確解析當月消費，讓使用者快速知道這個月花了什麼、花多少；Excel 是主要成果，Web 用於核對、分類與例外處理。**
 
 理想主流程：
 
@@ -35,7 +44,7 @@ SQLite
         ↓
 本月消費 Dashboard
         ↓
-可選：更新 Excel
+確認後：更新專用 Excel
 ```
 
 核心成功標準不是「平台功能很多」，而是上述鏈路對真實信用卡帳單可靠、可重跑、不重複入帳。
@@ -54,7 +63,7 @@ SQLite
 
 仍維持 local-first、Windows、SQLite、Modular Monolith，不引入 microservices。
 
-## 3. 目前架構現況
+## 3. 原始分析基準
 
 截至基準 commit，已存在：
 
@@ -77,7 +86,7 @@ SQLite
 - Alembic migrations through `0010_workbook_export`
 - 大量合成測試
 
-**目前最關鍵、但仍未完成的核心能力：真實台灣信用卡 PDF → Finance transaction 的 bank-specific parser。**
+**原始基準的缺口是 bank-specific parser；此缺口已由授權版型補上。** 目前未完成的是第二期獨立盲測、更多實證版型與長期自動化，不能再把第一個 parser 當尚未實作。
 
 ## 4. Overdesign 假說（請高階模型重新判斷）
 
@@ -158,7 +167,7 @@ Finance transaction commit / revoke / restore
 
 - SQLite 作為唯一結構化 source of truth。
 - SHA-256 / source identity 去重與 idempotency。
-- Gmail readonly OAuth。
+- Gmail 唯讀取得附件的原則；現在由 Codex connector 管理，FamilyHub legacy OAuth 預設停用。
 - Windows Credential Manager / SecretStore。
 - 「AI 只理解密碼規則，真實身分證/生日只在本機使用」安全邊界。
 - PasswordRule 使用受限 DSL，不 eval LLM 程式碼。
@@ -168,7 +177,7 @@ Finance transaction commit / revoke / restore
 - Excel 若保留自動覆寫，至少保留 ownership marker + safe/atomic replacement。
 - Modular Monolith；不改 microservices。
 
-## 6. 優先要改善的實際問題
+## 6. 原始改善建議（狀態以 TASKS 為準）
 
 ### P0：先完成第一個真實 BankStatementParser
 
@@ -248,7 +257,7 @@ match bank profile
 
 目標是降低**未來新增複雜度**，不是花更多時間把已完成模組「重寫得更簡單」。
 
-## 7. 建議的收斂後主流程
+## 7. 原始候選主流程（非現行執行指令）
 
 ```text
 Gmail
@@ -326,7 +335,7 @@ FinanceTransaction + SQLite
 - 每項簡化都要說明：省掉什麼複雜度、失去什麼能力、風險如何補償。
 - 安全邊界（SecretStore、PII 不送 AI、禁止 brute force）不得因簡化而降低。
 
-## 10. 建議的近期完成定義
+## 10. 原始近期完成定義
 
 下一階段真正完成應至少達到：
 

@@ -4,9 +4,9 @@
 
 - [x] 當次從 Gmail 重新下載三家不同銀行的真實信用卡對帳單，先確認來源郵件密碼格式，再完成加密解鎖、完整交易解析/核對及冪等重跑；三家全 PASS 才可宣稱專案交付完成。
 
-使用者 2026-09-30 指定強制執行，UI/設定/部署修復也不省略。詳細步驟、秘密保護、正式資料不自動入帳及 FAIL/BLOCKED 條件見 `IMPLEMENTATION_PLAN.md` 第 4.1 節；當次結果見 HANDOFF。舊測試結果、合成資料、只抽文字及三封同一家銀行都不算通過。此 checkbox 只表示本次交付關卡，不是一次勾選後永久完成。
+使用者 2026-09-30 指定強制執行，UI/設定/部署修復也不省略。詳細步驟、秘密保護、正式資料不自動入帳及 FAIL/BLOCKED 條件見 `IMPLEMENTATION_PLAN.md` 第 4.1 節；當次結果見 HANDOFF。舊測試結果、合成資料、只抽文字及三封同一家銀行都不算通過。此 checkbox 記錄上述分類實作驗收，不是永久通過；本次文件／Git 整合的當次關卡為 **BLOCKED**：三家原信已確認並嘗試指定附件下載，但 collect 無新完整 PDF，audit FAIL，解密／解析未開始。backend 376／frontend 37／隔離 build 通過不能替代此關卡。證據與下一步見 HANDOFF，接手必須重跑。
 
-2026-10-01 本輪 **PASS（3/3）**，新下載證據在 `data/gmail-acceptance/retest-20261001-taxonomy/`：來源郵件密碼格式 → prepare／指定附件下載／collect → 本機解鎖 → 中信 1／國泰 19／永豐 31 列，獨立逐列／摘要／API 核對與冪等全通過。國泰首次沒有新檔，重新進入原信、等附件按鈕可用並重建 checkpoint 後才成功，不拿舊檔補驗收。隔離 Finance 0、AI 0、confirm 0；正式 18 → 18／0012 不變。backend 376 passed（2 warnings）、frontend 37 passed，隔離 build／桌面／CSS 320px／390px 通過。不是 MCP／cron、分類盲測或正式新交易／Excel 入帳驗收；實體手機未驗證。詳見 HANDOFF。
+2026-10-01 分類實作驗收 **PASS（3/3）**，新下載證據在 `data/gmail-acceptance/retest-20261001-taxonomy/`：來源郵件密碼格式 → prepare／指定附件下載／collect → 本機解鎖 → 中信 1／國泰 19／永豐 31 列，獨立逐列／摘要／API 核對與冪等全通過。國泰首次沒有新檔，重新進入原信、等附件按鈕可用並重建 checkpoint 後才成功，不拿舊檔補驗收。隔離 Finance 0、AI 0、confirm 0；正式 18 → 18／0012 不變。backend 376 passed（2 warnings）、frontend 37 passed，隔離 build／桌面／CSS 320px／390px 通過。不是 MCP／cron、分類盲測或正式新交易／Excel 入帳驗收；實體手機未驗證。詳見 HANDOFF。
 
 ## 目前執行入口：信用卡 PDF 到 Excel
 
@@ -28,7 +28,7 @@
 - [x] S6：分析/帳戶 API、原子確認/查詢、冪等入帳與正確 Excel；已用實際中國信託帳單驗證一筆交易落入 Finance/Excel。
 - [x] S7：最小帳戶自動建立、待處理/核對確認及 Excel 操作介面；本機來源另有不含密碼的郵件規則提示 fallback。
 - [x] S8A：新增 Codex MCP Gmail 本機匯入 API、來源雜湊、SHA-256 冪等、遮罩提示保存及網站連線狀態；停用網站 OAuth UI 與內建 scheduler。
-- [x] S8B-1：建立並啟用 Codex Gmail 自動化；使用 Luna Max 每 30 分鐘搜尋最近 45 天的 PDF 帳單，沒有新附件時保持安靜，自動確認入帳保持關閉。
+- [x] S8B-1：曾建立 Codex Gmail 自動化，Luna Max 每 30 分鐘搜尋最近 45 天、只收錄 PDF；目前排程狀態仍需重新查證，自動確認入帳不授權。
 - [ ] S8B-2：完成首次真實 Gmail 執行與至少一次重跑，驗證新附件可收錄、重跑不重複且失敗需要人工處理時會通知。
 - [ ] S9：固定 Windows 入口、授權後的正式升級與真實端到端驗收。
 
@@ -38,7 +38,7 @@ M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自
 
 ## M12：消費分類、Donut 與下鑽
 
-2026-09-30 使用者已明確批准；**C1-C5 與正式部署已完成。** 正式 DB／程式均為 0012，18 筆既有交易不變；原網址的真實 Donut／下鑽與分類 Excel 已驗。分類 preview 仍隔離，合成來源已撤銷、有效交易 0 筆。詳細測試對照見 `CATEGORY_SPENDING_PLAN.md`，執行入口與證據見 README／HANDOFF。
+2026-09-30 使用者已明確批准；**C1-C5 與正式部署已完成。** 正在執行的正式 M12 服務／DB 均為 0012；repository 開發 head 已是 0013，18 筆既有交易不變；原網址的真實 Donut／下鑽與分類 Excel 已驗。分類 preview 仍隔離，合成來源已撤銷、有效交易 0 筆。詳細測試對照見 `CATEGORY_SPENDING_PLAN.md`，執行入口與證據見 README／HANDOFF。
 
 - [x] C1：0012 migration、Category／Rule／Override，不修改 FinanceTransaction identity。
 - [x] C2：read-time resolver、正規化、穩定優先序、system default、批次 3 次配置 query。
@@ -53,18 +53,18 @@ M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自
 
 ## M13：逐筆本機分類與安全確認（已實作，正式部署待授權）
 
-2026-10-01 依使用者「最新 Git／MD 繼續實作」完成 A2／A3 隔離驗證；採遠端核准 16 類、明確規則與未分類獨立槽位，不改正式資料、不送雲端。根因與測試 canonical plan 為 `CATEGORY_SPENDING_PLAN.md`。遠端六個 MD-only 提交已讀但未 merge／pull；本輪也未 commit／push。
+2026-10-01 依使用者「最新 Git／MD 繼續實作」完成 A2／A3 隔離驗證；採遠端核准 16 類、明確規則與未分類獨立槽位，不改正式資料、不送雲端。根因與測試 canonical plan 為 `CATEGORY_SPENDING_PLAN.md`。本機實作已保存為 `90328b0`，本次依使用者授權正常 merge 遠端 `430ef5c` 的六個 MD-only 提交；推送與當次驗證見 HANDOFF。
 
 - [x] 確認 V1 分類來源缺失：14 類、規則／有效 override 為 0；没有 books 或自動商家辨識，九月六筆支出全未分類，API 合計守恆。
-- [x] 定義以每筆刷卡交易為第一階段、多用途商家不硬猜、單筆優先與雲端另取同意，完成 A1-A6 工作包／AUTO-01-08 測試規格。
-- [ ] A1：建立經人工核對的分類樣本與未知／反例，盤點舊 CSV 會計語意缺口。
+- [x] 定義以每筆刷卡交易為第一階段、多用途商家不硬猜、單筆優先與雲端另取同意，完成 A1-A6 工作包；整合遠端 taxonomy 邊界與 Donut 測試，AUTO-01-11 對照見 canonical plan。
+- [ ] A1：依核准 taxonomy 建立人工核對樣本與未知／反例，涵蓋交通／旅遊、飲食／日常採買、圖書／教育、保險／金融費用、數位服務及多用途商家；盤點舊 CSV 會計語意缺口。
 - [x] A2：0013 增加圖書／保險並保留既有引用及自訂名稱；版本化本機明確規則、理由／來源、版本／hash／啟停進入 Excel fingerprint；Donut 最多六片、未分類不被合併。
 - [x] A3：商家進入實際逐筆、預設單筆、跨月商家影響及 stale token；最多 50 筆批次預覽／確認，一次 transaction，原子回滾、保留人工指定，不建立商家規則；前端／隔離瀏覽器驗證通過。
 - [ ] A4：按實際未知樣本決定是否需要可選 AI；雲端用途同意、schema／白名單、安全降級與版本快取。
 - [ ] A5：既有資料分類 dry-run、核准後套用，保留原 identity 與 Web／API／Excel parity。
 - [ ] A6：完整測試／build、當次新下載三銀行、盲測品質報告與授權部署；未知不可冒充自動成功。
 
-A6 的測試／build／當次三銀行已通過，A1 品質與 A5 正式部署仍未完成，因此 M13 不宣稱全部完成。新預覽為 3002／8032／HTTPS 8444，18 筆合成資料；正式 3000／HTTPS 443／18 筆／0012 不變，不能直接用新 head 重啟正式服務。
+分類實作階段的 A6 測試／build／三銀行已通過，A1 品質與 A5 正式部署仍未完成，因此 M13 不宣稱全部完成。新預覽為 3002／8032／HTTPS 8444，18 筆合成資料；正式 3000／HTTPS 443／18 筆／0012 不變，不能直接用新 head 重啟正式服務。
 
 
 ## M0：產品與架構基線
@@ -168,14 +168,14 @@ A6 的測試／build／當次三銀行已通過，A1 品質與 A5 正式部署�
 - [x] 驗收：合成資料測試確認 AI request、API response、DB fixture 不含身分證字號、生日或組合後 PDF 密碼
 - [x] 驗收：同一帳單可同時擁有 Gmail remote source 與使用者保存的 local source
 
-### M5.3 Incremental Sync
+### M5.3 Incremental Sync（歷史實作，legacy 預設停用）
 
 - [x] 保存 Gmail incremental sync state（history ID、last successful sync time、full-sync continuation）
 - [x] 同步時只處理上次成功同步後新增的郵件；初次/過期同步分批 full sync
 - [x] history state 過期或失效時可安全 fallback 到受控 full sync
 - [x] UI 顯示最後成功同步時間、同步狀態與錯誤摘要
 
-### M5.4 定時自動同步
+### M5.4 定時自動同步（歷史實作，已由 Codex 排程取代）
 
 - [x] 在手動同步與 incremental sync 穩定後加入本機 scheduler；須先完成 Gmail 唯讀授權並由使用者明確開啟，預設關閉
 - [x] 啟用後每 30 分鐘觸發一次同一個 `GmailSyncUseCase`
@@ -183,7 +183,7 @@ A6 的測試／build／當次三銀行已通過，A1 品質與 A5 正式部署�
 - [x] UI 顯示「下一次同步」並保留「立即同步 Gmail」按鈕
 - [x] scheduler 本身不包含 Gmail 搜尋、解析或 Finance 業務邏輯，只負責 trigger；手動與排程同步不得重疊
 
-### 未來選配：Gmail Push
+### 凍結選配：Gmail Push
 
 - [ ] 僅在確實需要「信件到達後數秒內更新」時，再評估 Gmail Push / Pub/Sub
 - [ ] Push 仍只觸發既有 `GmailSyncUseCase`，不建立第二套同步流程
@@ -218,8 +218,8 @@ A6 的測試／build／當次三銀行已通過，A1 品質與 A5 正式部署�
 - [x] 根據實際文件、交易及處理結果顯示「已收錄，尚未入帳」、新增／略過交易筆數或失敗原因；本機副本標記不代表入帳成功。
 - [x] 增加文件詳細檢視，整合來源、收錄／入帳狀態、關聯交易、匯入紀錄、原始文件／預覽及撤銷／恢復；收錄日期與交易日期分開顯示。
 - [x] 交易可回到 `source_document_id` 對應文件；Jobs 只有在具備 `document_id` 時提供文件連結，批次 Gmail 工作不任意連到單份文件。
-- [x] Gmail 日常同步入口放在新增資料／文件流程；OAuth 連線設定保留設定頁，未授權時提供前往設定的下一步。
-- [x] 保留 Documents 共用底層、SHA-256 冪等及撤銷保護；恢復仍使用原交易，不重新解析。PDF 仍明示只收錄／預覽／抽取文字，尚未建立交易。
+- [x] 舊 Gmail 同步／OAuth 入口已在 S8A 移除；目前新增資料提供 Codex 收錄狀態，設定頁「自動化」不保存 Gmail token。
+- [x] 保留 Documents 共用底層、SHA-256 冪等及撤銷保護；恢復仍使用原交易，不重新解析。PDF 收錄／預覽不代表入帳；S6 已另提供支援版型的分析、核對與人工確認。
 
 ### M7.3 月份與幣別總覽
 
@@ -230,7 +230,7 @@ A6 的測試／build／當次三銀行已通過，A1 品質與 A5 正式部署�
 
 ### M7.4 設定與 PDF 預覽
 
-- [x] 設定依「文件解鎖／連線服務／進階設定」分組；目前解鎖頁只收身分證字號及/或生日，不要求銀行、機構或家庭成員。
+- [x] 設定依「文件解鎖／自動化／進階設定」分組；目前解鎖頁只收身分證字號及/或生日，不要求銀行、機構或家庭成員。
 - [x] 舊 profile API/schema 保留相容，新的個人解鎖 API 只回傳欄位是否已保存，不回傳原值。
 - [x] 一般 PDF 開啟即預覽，需要密碼時才展開解鎖設定；錯誤區分需要密碼、密碼錯誤、來源不可用與 OCR 未就緒。預覽成功不代表財務入帳。
 - [x] 保存 AI key 後，開啟需要密碼且有提示的 PDF 會自動分析遮罩提示；預覽中可關閉 AI 重試。真實秘密只在本機組合，預覽不啟用同步或永久保存遠端附件。
@@ -263,7 +263,7 @@ A6 的測試／build／當次三銀行已通過，A1 品質與 A5 正式部署�
 - [x] 已驗證支援版型的 PDF parser 接入共用入帳流程；未知格式／解鎖失敗／對帳不符保留待處理並可重試。
 - [x] FamilyHub `codex_mcp_gmail` 匯入端點、狀態 API、本機附件持久化、來源／內容去重及敏感 context 遮罩。
 - [x] 網站移除 Gmail OAuth 設定與同步操作；內建 OAuth API/scheduler 預設停用並 fail closed。
-- [x] Codex 應用程式建立並啟用「家庭收支 Gmail 帳單收錄」自動化；Luna Max 每 30 分鐘執行，搜尋最近 45 天並只收錄 PDF，不自動確認入帳。
+- [x] 曾建立並啟用「家庭收支 Gmail 帳單收錄」自動化，設定為 Luna Max／每 30 分鐘／最近 45 天／只收錄 PDF；目前啟用狀態與真實執行需重新查證，不由建立紀錄推定長期可用。
 - [ ] Codex Gmail 排程首次真實執行與跨次重跑驗收；主機或服務離線後需靠近期窗口補抓。
 - [ ] 新郵件 → 收錄 → 分析／人工確認 → Finance → Excel 的跨日長期驗收。
 
@@ -289,7 +289,7 @@ A6 的測試／build／當次三銀行已通過，A1 品質與 A5 正式部署�
 > 本里程碑目前是 review gate，不代表下列簡化已決定實作。完整背景與審查問題見 `ARCHITECTURE_REVIEW_BRIEF.md`。
 
 - [ ] 由高階模型以最新 `main` 實作重新判斷 Keep / Simplify / Freeze / Remove-later，不只閱讀文件。
-- [x] 確認近期唯一核心產品流程：Gmail 信用卡帳單 → 安全解鎖 → BankStatementParser → Finance → 月份 Dashboard → optional Excel。
+- [x] 確認近期唯一核心產品流程：Gmail 信用卡帳單 → 安全解鎖 → BankStatementParser → Finance → 專用 Excel；Web 提供月份核對與已核准分類支出。
 - [x] P0：以第一份真實中國信託信用卡帳單完成 bank-specific parser 與 statement total reconciliation。
 - [x] P0：PasswordInstructionExtractor 已改為擷取密碼關鍵字附近的受限上下文並先遮罩敏感值。
 - [x] P0：新個人解鎖流程已移除每月人工選 bank/document security profile 的需要；舊 sender 匹配僅供相容，不作為新 UI 前置。
