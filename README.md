@@ -10,17 +10,22 @@
 
 日常開啟 [家庭收支記錄](https://desktop-vcgfqnq.tailb47104.ts.net/)，在總覽選月份並查看「分類支出」。既有消費尚未設分類，因此圓環會顯示「未分類」；點「待分類商家」指定分類，可選擇記住商家，讓後續同商家交易套用規則。點分類、商家可一路查看交易與原始文件。「設定 → 消費分類」管理類別與規則。
 
-**目前分類限制與下一步：** V1 有分類工具，但沒有內建商家辨識或消費 AI。2026-09-30 唯讀實測為 14 個類別、商家規則與有效单筆 override 均 0，九月 6 筆支出皆未分類；圖書尚未是獨立類別。使用者要求交通／圖書／飲食的逐筆自動分類，已整理成 [後續研究與 A1-A6 流程](CATEGORY_SPENDING_PLAN.md#18-逐筆自動分類研究與後續流程規劃未實作)。本次只更新文件及 Git，未實作自動分類或修改正式帳本；多用途商家應允許同商家每筆不同類別，不能把一次選擇當作所有商品用途。
+**2026-10-01 開發進度：** 已依最新 Git／MD 實作 16 類 taxonomy（含圖書、保險）、本機版本化明確規則、未分類獨立圓環槽位、逐筆預設與批次確認。明確的電子書／保險費等可在本機分類；便利商店、商城與支付平台維持未分類。內建規則理由／版本／hash 可追溯，人工指定優先；不呼叫消費 AI。A1 真實人工標註盲測、A4 雲端建議與 A5 正式部署尚未完成，不宣稱自動分類準確率。
 
 ## 分類功能隔離預覽
 
 ```powershell
-.\scripts\start_category_preview.ps1 -MobileHostname desktop-vcgfqnq.tailb47104.ts.net
+.\scripts\start_category_preview.ps1 -MobileHostname desktop-vcgfqnq.tailb47104.ts.net -FrontendPort 3002 -BackendPort 8032 -DataName category-preview-20261001
+# 須先確認埠未占用；已在執行的服務不要重複啟動。
+# 本機首頁可識別後再註冊／核對私有路由，保留其他專案路由：
+& C:\Users\brad\.codex\scripts\register-mobile-preview.ps1 -LocalPort 3002 -ExpectedText '家庭收支記錄'
 ```
 
-隔離 [分類預覽](https://desktop-vcgfqnq.tailb47104.ts.net:8443/?month=2026-09) 僅供測試，不是日常入口。其獨立 `data/category-preview/synthetic.db` 的合成來源已撤銷，目前有效交易 0 筆；不可自行恢復以補圖。SecretStore 與 Excel 關閉。服務須保持執行、裝置須加入同一 Tailscale；實體手機尚未驗收。
+新 [M13 分類預覽](https://desktop-vcgfqnq.tailb47104.ts.net:8444/?month=2026-09) 僅供測試，不是日常帳本。3002 同源代理到 API 8032；獨立 `data/category-preview-20261001/synthetic.db` 為 0013、18 筆合成交易，SecretStore 與 Excel 關閉。合成帳本中的分類可操作；勾選逐筆後可批次預覽／確認，不建立商家規則，人工例外保留。實際 CSS 320px／390px 與桌面已驗，實體手機未驗收。服务须保持启动，裝置須加入同一 Tailscale；上述 HTTPS 埠是本機當次已註冊路由，不保證其他主機相同。
 
-2026-09-30 授權部署後，程式與正式 `data/family-finance-hub-live.db` 均為 `0012_transaction_categories`；正式 3000／HTTPS 443 已同步新版 `frontend/dist` 及 owned Excel。成對備份與副本還原／migration 驗證證據在本機 `data/backups/20260930-categories-1845/`，不進 Git。未來 schema 不同仍須當次授權、成對備份及副本驗證，不能將新版 API 直接搭配舊 DB。隔離 preview 腳本不是正式啟動器。
+舊 M12 預覽 3001／8030／HTTPS 8443 的 `data/category-preview/synthetic.db` 合成來源已撤銷，有效交易 0 筆；不得自行恢復以補圖。啟動腳本保留原預設，M13 須明確提供新參數。若無法查看占用程序，腳本會停止，不猜測埠是空的。
+
+正式 `data/family-finance-hub-live.db` 與正在執行的 M12 服務仍是 `0012_transaction_categories`；3000／HTTPS 443、正式 `frontend/dist` 和 owned Excel 未因本輪變更。開發 Alembic head 為 `0013_category_taxonomy`，不可直接重啟正式服務。正式升級仍須另行授權、成對備份及副本驗證；既有備份在本機 `data/backups/20260930-categories-1845/`，不進 Git。隔離 preview 腳本不是正式啟動器。
 
 在「總覽」選月份與單一幣別，點分類清單或圓環進入商家，再點商家看逐筆交易。「修改分類」可選單筆或同商家現在／未來；「待分類商家」集中整理，「設定 → 分類」管理分類及 exact／contains 規則。分類代碼不可重複，顯示名稱可相同；停用類別保留引用但不再作有效分類。
 
@@ -90,7 +95,7 @@ npm --prefix frontend run build
 
 相同 SHA-256 內容再次上傳或由 Codex MCP 重送時，會保持已撤銷，不新增交易；來自新郵件的相同內容也適用。若重新輸出後檔案 bytes 不同，會被視為另一份文件，目前尚未做跨文件的語意去重。預覽後若關聯交易或文件狀態改變，系統會要求重新確認；重複確認同一動作不會重複計算或增加操作紀錄。
 
-此功能最初由 `0009_document_revocation` migration 加入；目前程式 Alembic head 為 `0012_transaction_categories`。既有使用者須先取得正式升級授權、停止 API、成對備份資料庫／文件／專用工作簿，再升級與同步 build；正式啟動器不會自動改動資料庫。
+此功能最初由 `0009_document_revocation` migration 加入；目前開發 Alembic head 為 `0013_category_taxonomy`，正式 DB 仍為 0012。既有使用者須先取得正式升級授權、停止 API、成對備份資料庫／文件／專用工作簿，再升級與同步 build；正式啟動器不會自動改動資料庫。
 
 ## Gmail、Codex MCP 與加密 PDF
 
@@ -143,11 +148,11 @@ npm test
 npm run build -- --outDir dist-category-preview
 ```
 
-以上短暫存路徑適用此 Windows 主機，其他主機改為自己可寫的短路徑。本輪重新跑 backend **326 passed**（含 16 項下載回歸，2 warnings）、frontend **29 passed**、TypeScript／Vite production build 成功。正式部署後從 Gmail 新下載中國信託／國泰／永豐帳單，隔離解析 1／19／31 列、獨立逐列／摘要及冪等通過；正式 Finance 18 → 18。Recharts 使用 lazy chunk；UI unit tests mock chart，正式實際 SVG／下鑽及桌面、320px／390px 瀏覽器另驗證。實體手機、screen reader、重開機與冷啟動效能目標仍未完成；完整證據與限制見 HANDOFF／CATEGORY_SPENDING_PLAN。
+以上短暫存路徑適用此 Windows 主機，其他主機改為自己可寫的短路徑。2026-10-01 本輪 backend **376 passed**（2 個既有相依套件警告）、frontend **37 passed**、TypeScript／Vite build 至 `dist-category-preview` 成功，未覆蓋正式 dist。本次重新從 Gmail 下載中國信託／國泰／永豐帳單，隔離解析 1／19／31 列、獨立逐列／摘要及冪等全 PASS；正式 Finance 18 → 18／0012 不變。Recharts 真實 SVG 6 slices、逐筆與批次寫入、桌面／CSS 320px／390px 另以隔離瀏覽器驗證，實體手機與 screen reader 未驗收。
 
 每次交付另外必跑 **E2E-GMAIL-3BANK**：從 Gmail 重新下載三家不同銀行的真實信用卡對帳單，先確認郵件密碼格式，再完成本機解鎖、交易解析/核對與冪等重跑。三家全部通過才算真實驗收完成；unit tests/build、舊結果或只解鎖不算替代。完整步驟見 [實作流程第 4.1 節](IMPLEMENTATION_PLAN.md#41-必測e2e-gmail-3bank-三銀行真實-gmail-驗收)，本次結果與阻塞見 [交接](HANDOFF.md)。測試不得自動確認正式入帳。
 
-本次純文件與既有成果 Git 封存重新跑 backend 326／frontend 29 passed 及隔離 production build，沒有新程式部署或帳本寫入。上述 Gmail 三銀行 PASS 是前次 `retest-20260930-1903` 的部署驗收，本次未重新下載，不能稱為新一輪 PASS。未來逐筆自動分類實作交付仍须當次重新驗收；本次唯讀本機／私有 HTTPS 首頁、實際 JS／CSS、health／分類 API 正常，實體手機未測。
+本次三銀行新下載證據在 Git 忽略的 `data/gmail-acceptance/retest-20261001-taxonomy/`；AI／confirm 皆 0 次。它是解鎖／解析回歸，不是分類 precision／coverage 盲測或正式新增交易／Excel 入帳。遠端最新六個 MD-only 提交已讀取但未執行 Git merge／pull；本輪修改也未 commit／push。
 
 ## 家用網路使用
 

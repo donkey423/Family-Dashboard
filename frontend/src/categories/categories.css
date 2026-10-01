@@ -24,6 +24,7 @@
 .category-merchant-link { display: flex; align-items: center; gap: 14px; background: transparent; border: 0; text-align: left; cursor: pointer; color: #23352e; padding: 0; flex: 1; min-width: 0; }
 .category-merchant-link > span, .category-merchant-name, .category-settings-list li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .category-description { overflow-wrap: anywhere; }
+.category-impact { border-top: 1px solid #d9e1dd; padding: 8px 0; font-size: 13px; overflow-wrap: anywhere; }
 .category-error { color: #a53642; padding: 12px 0; display: flex; gap: 16px; justify-content: space-between; }
 .category-empty { padding: 36px 0; color: #65756f; }
 .category-modal-backdrop { position: fixed; inset: 0; background: #172b2480; z-index: 100; display: flex; justify-content: center; align-items: center; padding: 16px; }
@@ -41,6 +42,13 @@
 .category-settings-list label { display: flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 13px; }
 .category-settings-list .category-actions { max-width: 60%; }
 .category-table-button { overflow-wrap: anywhere; white-space: normal; text-align: left; }
+.transaction-selection { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.transaction-selection input { flex: 0 0 16px; width: 16px; height: 16px; margin: 2px 0; }
+.transaction-selection .transaction-name { min-width: 0; }
+.category-batch-action { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.category-batch-rows { list-style: none; margin: 16px 0; padding: 0; }
+.category-batch-rows li { border-bottom: 1px solid #e0e6e2; padding: 10px 0; display: grid; gap: 4px; font-size: 13px; overflow-wrap: anywhere; }
+.category-batch-rows span { color: #65756f; }
 @media (max-width: 640px) {
   .category-spending { margin: 20px 0; padding: 20px 0; }
   .category-heading { flex-wrap: wrap; gap: 10px; }

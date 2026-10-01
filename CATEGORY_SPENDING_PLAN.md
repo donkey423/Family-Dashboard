@@ -1,6 +1,6 @@
 # 家庭收支記錄：消費分類、支出圓餅圖與下鑽實作計畫
 
-> 狀態（2026-09-30）：**C1-C5 人工分類／商家規則／圖表 V1 已實作並部署；逐筆自動辨識尚未實作。** 第 18 節為使用者要求的深度研究與後續工作包，本次只授權更新文件及 Git，不等於批准自動分類程式或雲端資料傳送。
+> 狀態（2026-10-01）：**C1-C5 已正式部署；M13 的 A2 本機明確規則／16 類 taxonomy／Donut 與 A3 單筆／批次确认已實作並隔離驗證。** 使用者已要求依最新 Git／MD 實作；A1 真實人工標註盲測、A4 雲端與 A5 正式部署未完成，不把合成測試當成自動分類品質或正式部署授權。
 >
 > 使用者於 2026-09-30 明確把「每筆交易分類、同類歸組、支出圓餅圖、點類別查看子項目」提升為下一階段產品需求。本文件取代舊文件中「本輪不做分類／圖表」對這個特定功能的限制；仍不授權擴張成通用財務平台、AI 理財、Budget、Tag 系統或完整 Dashboard 重寫。
 >
@@ -66,7 +66,7 @@ Transaction rows
 
 前端已加入 Recharts，以及 Vitest / React Testing Library / user-event / jsdom。分類功能以 lazy-loaded 元件載入，不重寫既有 Dashboard。
 
-程式與正式資料庫均為 `0012_transaction_categories`，down revision 為 `0011_statement_import`。本輪授權部署已完成成對備份、副本還原及 migration downgrade/re-upgrade、正式 migration／同步 build／正常登入帳戶啟動與回歸。後續不得把新版程式直接重啟到不同 schema 的正式資料庫；仍需當次授權、備份及驗證。
+正式 M12 服務／資料庫仍為 `0012_transaction_categories`、18 筆；開發 head 已是 `0013_category_taxonomy`，down revision 為 0012。0013 upgrade／downgrade／re-upgrade 與資料引用保留只在副本／隔離測試驗證，本次未正式部署。不得把新版程式直接重啟到正式舊 schema；須當次授權、成對備份及副本驗證。
 
 ---
 
@@ -176,30 +176,52 @@ payment  → 不計入消費
 
 ---
 
-## 4. 預設類別
+## 4. 分類 Taxonomy
 
-第一版 seed：
+使用者已核准此 taxonomy；2026-10-01 已實作於隔離預覽的 `0013_category_taxonomy`。正式 DB 仍為 0012／14 類，不能把預覽視為正式部署或真實分類品質驗收。
 
-| Code | 顯示名稱 | 消費圖 |
-| --- | --- | --- |
-| food | 餐飲 | 是 |
-| groceries | 日常採買 | 是 |
-| transport | 交通 | 是 |
-| shopping | 購物 | 是 |
-| home | 居家／水電通訊 | 是 |
-| family | 家庭／育兒 | 是 |
-| health | 醫療／健康 | 是 |
-| entertainment | 娛樂／訂閱 | 是 |
-| travel | 旅遊 | 是 |
-| education | 教育 | 是 |
-| finance | 金融／手續費／保險 | 是 |
-| uncategorized | 未分類 | 是 |
-| income | 收入 | 否 |
-| transfer | 轉帳／信用卡繳款 | 否 |
+資料保留完整類別；Donut 最多顯示 6 個 slice，不為圖表可讀性合併資料 taxonomy。
 
-V1 不建立 subcategory table。
+| Code | 顯示名稱 | 消費目的 | 消費圖 |
+| --- | --- | --- | --- |
+| food | 飲食 | 餐廳、咖啡、飲料、明確外送 | 是 |
+| groceries | 日常採買 | 超市、生鮮、家庭日常消耗品 | 是 |
+| transport | 交通 | 捷運、公車、高鐵、計程車、停車、油資、過路費 | 是 |
+| shopping | 購物 | 服飾、3C、一般商品；沒有更明確用途時才用 | 是 |
+| home | 居家／水電通訊 | 水電、瓦斯、網路、電信、管理費、居家維護 | 是 |
+| family | 家庭／育兒 | 托育、兒童用品、家庭成員專屬支出 | 是 |
+| health | 醫療／健康 | 醫院、診所、藥局、治療、健身 | 是 |
+| entertainment | 娛樂／數位服務 | 串流、遊戲、影音、數位內容／服務 | 是 |
+| travel | 旅遊 | 航空、住宿、景點、明顯旅行專屬支出 | 是 |
+| books | 圖書 | 實體書、電子書、漫畫、可辨識書籍交易 | 是 |
+| education | 課程／教育 | 學費、課程、培訓、補習、教學服務 | 是 |
+| insurance | 保險 | 保費；與金融費用分離 | 是 |
+| finance | 金融費用 | 手續費、利息、卡費 | 是 |
+| uncategorized | 未分類 | 資訊不足或多用途，不能可靠判斷 | 是 |
+| income | 收入 | legacy CSV 正向收入等 | 否 |
+| transfer | 轉帳／信用卡繳款 | 資金搬移／繳款，不是消費 | 否 |
 
-使用者說的「子項目」定義為：
+Migration 保留既有 category identity／references，只改仍為舊預設值的名稱及排序，不覆寫自訂名稱。`books`／`insurance` seed 冪等；downgrade 保留已有引用或自訂的新增類別。taxonomy、內建規則版本／內容與啟用狀態參與 Excel fingerprint，交易 identity 不變。
+
+### 4.1 依用途分類，不粗略猜商家
+
+`UBER EATS` 與 `NETFLIX` 等明確服務可以由完整比對的本機規則辨識；泛稱航空、診所或書店不代表本輪已建立全部別名。7-ELEVEN／全家、Costco、蝦皮／momo／PChome、百貨、LINE Pay／街口／Apple Pay、Apple／Google 等多用途或支付通路不自動歸類。
+
+交通以移動成本為準，高鐵預設交通；不能猜是否旅行，單筆旅行用途由 override 處理。飲食是立即吃喝，日常採買是家庭儲存／消耗；便利商店缺少品項時保持未知。圖書是內容，教育是教學服務。「訂閱」只是付款頻率，不能代替用途；Netflix、健身房及課程月費應分屬自己的類別。
+
+### 4.2 信心與品質邊界
+
+| 層級 | 行為 |
+| --- | --- |
+| A：描述明確且單一用途 | 受限本機規則可採用；須有反例測試及後續真實盲測 |
+| B：有傾向但可能多用途 | 後續可選建議流程，預設逐筆確認；本輪未實作 AI 建議 |
+| C：多用途／支付通路 | 保持未分類，不建立粗略 merchant-wide 自動規則 |
+
+優先 precision，不強迫 coverage 接近 100%；模型信心不是準確率。合成測試通過不代表真實分類品質已驗收。
+
+### 4.3 不新增多層分類
+
+維持以下下鑽，不增加 group／subcategory table：
 
 ```text
 Category
@@ -209,7 +231,7 @@ Merchant subtotal
 Transaction rows
 ```
 
-未來若真實使用證明「餐飲 → 外送／咖啡／餐廳」有價值，再另加 taxonomy。
+只有未來真實需求證明 Budget、Need/Want 或年度分析需要群組時才另行評估。
 
 ---
 
@@ -337,14 +359,14 @@ Pie / Donut 不能畫負 slice。
 - Dashboard 的「支出」仍使用現有正式語意。
 - Donut 不冒充所有 refund 後的完整 signed sum；UI 必須同時顯示正向分類總額與退款／抵扣。
 
-### 7.4 Top 5 + 其餘類別
+### 7.4 最多六片，未分類保留獨立槽位
 
 資料層可有 10+ 類，但圖表最多顯示：
 
 ```text
-Top 5
-+
-其餘類別
+正向類別 <= 6：全部顯示
+正向類別 > 6、含正向未分類：Top 4 已分類 + 未分類 + 其餘類別
+正向類別 > 6、無正向未分類：Top 5 + 其餘類別
 ```
 
 注意：
@@ -352,6 +374,7 @@ Top 5
 - 真實 category `uncategorized` 顯示「未分類」。
 - 圖表 aggregate 顯示「其餘類別」。
 - 兩者不可都叫「其他」。
+- 未分類不能被聚合進其餘類別，點未分類直接進整理入口；其餘類別始終最後，固定 category code 顏色，負淨額仍另列。
 
 點「其餘類別」先看到它包含哪些真實 categories，再繼續 drill-down。
 
@@ -823,7 +846,7 @@ SQLite 仍是事实来源，分类是可重算视图。
 - CAT-D01：0 transaction → 空状态，不出现 NaN/Infinity。
 - CAT-D02：1 category → 单 slice 正常。
 - CAT-D03：刚好 5 categories → 不建立「其余类别」。
-- CAT-D04：6+ categories → Top 5 + 其余类别。
+- CAT-D04：六類全部顯示；七類以上最多六片，有正向未分類時保留它，其他四個已分類加其餘，否則 Top 5 加其餘。
 - CAT-D05：「其余类别」金额 = 被合并 categories 总和。
 - CAT-D06：「未分类」与「其余类别」是不同概念。
 - CAT-D07：同金额 categories 排序 deterministic。
@@ -970,7 +993,7 @@ Component tests 至少覆盖：
 
 ---
 
-## 18. 逐筆自動分類研究與後續流程（規劃，未實作）
+## 18. 逐筆本機分類與後續流程
 
 ### 18.1 根因與唯讀實測
 
@@ -984,8 +1007,8 @@ Component tests 至少覆盖：
 
 - 目標是每筆已確認 Finance 交易的消費用途：明確項目自動分類，模糊項目才確認；不能以一律人工整理或全部填滿類別冒充完成。
 - 第一階段仍為一筆刷卡交易一個類別。單筆蝦皮或百貨交易可能包含多種商品；沒有訂單／發票資訊時，不推測明細，也不在本輪新增拆帳模型。
-- 新增獨立 `books`「圖書」；`food` 可顯示為「飲食」，保留內碼及既有引用。飲食為餐廳／明確外送，日常採買為超市／生鮮，圖書為可辨識書籍／電子書，教育為課程／學費。保留其他既有類別，不增加多層 taxonomy。
-- 本節只完成研究及文件。實作、正式 migration／部署與雲端傳送交易描述均需後續明確授權；密碼規則 AI 的既有設定不構成消費資料傳送同意。
+- 新增獨立 `books`「圖書」及 `insurance`「保險」，名稱與用途以第 4 節為準；保留內碼及引用，不增加多層 taxonomy。
+- 本輪「繼續」已授權分類程式實作與隔離驗證。正式 migration／部署、真實帳本分類寫入及雲端傳送仍須當次明確授權；密碼規則 AI 設定不構成消費資料傳送同意。
 
 ### 18.3 推薦分類流程與範圍
 
@@ -1002,13 +1025,13 @@ AI 只產生建議，不列入正式有效分類；確認後使用既有 overrid
 | 工作包 | 修改落點與步驟 | 驗收／停止條件 |
 | --- | --- | --- |
 | A1 基準與樣本 | 唯讀盤點既有交易，定義 taxonomy；在本機建立經人工標註的三銀行描述樣本及混合商家反例，區分分類與會計語意缺口 | 記錄样本數與正確答案／資訊不足理由；沒有來源就不判定真實商品；不改正式帳本 |
-| A2 本機自動分類 | 檢查最新 Alembic head，再以新 migration 加圖書且保留引用；延伸 `domain.py`／`service.py` 及版本化清單，API source 契約與 Excel fingerprint 同步 | seed 冪等、upgrade／rollback 副本驗證；manual 優先、停用安全 fallback、穩定規則衝突、無 N+1；未知保持未分類 |
+| A2 本機自動分類 | 新 migration 加圖書／保險且保留引用；延伸 resolver、版本化清單、API 理由、Excel fingerprint 及最多六片的 Donut | 隔離完成；seed 冪等、upgrade／rollback 副本驗證；manual 優先、未知保留、自訂名稱不覆寫；正式尚未部署 |
 | A3 逐筆整理 UI | 調整 `UncategorizedReview.tsx`／`CategoryPicker.tsx`：從商家進入逐筆，預設 transaction scope，顯示建議理由、記住商家影響預覽及批次確認 | 同商家可同時有飲食／圖書；寫入原子、失敗 rollback、過期預覽重查；手機／鍵盤操作與原 drill-down 不退化 |
 | A4 可選 AI 建議 | 只有取得雲端用途同意後才加小型 suggestion port／provider adapter；輸出限制 active category code 或 unknown，驗證 JSON schema，快取依描述摘要／taxonomy／provider 版本失效 | AI 關閉／離線仍可用；新 profile／模型／規則變更使舊建議失效；429／timeout 有界重試，無付費 fallback、無 PII／全文；不 eval、不執行模型指令 |
 | A5 既有資料整理 | 先產生分類與影響預覽；核准後只透過分類資料或讀取投影套用，更新 Donut／明細／owned Excel | 交易 ID／日期／金額／來源／kind／row_hash／Statement 全不變；重跑冪等、人工例外保留、Web／API／Excel 全相符 |
 | A6 交付 | 每步 focused tests／build／更新 TASKS、HANDOFF；完成時 full suite、production build、桌面／320px／390px，以及當次三銀行真實 Gmail 驗收 | 每家新下載、來源密碼提示、解鎖、完整解析／核對及冪等均 PASS；入帳另依核准隔離流程，不自動 confirm 正式草稿 |
 
-推薦先做 A1-A3；以真實未知樣本的數量與種類決定是否需要 A4，不把安裝 AI runtime 或建立通用 provider 平台當前置。本次沒有勾選任何 A1-A6 實作完成項目。
+推薦先完成 A1-A3；本輪 A2／A3 已實作並隔離驗證，A1 尚無人工標註盲測，不能宣稱 precision／coverage 或直接部署正式帳本。以真實未知樣本決定是否需要 A4，不把 AI runtime 或通用 provider 平台當前置。
 
 ### 18.5 新增測試矩陣與品質報告
 
@@ -1022,6 +1045,8 @@ AI 只產生建議，不列入正式有效分類；確認後使用既有 overrid
 | AUTO-06 | 模型未知 code、格式錯誤、prompt injection、429／timeout、未同意雲端 | 安全拒絕／unknown；只處理資料，不接受模型指令；無外部請求或未授權保存 |
 | AUTO-07 | 快速切月份／幣別、stale 建議、批次半途失敗、重複確認 | 舊回應／預覽不得覆蓋新狀態；原子寫入或完整 rollback，重跑不複製 |
 | AUTO-08 | 撤銷／恢復、重分析、備份還原及字典停用 | 沿用原 identity／override；新 effective category 與 Excel 一致 |
+| AUTO-09 | books／insurance、舊預設與自訂名稱、upgrade／downgrade | 保留 ID／引用／交易事實；保險與金融費用分離；已有引用的新類別不刪除 |
+| AUTO-10 | 六類以下、七類以上、正額未分類、負淨額、穩定顏色 | 最多六片；未分類不併入其餘；其餘最後；負淨額另列 |
 
 報告分開列自動分類 precision（自動採用中正確筆數／人工核對的自動採用筆數）、coverage（自動分類筆數／可分類消費筆數）、待確認率、各類別／銀行的樣本量與錯誤原因。未知不是成功，也不是一定要消除的錯誤；不得把人工確認混進自動 precision，或把模型自報 confidence 當準確率。先使用未參與規則調整的盲測，再決定可自動採用的規則範圍；目前尚無自動分类品質結果。
 
@@ -1034,3 +1059,11 @@ AI 只產生建議，不列入正式有效分類；確認後使用既有 overrid
 雲端建議只傳經去識別的必要短描述；不傳身分證、生日、完整 mail／PDF、銀行／帳戶、日期、金額或消費歷史，key 仍在 SecretStore。原始描述視為不可信輸入；schema whitelist 與程式驗證限制输出，不允許模型更改交易、呼叫工具或生成可執行規則。
 
 回退先停用新增自動規則／provider，保留人工 override、原始帳本與來源，透過同一投影更新 Excel。schema rollback 只對成對備份與相容程式副本演練，正式回退另取授權；不能刪分類引用、reset 工作樹或清空 DB 來恢復。
+
+### 18.7 本輪實作與驗證狀態
+
+- A2／A3 已隔離實作：16 類 taxonomy、版本化完整比對規則、可追溯理由、逐筆預設、商家跨月影響預覽、最多 50 筆原子批次分類。人工 override 包含停用類別的既有指定，均不被批次覆蓋；過期 token、撤銷或途中失敗整批拒絕／rollback。
+- 後端完整測試 376 passed、2 個既有相依警告；前端 37 passed；TypeScript／Vite build 成功，輸出 `dist-category-preview`，未替換正式 dist。API／CSV 合成預覽逐列一致，已撤銷來源重啟不會被恢復。
+- 隔離桌面及實際 CSS 320／390px 已驗 Donut 非空、逐筆／批次操作、範圍提示與無溢出；不是實體手機或螢幕閱讀器驗收。
+- 本輪重新 Gmail 下載中信／國泰／永豐九月加密原件，依實際郵件提示解鎖；1／19／31 列全列與摘要核對及冪等均 PASS。證據只留 ignored `data/gmail-acceptance/retest-20261001-taxonomy/`。正式 18 → 18／0012 不變，confirm／外部 AI 均 0。
+- 上述三銀行是下載／解鎖／解析關卡，不是分類 precision／coverage 盲測。A1 人工標註盲測、A4 可選 AI、A5 正式 migration／分類及正式 Excel 驗收仍未完成，M13 不可全勾選。

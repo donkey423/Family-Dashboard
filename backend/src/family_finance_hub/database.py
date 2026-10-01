@@ -23,7 +23,7 @@ def make_engine(database_url: str):
 
     @event.listens_for(engine, "begin")
     def begin_sqlite_transaction(connection):
-        connection.exec_driver_sql("BEGIN")
+        connection.exec_driver_sql("BEGIN IMMEDIATE" if connection.get_execution_options().get("sqlite_immediate") else "BEGIN")
 
     return engine
 

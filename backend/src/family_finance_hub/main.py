@@ -215,6 +215,7 @@ def create_app(
     legacy_gmail_enabled = config.legacy_gmail_oauth_enabled or gmail_client_factory is not None
     engine = make_engine(config.database_url)
     session_factory = make_session_factory(engine)
+    session_factory.configure(info={"builtin_category_rules_enabled": config.builtin_category_rules_enabled})
     storage = LocalFilesystemStorage(config.storage_root)
     documents = DocumentService(storage)
     active_secret_store = secret_store

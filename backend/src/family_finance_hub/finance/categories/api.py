@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ...models import FinanceCategory, FinanceCategoryRule, FinanceTransaction, TransactionCategoryOverride, utc_now
 from ..queries import active_transaction_filter
-from .domain import PROTECTED_CODES, normalize_merchant
+from .domain import PROTECTED_CODES, is_consumption, normalize_merchant
 from .service import CategorizationService, transaction_payload
 
 
@@ -70,6 +70,23 @@ class RulePatch(BaseModel):
 class Assignment(BaseModel):
     category_id: str = Field(min_length=1, max_length=36)
     scope: Literal["transaction", "merchant"] = "transaction"
+    impact_token: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
+class BatchSelection(BaseModel):
+    category_id: str = Field(min_length=1, max_length=36)
+    transaction_ids: list[str] = Field(min_length=1, max_length=50)
+
+    @field_validator("transaction_ids")
+    @classmethod
+    def unique_ids(cls, value):
+        if len(set(value)) != len(value) or any(not item or len(item) > 36 for item in value):
+            raise ValueError("交易識別不可重複或空白")
+        return value
+
+
+class BatchAssignment(BatchSelection):
+    impact_token: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 def category_payload(row):
@@ -173,8 +190,54 @@ def category_router(get_session, month_range, currency_code):
         commit(session)
         return {"deleted": True}
 
+    @router.get("/transactions/{transaction_id}/category-impact")
+    def assignment_impact(transaction_id: str, category_id: str, session: Session = Depends(category_session)):
+        row = require_transaction(session, transaction_id)
+        require_category(session, category_id, active=True)
+        if not normalize_merchant(row.description):
+            raise HTTPException(422, "空白商家不可建立規則")
+        return CategorizationService(session).merchant_impact(row, category_id)
+
+    def batch_rows(session, body):
+        require_category(session, body.category_id, active=True)
+        rows = session.scalars(select(FinanceTransaction).where(FinanceTransaction.id.in_(body.transaction_ids), active_transaction_filter())).all()
+        if len(rows) != len(body.transaction_ids):
+            raise HTTPException(409, "選取的交易已變動，請重新載入明細")
+        if any(not is_consumption(row.amount, row.statement_id, row.transaction_kind) for row in rows):
+            raise HTTPException(422, "批次分類只接受消費交易")
+        return rows
+
+    @router.post("/transactions/category-batch/preview")
+    def batch_preview(body: BatchSelection, session: Session = Depends(category_session)):
+        return CategorizationService(session).batch_impact(batch_rows(session, body), body.category_id)
+
+    @router.patch("/transactions/category-batch")
+    def assign_batch(body: BatchAssignment, session: Session = Depends(category_session)):
+        session.connection(execution_options={"sqlite_immediate": True})
+        rows = batch_rows(session, body)
+        impact = CategorizationService(session).batch_impact(rows, body.category_id)
+        if impact["impact_token"] != body.impact_token:
+            raise HTTPException(409, "分類資料已變動，請重新預覽影響後再儲存")
+        now = utc_now()
+        changed = impact["changed_transaction_ids"]
+        if changed:
+            try:
+                session.execute(insert(TransactionCategoryOverride).values([
+                    dict(transaction_id=transaction_id, category_id=body.category_id, created_at=now, updated_at=now)
+                    for transaction_id in changed]))
+            except IntegrityError:
+                session.rollback()
+                raise HTTPException(409, "批次分類未儲存，請重新預覽後再試") from None
+        commit(session)
+        return dict(changed_count=len(changed), protected_override_count=impact["protected_override_count"])
+
     @router.patch("/transactions/{transaction_id}/category")
     def assign(transaction_id: str, body: Assignment, session: Session = Depends(category_session)):
+        if body.scope == "merchant":
+            if not body.impact_token:
+                raise HTTPException(422, "請先預覽跨月份的商家分類影響")
+            # Serialize validation and the write; no other writer can change the preview in between.
+            session.connection(execution_options={"sqlite_immediate": True})
         row = require_transaction(session, transaction_id)
         require_category(session, body.category_id, active=True)
         now = utc_now()
@@ -185,6 +248,9 @@ def category_router(get_session, month_range, currency_code):
             key = normalize_merchant(row.description)
             if not key:
                 raise HTTPException(422, "空白商家不可建立規則")
+            impact = CategorizationService(session).merchant_impact(row, body.category_id)
+            if impact["impact_token"] != body.impact_token:
+                raise HTTPException(409, "分類資料已變動，請重新預覽影響後再儲存")
             session.execute(insert(FinanceCategoryRule).values(id=str(uuid4()), category_id=body.category_id, match_type="normalized_exact", normalized_pattern=key, priority=0, enabled=True, created_at=now, updated_at=now)
                 .on_conflict_do_update(index_elements=["match_type", "normalized_pattern"], set_=dict(category_id=body.category_id, enabled=True, updated_at=now)))
         commit(session)

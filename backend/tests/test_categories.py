@@ -51,7 +51,12 @@ def get_spending(client, **params):
 
 
 def assign(client, key, category, scope="transaction"):
-    return client.patch(f"/api/finance/transactions/{key}/category", json={"category_id": category, "scope": scope})
+    body = {"category_id": category, "scope": scope}
+    if scope == "merchant":
+        preview = client.get(f"/api/finance/transactions/{key}/category-impact", params={"category_id": category})
+        if preview.status_code == 200:
+            body["impact_token"] = preview.json()["impact_token"]
+    return client.patch(f"/api/finance/transactions/{key}/category", json=body)
 
 
 def test_resolution_updates_filters_merchants_and_preserves_identity(client):
@@ -350,7 +355,7 @@ def test_migration_forward_downgrade_preserves_rows_and_constraints(tmp_path):
     command.upgrade(config, "head")
     command.upgrade(config, "head")
     with engine.connect() as connection:
-        assert connection.scalar(text("SELECT count(*) FROM finance_categories")) == 14
+        assert connection.scalar(text("SELECT count(*) FROM finance_categories")) == 16
         assert connection.execute(text("SELECT * FROM finance_transactions ORDER BY id")).all() == original
         connection.exec_driver_sql("PRAGMA foreign_keys=ON")
         with pytest.raises(Exception, match="FOREIGN KEY"):
@@ -378,7 +383,7 @@ def test_seed_idempotent_backup_restore_and_no_reseed(client, tmp_path):
     with client.app.state.session_factory() as session, session.begin():
         seed_categories(session)
         seed_categories(session)
-        assert len(session.scalars(select(FinanceCategory)).all()) == 14
+        assert len(session.scalars(select(FinanceCategory)).all()) == 16
     source = tmp_path / "category.db"
     restored = tmp_path / "restore.db"
     shutil.copy2(source, restored)

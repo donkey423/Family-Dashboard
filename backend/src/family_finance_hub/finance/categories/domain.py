@@ -2,12 +2,14 @@ from dataclasses import dataclass
 from decimal import Decimal
 import unicodedata
 
+from .builtin import match_builtin
+
 
 DEFAULT_CATEGORIES = (
-    ("food", "餐飲"), ("groceries", "日常採買"), ("transport", "交通"),
+    ("food", "飲食"), ("groceries", "日常採買"), ("transport", "交通"),
     ("shopping", "購物"), ("home", "居家／水電通訊"), ("family", "家庭／育兒"),
-    ("health", "醫療／健康"), ("entertainment", "娛樂／訂閱"), ("travel", "旅遊"),
-    ("education", "教育"), ("finance", "金融／手續費／保險"),
+    ("health", "醫療／健康"), ("entertainment", "娛樂／數位服務"), ("travel", "旅遊"),
+    ("books", "圖書"), ("education", "課程／教育"), ("insurance", "保險"), ("finance", "金融費用"),
     ("uncategorized", "未分類"), ("income", "收入"), ("transfer", "轉帳／信用卡繳款"),
 )
 PROTECTED_CODES = frozenset(("uncategorized", "income", "transfer"))
@@ -50,10 +52,13 @@ class Resolution:
     category: Category
     source: str
     merchant_key: str
+    rule_id: str | None = None
+    reason: str | None = None
 
 
 class CategoryResolver:
-    def __init__(self, categories: list[Category], rules: list[Rule]):
+    def __init__(self, categories: list[Category], rules: list[Rule], *, builtin_enabled: bool = True):
+        self.builtin_enabled = builtin_enabled
         self.categories = {item.id: item for item in categories}
         self.codes = {item.code: item for item in categories}
         active_rules = [item for item in rules if item.category_id in self.categories]
@@ -78,5 +83,10 @@ class CategoryResolver:
             "finance" if statement_id is not None and kind in ("fee", "interest") else
             "income" if statement_id is None and amount >= 0 else "uncategorized"
         )
+        # Refunds have no proven original purchase association; never infer their purpose.
+        if code == "uncategorized" and is_consumption(amount, statement_id, kind) and kind != "refund" and self.builtin_enabled:
+            rule = match_builtin(key)
+            if rule and rule.code in self.codes:
+                return Resolution(self.codes[rule.code], "builtin_rule", key, rule.id, rule.reason)
         category = self.codes.get(code, self.codes["uncategorized"])
         return Resolution(category, "uncategorized" if code == "uncategorized" else "system", key)

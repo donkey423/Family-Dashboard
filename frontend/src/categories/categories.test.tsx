@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
-import { api, type Category, type CategorySpending, type CategoryTotal, type Transaction } from "../api";
+import { api, type Category, type CategoryBatchImpact, type CategorySpending, type CategoryTotal, type Transaction } from "../api";
 import { CategoryDonut } from "./CategoryDonut";
 import { CategoryPicker } from "./CategoryPicker";
+import { CategoryBatchPicker } from "./CategoryBatchPicker";
 import { CategoryDetailPanel } from "./CategoryDetailPanel";
 import { SpendingByCategory } from "./SpendingByCategory";
 import { UncategorizedReview } from "./UncategorizedReview";
@@ -15,6 +16,7 @@ const categories: Category[] = ["food", "travel", "uncategorized"].map((code, so
 const total: CategoryTotal = { category_id: "food", code: "food", name: "餐飲", net_amount: "100.00", transaction_count: 1 };
 const tx: Transaction = { id: "t", source_document_id: "d", date: "2026-09-01", description: "Coffee shop", amount: "-100.00", currency: "TWD", category_id: "food", category_name: "餐飲", category_source: "override" };
 const summary: CategorySpending = { month: "2026-09", currency: "TWD", dashboard_expense: "100.00", positive_category_total: "100.00", refund_credit_total: "0.00", categories: [total], negative_categories: [] };
+const batchImpact: CategoryBatchImpact = { impact_token: "b".repeat(64), changed_count: 1, affected_count: 1, protected_override_count: 0, months: ["2026-09"], changed_transaction_ids: ["t"], items: [{ ...tx, category_source: "uncategorized", protected_override: false }] };
 beforeEach(() => {
   vi.spyOn(api, "categories").mockResolvedValue(categories);
   vi.spyOn(api, "categoryRules").mockResolvedValue([]);
@@ -23,7 +25,88 @@ beforeEach(() => {
   vi.spyOn(api, "uncategorizedMerchants").mockResolvedValue({ items: [] });
   vi.spyOn(api, "transactions").mockResolvedValue({ items: [tx], total: 1, limit: 50, offset: 0 });
   vi.spyOn(api, "assignCategory").mockResolvedValue(tx);
+  vi.spyOn(api, "categoryImpact").mockResolvedValue({ impact_token: "a".repeat(64), merchant_key: "COFFEE SHOP", changed_count: 2, affected_count: 2, protected_override_count: 1, months: ["2026-08", "2026-09"], samples: [] });
   vi.spyOn(api, "clearCategoryOverride").mockResolvedValue(tx);
+  vi.spyOn(api, "categoryBatchImpact").mockResolvedValue(batchImpact);
+  vi.spyOn(api, "assignCategoryBatch").mockResolvedValue({ changed_count: 1, protected_override_count: 0 });
+});
+
+test("batch requires explicit target and preview before saving only selected rows", async () => {
+  const changed = vi.fn(), close = vi.fn();
+  render(<CategoryBatchPicker transactions={[tx]} categories={categories} onChanged={changed} onClose={close} />);
+  expect(screen.getByRole("button", { name: "確認批次分類" })).toHaveProperty("disabled", true);
+  expect(api.categoryBatchImpact).not.toHaveBeenCalled();
+  expect(screen.getByRole("dialog").textContent).toContain("2026-09-01");
+  fireEvent.change(screen.getByLabelText("批次分類目標"), { target: { value: "travel" } });
+  await screen.findByText("將修改 1 筆；保留 0 筆單筆指定。");
+  expect(api.categoryBatchImpact).toHaveBeenCalledWith(["t"], "travel");
+  fireEvent.click(screen.getByRole("button", { name: "確認批次分類" }));
+  await waitFor(() => expect(api.assignCategoryBatch).toHaveBeenCalledWith(["t"], "travel", "b".repeat(64)));
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+  expect(changed).toHaveBeenCalledTimes(1);
+  expect(api.assignCategory).not.toHaveBeenCalled();
+});
+
+test("batch preview failure and stale write block retries until preview refreshes", async () => {
+  vi.mocked(api.categoryBatchImpact).mockRejectedValueOnce(new Error("批次預覽失敗"));
+  const close = vi.fn();
+  render(<CategoryBatchPicker transactions={[tx]} categories={categories} onChanged={vi.fn()} onClose={close} />);
+  fireEvent.change(screen.getByLabelText("批次分類目標"), { target: { value: "travel" } });
+  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "批次預覽失敗");
+  expect(screen.getByRole("button", { name: "確認批次分類" })).toHaveProperty("disabled", true);
+  expect(api.assignCategoryBatch).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "重新預覽影響" }));
+  await screen.findByText("將修改 1 筆；保留 0 筆單筆指定。");
+  vi.mocked(api.assignCategoryBatch).mockRejectedValueOnce(new Error("資料已變動"));
+  fireEvent.click(screen.getByRole("button", { name: "確認批次分類" }));
+  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "資料已變動");
+  expect(screen.getByRole("button", { name: "確認批次分類" })).toHaveProperty("disabled", true);
+  expect(close).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "重新預覽影響" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "確認批次分類" })).toHaveProperty("disabled", false));
+});
+
+test("batch ignores stale preview after target changes", async () => {
+  let resolve!: (value: CategoryBatchImpact) => void;
+  vi.mocked(api.categoryBatchImpact).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  render(<CategoryBatchPicker transactions={[tx]} categories={categories} onChanged={vi.fn()} onClose={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText("批次分類目標"), { target: { value: "food" } });
+  fireEvent.change(screen.getByLabelText("批次分類目標"), { target: { value: "travel" } });
+  await screen.findByText("將修改 1 筆；保留 0 筆單筆指定。");
+  await act(async () => resolve({ ...batchImpact, changed_count: 9, impact_token: "c".repeat(64) }));
+  expect(screen.queryByText("將修改 9 筆；保留 0 筆單筆指定。")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "確認批次分類" }));
+  await waitFor(() => expect(api.assignCategoryBatch).toHaveBeenCalledWith(["t"], "travel", "b".repeat(64)));
+});
+
+test("batch protects manual rows and selection resets when month changes", async () => {
+  const unknown = { ...tx, id: "unknown", description: "Unsorted", category_source: "uncategorized" };
+  vi.mocked(api.transactions).mockResolvedValue({ items: [tx, unknown], total: 2, limit: 50, offset: 0 });
+  const props = { category: total, currency: "TWD", categories, version: 0, merchantKey: "SHOP", onMerchant: vi.fn(), onClose: vi.fn(), onChanged: vi.fn() };
+  const { rerender } = render(<CategoryDetailPanel {...props} month="2026-09" />);
+  const checks = await screen.findAllByRole("checkbox");
+  expect(checks[0]).toHaveProperty("disabled", true);
+  fireEvent.click(checks[1]);
+  fireEvent.click(screen.getByRole("button", { name: "批次分類 (1)" }));
+  expect(screen.getByRole("dialog").textContent).toContain("Unsorted");
+  expect(screen.getByRole("dialog").textContent).not.toContain("Coffee shop");
+  rerender(<CategoryDetailPanel {...props} month="2026-08" />);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(await screen.findByRole("button", { name: "批次分類" })).toHaveProperty("disabled", true);
+});
+
+test("batch pending write cannot be dismissed with Escape", async () => {
+  let resolve!: (value: { changed_count: number; protected_override_count: number }) => void;
+  vi.mocked(api.assignCategoryBatch).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  const close = vi.fn();
+  render(<CategoryBatchPicker transactions={[tx]} categories={categories} onChanged={vi.fn()} onClose={close} />);
+  fireEvent.change(screen.getByLabelText("批次分類目標"), { target: { value: "travel" } });
+  await screen.findByText("將修改 1 筆；保留 0 筆單筆指定。");
+  fireEvent.click(screen.getByRole("button", { name: "確認批次分類" }));
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(close).not.toHaveBeenCalled();
+  await act(async () => resolve({ changed_count: 1, protected_override_count: 0 }));
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
 });
 
 test.each([true, false])("long transaction/category labels retain semantic mobile grid cells (source=%s)", withSource => {
@@ -57,8 +140,9 @@ test("empty donut stays useful without a pie", () => {
 test.each(["transaction", "merchant"] as const)("picker saves %s scope and refreshes", async scope => {
   const changed = vi.fn(), close = vi.fn(); render(<CategoryPicker transaction={tx} categories={categories} onChanged={changed} onClose={close} defaultScope={scope} />);
   fireEvent.change(screen.getByLabelText("分類"), { target: { value: "travel" } });
+  if (scope === "merchant") await waitFor(() => expect(screen.getByRole("button", { name: "儲存" })).toHaveProperty("disabled", false));
   fireEvent.click(screen.getByRole("button", { name: "儲存" }));
-  await waitFor(() => expect(api.assignCategory).toHaveBeenCalledWith("t", "travel", scope));
+  await waitFor(() => expect(api.assignCategory).toHaveBeenCalledWith(...(scope === "merchant" ? ["t", "travel", scope, "a".repeat(64)] : ["t", "travel", scope])));
   await waitFor(() => expect(close).toHaveBeenCalled()); expect(changed).toHaveBeenCalled();
 });
 test("failed PATCH retains category and dialog; clear override uses DELETE", async () => {
@@ -138,11 +222,37 @@ test("merchant transaction pagination and source document actions preserve filte
   fireEvent.click(source);
   expect(open).toHaveBeenCalledWith("d");
 });
-test("uncategorized review opens merchant scope; empty state and errors", async () => {
+test("uncategorized review opens actual transactions and defaults to one transaction", async () => {
   vi.mocked(api.uncategorizedMerchants).mockResolvedValue({ items: [{ merchant_key: "SHOP", display_name: "Shop", transaction_id: "t", net_amount: "10.00", transaction_count: 2 }] });
   render(<UncategorizedReview month="2026-09" currency="TWD" categories={categories} version={0} onChanged={vi.fn()} />);
   fireEvent.click(await screen.findByRole("button", { name: "分類 Shop" }));
-  expect((screen.getByRole("radio", { name: "此商家的現在與未來交易" }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(await screen.findByRole("button", { name: "修改 Coffee shop 的分類" }));
+  expect((screen.getByRole("radio", { name: "僅此筆交易" }) as HTMLInputElement).checked).toBe(true);
+  expect(screen.getByRole("dialog").textContent).toContain("2026-09-01");
+  expect(api.transactions).toHaveBeenCalledWith(expect.objectContaining({ category_id: "uncategorized", merchant_key: "SHOP", month: "2026-09", currency: "TWD", consumption_only: true }));
+});
+
+test("merchant preview failure blocks writes and stale save requires a new preview", async () => {
+  vi.mocked(api.categoryImpact).mockRejectedValueOnce(new Error("預覽失敗"));
+  render(<CategoryPicker transaction={tx} categories={categories} onChanged={vi.fn()} onClose={vi.fn()} />);
+  fireEvent.click(screen.getByRole("radio", { name: "此商家的現在與未來交易" }));
+  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "預覽失敗");
+  expect(screen.getByRole("button", { name: "儲存" })).toHaveProperty("disabled", true);
+  expect(api.assignCategory).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "重新預覽影響" }));
+  await screen.findByText("將改變 2 筆既有交易；保留 1 筆單筆指定。");
+  vi.mocked(api.assignCategory).mockRejectedValueOnce(new Error("資料已變動"));
+  fireEvent.click(screen.getByRole("button", { name: "儲存" }));
+  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "資料已變動");
+  expect(screen.getByRole("button", { name: "儲存" })).toHaveProperty("disabled", true);
+});
+
+test("unknown donut opens review rather than another category", async () => {
+  vi.mocked(api.spendingByCategory).mockResolvedValue({ ...summary, categories: [{ ...total, category_id: "uncategorized", code: "uncategorized", name: "未分類" }] });
+  render(<SpendingByCategory month="2026-09" currency="TWD" currencies={["TWD"]} version={0} onChanged={vi.fn()} onOpenDocument={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: /未分類.*100\.00%/ }));
+  await waitFor(() => expect(api.uncategorizedMerchants).toHaveBeenCalledWith("2026-09", "TWD"));
+  expect(window.location.search).not.toContain("category=");
 });
 test("detail loads only correct merchant page and reports load error", async () => {
   vi.mocked(api.transactions).mockRejectedValue(new Error("無法讀取"));

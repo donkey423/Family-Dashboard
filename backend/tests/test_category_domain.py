@@ -73,3 +73,42 @@ def test_contains_patterns_are_literal_not_sql_wildcards():
         rule = Rule("literal", "food", "contains", pattern, 0)
         assert resolver([rule]).resolve("Ordinary shop", Decimal("-1"), None, None).category.code == "uncategorized"
         assert resolver([rule]).resolve(f"Shop {pattern}", Decimal("-1"), None, None).category.code == "food"
+
+
+@pytest.mark.parametrize("description,code", [
+    ("ＵＢＥＲ　ＥＡＴＳ", "food"), ("Uber*Eats Taipei", "food"),
+    ("Netflix WWW.NETFLIX.COM", "entertainment"), ("台灣高鐵 - 台北", "transport"),
+    ("台北捷運", "transport"), ("停車費 - 車站", "transport"),
+    ("電子書 - 平台", "books"), ("課程費 - 程式設計", "education"),
+    ("保險費 - 定期保費", "insurance"), ("門診醫療費", "health"), ("航空機票 - 台北", "travel"),
+])
+def test_explicit_local_purpose_rules(description, code):
+    result = resolver().resolve(description, Decimal("-100"), "s", "purchase")
+    assert result.category.code == code and result.source == "builtin_rule"
+    assert result.rule_id and result.reason
+
+
+@pytest.mark.parametrize("description", [
+    "7-ELEVEN 001", "全家便利商店", "COSTCO", "蝦皮", "momo", "PChome", "百貨公司",
+    "LINE PAY", "街口支付", "APPLE PAY", "APPLE.COM/BILL", "GOOGLE", "UBER", "NETFLIXBOOKSTORE",
+    "電子書店旁便利商店", "SHOP NETFLIX", "國泰人壽", "保險費退款", "BOOKS", "",
+])
+def test_ambiguous_merchants_and_false_keyword_matches_stay_unknown(description):
+    assert resolver().resolve(description, Decimal("-100"), "s", "purchase").source == "uncategorized"
+
+
+def test_builtin_precedence_disable_refunds_and_inactive_category():
+    args = ("Netflix", Decimal("-100"), "s", "purchase")
+    exact = Rule("exact", "travel", "normalized_exact", "NETFLIX", 0)
+    contains = Rule("contains", "books", "contains", "NETFLIX", 0)
+    assert resolver([exact, contains]).resolve(*args, "family").source == "override"
+    assert resolver([exact, contains]).resolve(*args).source == "exact_rule"
+    assert resolver([contains]).resolve(*args).source == "contains_rule"
+    assert resolver().resolve("Netflix", Decimal("-5"), "s", "fee").category.code == "finance"
+    assert resolver().resolve("Netflix", Decimal("100"), "s", "payment").category.code == "transfer"
+    assert resolver().resolve("Netflix", Decimal("100"), None, None).category.code == "income"
+    assert resolver().resolve("Netflix", Decimal("100"), "s", "refund").source == "uncategorized"
+    assert resolver().resolve("Netflix", Decimal("-100"), "s", "unknown").source == "uncategorized"
+    categories = list(resolver().categories.values())
+    assert CategoryResolver(categories, [], builtin_enabled=False).resolve(*args).source == "uncategorized"
+    assert CategoryResolver([item for item in categories if item.code != "entertainment"], []).resolve(*args).source == "uncategorized"

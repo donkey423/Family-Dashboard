@@ -2,7 +2,9 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
 export type DocumentSource = { type: string; availability: string };
 export type DocumentRow = { id: string; filename: string; content_type: string; size_bytes: number; created_at: string; revoked_at: string | null; revocation_reason: string | null; sources?: DocumentSource[] };
-export type Transaction = { id: string; source_document_id: string; date: string | null; description: string; amount: string; currency: string; category_id?: string; category_code?: string; category_name?: string; category_source?: string; merchant_key?: string; transaction_kind?: string | null };
+export type Transaction = { id: string; source_document_id: string; date: string | null; description: string; amount: string; currency: string; category_id?: string; category_code?: string; category_name?: string; category_source?: string; category_rule_id?: string | null; category_reason?: string | null; merchant_key?: string; transaction_kind?: string | null };
+export type CategoryImpact = { impact_token: string; merchant_key: string; affected_count: number; changed_count: number; protected_override_count: number; months: string[]; samples: Transaction[] };
+export type CategoryBatchImpact = Omit<CategoryImpact, "merchant_key" | "samples"> & { changed_transaction_ids: string[]; items: (Transaction & { protected_override: boolean })[] };
 export type Category = { id: string; code: string; display_name: string; sort_order: number; is_active: boolean; is_system: boolean };
 export type CategoryRule = { id: string; category_id: string; match_type: "normalized_exact" | "contains"; pattern: string; priority: number; enabled: boolean };
 export type CategoryTotal = { category_id: string; code: string; name: string; net_amount: string; transaction_count: number };
@@ -144,7 +146,10 @@ export const api = {
   spendingByCategory: (month: string, currency: string) => request<CategorySpending>(`/api/finance/spending-by-category?${new URLSearchParams({ month, currency })}`),
   categoryMerchants: (month: string, currency: string, category_id: string) => request<{ items: CategoryMerchant[] }>(`/api/finance/category-merchants?${new URLSearchParams({ month, currency, category_id })}`),
   uncategorizedMerchants: (month: string, currency: string) => request<{ items: CategoryMerchant[] }>(`/api/finance/uncategorized-merchants?${new URLSearchParams({ month, currency })}`),
-  assignCategory: (id: string, category_id: string, scope: "transaction" | "merchant") => patchJson<Transaction>(`/api/finance/transactions/${encodeURIComponent(id)}/category`, { category_id, scope }),
+  categoryImpact: (id: string, category_id: string) => request<CategoryImpact>(`/api/finance/transactions/${encodeURIComponent(id)}/category-impact?category_id=${encodeURIComponent(category_id)}`),
+  categoryBatchImpact: (transaction_ids: string[], category_id: string) => postJson<CategoryBatchImpact>("/api/finance/transactions/category-batch/preview", { transaction_ids, category_id }),
+  assignCategoryBatch: (transaction_ids: string[], category_id: string, impact_token: string) => patchJson<{ changed_count: number; protected_override_count: number }>("/api/finance/transactions/category-batch", { transaction_ids, category_id, impact_token }),
+  assignCategory: (id: string, category_id: string, scope: "transaction" | "merchant", impact_token?: string) => patchJson<Transaction>(`/api/finance/transactions/${encodeURIComponent(id)}/category`, { category_id, scope, impact_token }),
   clearCategoryOverride: (id: string) => request<Transaction>(`/api/finance/transactions/${encodeURIComponent(id)}/category`, { method: "DELETE" }),
   workbookStatus: () => request<WorkbookExportStatus>("/api/exports/excel/status"),
   configureWorkbook: (enabled: boolean) => postJson<WorkbookExportStatus>("/api/exports/excel/settings", { enabled }),

@@ -10,7 +10,7 @@ describe("category chart", () => {
     expect(slices.length).toBe(Math.min(count, 6));
     expect(slices.reduce((sum, slice) => sum + cents(slice.amount), 0n)).toBe(rows.reduce((sum, item) => sum + cents(item.net_amount), 0n));
     if (count) expect(slices.reduce((sum, slice) => sum + Math.round(Number(slice.percentage) * 100), 0)).toBe(10000);
-    if (count > 5) expect(slices[5].name).toBe("其餘類別");
+    if (count > 6) expect(slices[5].name).toBe("其餘類別");
   });
   test("negative and zero values never enter the donut", () => {
     expect(donutSlices([row(0, "0.00"), row(1, "-5.00"), row(2, "5.00")]).map(item => item.id)).toEqual(["2"]);
@@ -28,6 +28,15 @@ describe("category chart", () => {
     expect(decimal(cents(amount))).toBe(amount);
     expect(decimal(cents("-0.01"))).toBe("-0.01");
     expect(categoryColor("food")).toBe(categoryColor("food"));
+  });
+  test("six categories remain separate; tiny unknown is reserved ahead of other", () => {
+    expect(donutSlices(Array.from({ length: 6 }, (_, index) => row(index))).some(item => item.code === "other")).toBe(false);
+    const unknown = { ...row(99, "0.01"), code: "uncategorized", name: "未分類" };
+    const slices = donutSlices([...Array.from({ length: 10 }, (_, index) => row(index, "100.00")), unknown]);
+    expect(slices.map(item => item.code).slice(-2)).toEqual(["uncategorized", "other"]);
+    expect(slices[5].categories.some(item => item.code === "uncategorized")).toBe(false);
+    expect(categoryColor("uncategorized")).toBe("#66717a");
+    expect(categoryColor("books")).not.toBe(categoryColor("insurance"));
   });
   test("generated Top-N groupings preserve every positive cent and stable percentages", () => {
     for (let count = 0; count <= 64; count++) {

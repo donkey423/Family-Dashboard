@@ -6,9 +6,7 @@
 
 使用者 2026-09-30 指定強制執行，UI/設定/部署修復也不省略。詳細步驟、秘密保護、正式資料不自動入帳及 FAIL/BLOCKED 條件見 `IMPLEMENTATION_PLAN.md` 第 4.1 節；當次結果見 HANDOFF。舊測試結果、合成資料、只抽文字及三封同一家銀行都不算通過。此 checkbox 只表示本次交付關卡，不是一次勾選後永久完成。
 
-2026-09-30 正式部署後最新實測為 **PASS（3/3）**，證據在 `data/gmail-acceptance/retest-20260930-1903/`：用 `prepare → 附件下載 → collect` 從 Gmail 新下載九月中國信託、國泰世華、永豐加密帳單，先確認郵件格式，於隔離 API 完整解析 1/19/31 列，獨立逐列／合計核對及冪等通過。中信第一次未產生新檔，重新載入原信、確認附件可用後以新 checkpoint 重試成功；沒有借用舊檔。利息認列仍依批准政策；驗收期間正式 Finance 18 → 18、schema 0012／fingerprint 不變，隔離 Finance 0 筆，沒有 confirm 或 AI request。完整 backend 326 passed（含 16 項下載回歸）、2 warnings，frontend 29 passed／production build 成功。網頁替代不是 MCP／cron 驗收；正式分類頁桌面與 320px／390px 已實測，實體手機仍未驗證。詳細證據見 HANDOFF。
-
-本次更新研究 MD 與 Git 封存，沒有新的程式／部署交付；重新跑現有 backend 326、frontend 29 及隔離 build 通過，未再下載 Gmail。上方 checkbox 及三銀行 PASS 僅指前次 1903 部署驗收，不適用未来 M13/A1-A6；純文件與交付關卡的區分見 canonical plan 第 15 節及 HANDOFF。
+2026-10-01 本輪 **PASS（3/3）**，新下載證據在 `data/gmail-acceptance/retest-20261001-taxonomy/`：來源郵件密碼格式 → prepare／指定附件下載／collect → 本機解鎖 → 中信 1／國泰 19／永豐 31 列，獨立逐列／摘要／API 核對與冪等全通過。國泰首次沒有新檔，重新進入原信、等附件按鈕可用並重建 checkpoint 後才成功，不拿舊檔補驗收。隔離 Finance 0、AI 0、confirm 0；正式 18 → 18／0012 不變。backend 376 passed（2 warnings）、frontend 37 passed，隔離 build／桌面／CSS 320px／390px 通過。不是 MCP／cron、分類盲測或正式新交易／Excel 入帳驗收；實體手機未驗證。詳見 HANDOFF。
 
 ## 目前執行入口：信用卡 PDF 到 Excel
 
@@ -53,18 +51,20 @@ M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自
 - [x] 使用者授權後：成對備份與副本還原／migration 演練、正式 0011 → 0012、正式 build／正常登入帳戶啟動、正式 Web／Excel 回歸及本輪新下載三銀行關卡。
 - [ ] 實體手機、真正螢幕閱讀器與重新開機後持續服務驗收。
 
-## M13：逐筆自動分類（研究已完成，實作待授權）
+## M13：逐筆本機分類與安全確認（已實作，正式部署待授權）
 
-使用者要求以每筆消費用途分類為交通、圖書、飲食等。根因、範圍、取捨、落點、停止條件與品質測試統一在 `CATEGORY_SPENDING_PLAN.md` 第 18 節；本次只更新文件及 Git，不改正式資料或將研究當作程式完成。
+2026-10-01 依使用者「最新 Git／MD 繼續實作」完成 A2／A3 隔離驗證；採遠端核准 16 類、明確規則與未分類獨立槽位，不改正式資料、不送雲端。根因與測試 canonical plan 為 `CATEGORY_SPENDING_PLAN.md`。遠端六個 MD-only 提交已讀但未 merge／pull；本輪也未 commit／push。
 
 - [x] 確認 V1 分類來源缺失：14 類、規則／有效 override 為 0；没有 books 或自動商家辨識，九月六筆支出全未分類，API 合計守恆。
 - [x] 定義以每筆刷卡交易為第一階段、多用途商家不硬猜、單筆優先與雲端另取同意，完成 A1-A6 工作包／AUTO-01-08 測試規格。
 - [ ] A1：建立經人工核對的分類樣本與未知／反例，盤點舊 CSV 會計語意缺口。
-- [ ] A2：圖書 migration、內建明確商家規則、來源追蹤與 Excel 字典版本 fingerprint。
-- [ ] A3：逐筆待確認、預設 transaction scope、記住商家影響預覽及原子批次確認。
+- [x] A2：0013 增加圖書／保險並保留既有引用及自訂名稱；版本化本機明確規則、理由／來源、版本／hash／啟停進入 Excel fingerprint；Donut 最多六片、未分類不被合併。
+- [x] A3：商家進入實際逐筆、預設單筆、跨月商家影響及 stale token；最多 50 筆批次預覽／確認，一次 transaction，原子回滾、保留人工指定，不建立商家規則；前端／隔離瀏覽器驗證通過。
 - [ ] A4：按實際未知樣本決定是否需要可選 AI；雲端用途同意、schema／白名單、安全降級與版本快取。
 - [ ] A5：既有資料分類 dry-run、核准後套用，保留原 identity 與 Web／API／Excel parity。
 - [ ] A6：完整測試／build、當次新下載三銀行、盲測品質報告與授權部署；未知不可冒充自動成功。
+
+A6 的測試／build／當次三銀行已通過，A1 品質與 A5 正式部署仍未完成，因此 M13 不宣稱全部完成。新預覽為 3002／8032／HTTPS 8444，18 筆合成資料；正式 3000／HTTPS 443／18 筆／0012 不變，不能直接用新 head 重啟正式服務。
 
 
 ## M0：產品與架構基線

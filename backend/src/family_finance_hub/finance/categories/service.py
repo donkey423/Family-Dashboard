@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ...models import FinanceCategory, FinanceCategoryRule, FinanceTransaction, TransactionCategoryOverride
 from ..queries import active_transaction_filter
 from .domain import Category, CategoryResolver, DEFAULT_CATEGORIES, Resolution, Rule, expense_value, is_consumption
+from .builtin import FINGERPRINT, VERSION
 
 
 def seed_categories(session: Session) -> None:
@@ -31,10 +32,12 @@ class CategorizationService:
         self.resolver = CategoryResolver(
             [Category(row.id, row.code, row.display_name, row.sort_order) for row in categories if row.is_active],
             [Rule(row.id, row.category_id, row.match_type, row.normalized_pattern, row.priority) for row in rules if row.enabled],
+            builtin_enabled=session.info.get("builtin_category_rules_enabled", True),
         )
         self._rule_configuration_hash = sha256(json.dumps({
             "categories": [(row.id, row.code, row.display_name, row.sort_order, row.is_active, row.is_system) for row in categories],
             "rules": [(row.id, row.category_id, row.match_type, row.normalized_pattern, row.priority, row.enabled) for row in rules],
+            "builtin": (VERSION, FINGERPRINT, self.resolver.builtin_enabled),
         }, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         self.configuration_hash = self._rule_configuration_hash
 
@@ -42,6 +45,7 @@ class CategorizationService:
         # One batch query covers configuration changes even when no active rows exist.
         overrides = dict(self.session.execute(select(TransactionCategoryOverride.transaction_id, TransactionCategoryOverride.category_id)
             .order_by(TransactionCategoryOverride.transaction_id)).all())
+        self.override_ids = frozenset(overrides)
         self.configuration_hash = sha256(json.dumps({
             "rules": self._rule_configuration_hash,
             "overrides": sorted(overrides.items()),
@@ -88,10 +92,42 @@ class CategorizationService:
         return [dict(merchant_key=item["merchant_key"], display_name=item["display_name"], transaction_id=item["transaction_id"], net_amount=money(item["amount"]), transaction_count=item["transaction_count"])
                 for item in sorted(groups.values(), key=lambda item: (-item["amount"], item["merchant_key"]))]
 
+    def merchant_impact(self, row: FinanceTransaction, category_id: str) -> dict:
+        key = self.resolver.resolve(row.description, row.amount, row.statement_id, row.transaction_kind).merchant_key
+        rows = self.rows()
+        resolved = self.resolve(rows)
+        matches = [item for item in rows if resolved[item.id].merchant_key == key]
+        protected = [item for item in matches if item.id in self.override_ids]
+        eligible = [item for item in matches if item.id not in self.override_ids]
+        changed = [item for item in eligible if resolved[item.id].category.id != category_id]
+        fingerprint = dict(configuration=self.configuration_hash, category_id=category_id, merchant_key=key,
+            rows=[(item.id, item.description, str(item.transaction_date), str(item.amount), item.currency,
+                   item.statement_id, item.transaction_kind) for item in matches])
+        token = sha256(json.dumps(fingerprint, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        return dict(impact_token=token, merchant_key=key, affected_count=len(eligible), changed_count=len(changed),
+                    protected_override_count=len(protected),
+                    months=sorted({item.transaction_date.strftime("%Y-%m") if item.transaction_date else "未提供日期" for item in changed}),
+                    samples=[transaction_payload(item, resolved[item.id]) for item in changed[:5]])
+
+    def batch_impact(self, rows: list[FinanceTransaction], category_id: str) -> dict:
+        rows = sorted(rows, key=lambda item: item.id)
+        resolved = self.resolve(rows)
+        changed = [item for item in rows if item.id not in self.override_ids and resolved[item.id].category.id != category_id]
+        fingerprint = dict(operation="transaction_batch", configuration=self.configuration_hash, category_id=category_id,
+            rows=[(item.id, item.description, str(item.transaction_date), str(item.amount), item.currency,
+                   item.statement_id, item.transaction_kind) for item in rows])
+        token = sha256(json.dumps(fingerprint, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        return dict(impact_token=token, affected_count=len(rows) - len(self.override_ids.intersection(item.id for item in rows)),
+                    changed_count=len(changed), protected_override_count=sum(item.id in self.override_ids for item in rows),
+                    months=sorted({item.transaction_date.strftime("%Y-%m") if item.transaction_date else "未提供日期" for item in changed}),
+                    changed_transaction_ids=[item.id for item in changed],
+                    items=[dict(**transaction_payload(item, resolved[item.id]), protected_override=item.id in self.override_ids) for item in rows])
+
 
 def transaction_payload(row: FinanceTransaction, resolution: Resolution) -> dict:
     return dict(id=row.id, source_document_id=row.source_document_id, date=row.transaction_date,
                 description=row.description, amount=str(row.amount), currency=row.currency,
                 category_id=resolution.category.id, category_code=resolution.category.code,
                 category_name=resolution.category.name, category_source=resolution.source,
+                category_rule_id=resolution.rule_id, category_reason=resolution.reason,
                 merchant_key=resolution.merchant_key, transaction_kind=row.transaction_kind)
