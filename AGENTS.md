@@ -48,9 +48,24 @@
 - Bank-specific 密碼說明辨識、PasswordComposer、PDF decrypt、BankStatementParser 必須分層；不要把銀行規則硬編碼進通用 PdfDocumentProcessor。
 - 修改 Codex MCP Gmail、legacy Gmail、PDF 或密碼流程前，先閱讀 ARCHITECTURE.md 的「Codex MCP Gmail attachment 流程」、「密碼保護 PDF 與密碼規則解析」及 HANDOFF.md 的目前狀態與安全界線。
 
+## 實作與修改原則
+
+- 做任何修改時，必須在不影響既有功能的前提下採用最小必要修改（minimal change）。能用局部修正解決，就不要重寫整段、搬動無關程式或擴大修改範圍。
+- 遇到問題時，優先採用最簡單、最直覺、最容易理解、測試與維護的做法。若多種方案都能正確解決，預設選擇修改較少、影響範圍較小、最符合現有架構的方案。
+- 不要為了可能的未來需求提前重構、抽象化或導入新架構；不要因個人風格偏好修改原本正常運作且與任務無關的程式碼。
+- 修改前先確認問題根因，避免用 workaround 掩蓋根因；一次只處理目前要求的問題，除非額外修改是維持正確性或相容性所必需。
+- 優先沿用專案既有架構、命名、pattern、library 與 dependency。新增 dependency 前，先確認現有 dependency 或標準函式庫是否已能解決。
+- 完成設計或修改方案後，必須主動自行推導必要的 test cases，再進行或完成實作。Test cases 不只照需求文字逐條測，還要根據設計、資料流、邊界與可能失敗模式思考。
+- Test cases 至少涵蓋適用的 normal case、boundary case、error/failure case 與 regression case；修 bug 時，若能自動化重現，優先補上可防止相同問題再次發生的測試。
+- 驗證不能只停留在 code review、diff review、靜態閱讀或「看起來正確」。只要環境與依賴允許，修改後必須實際執行對應的 build/compile、測試與程式執行流程，並確認實際輸出或行為。
+- 對會影響 runtime 行為的修改，除了單元／整合測試外，應盡可能以代表性輸入實際跑過受影響流程；只有 lint、type check、mock 或讀 code 不能取代可執行的 runtime 驗證。
+- 如果因環境、權限、外部服務、硬體或依賴限制而無法實際 build、run 或完成必要測試，必須明確列出「未執行／未驗證」項目與原因，不得宣稱已通過或完成。
+- 修改 public API、資料格式、資料庫 schema 或設定格式時，必須考慮 backward compatibility 與既有資料；修改完成後至少驗證受影響功能以及與其直接相關的既有功能。
+- 原則：When in doubt, do less. 正確解決問題的前提下，優先讓 diff 小、行為可預期、容易測試且容易回滾。
+
 ## 驗證
 
-從 repository 根目錄以既有 `.venv` 執行後端測試及 `npm --prefix frontend run build`，完整命令見 IMPLEMENTATION_PLAN。schema 變更沿用 `backend/tests/test_migrations.py` 的暫存 SQLite/Alembic Config，驗證升級、資料保留與限制；不把未指定隔離 DB 的 `upgrade head` 當測試。若缺 runtime 或依賴，明確回報未執行範圍，不可宣稱通過。
+從 repository 根目錄以既有 `.venv` 實際執行後端測試及 `npm --prefix frontend run build`，完整命令見 IMPLEMENTATION_PLAN。驗證必須包含真實命令執行與結果，不得以 code review、diff review、靜態閱讀或推測「應該可運作」取代。若修改影響可執行流程，應實際啟動或執行該流程並檢查代表性輸入的結果。schema 變更沿用 `backend/tests/test_migrations.py` 的暫存 SQLite/Alembic Config，驗證升級、資料保留與限制；不把未指定隔離 DB 的 `upgrade head` 當測試。若缺 runtime 或依賴，明確回報未執行範圍，不可宣稱通過。
 
 若只修改設計文件，不必為了文件變更虛構程式驗證；HANDOFF 必須清楚區分「已決定/已規劃」與「已實作/已驗證」。文件更新不代表專案已通過下列真實驗收。
 
