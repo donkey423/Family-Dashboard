@@ -192,3 +192,55 @@ def test_output_guard_resolves_symlinks_before_writing(tmp_path, monkeypatch):
     monkeypatch.setattr(download.Path, "resolve", escaped)
     with pytest.raises(ValueError, match="outside"):
         download.guarded_output(directory, "escaped")
+
+
+def test_no_new_file_is_distinct_from_an_incomplete_download(tmp_path):
+    directory, checkpoint = baseline(tmp_path)
+    with pytest.raises(download.DownloadNotReady) as caught:
+        download.collect(checkpoint, tmp_path / "output", timeout=0.001, interval=0.001)
+    assert caught.value.code == "no_new_file"
+    assert caught.value.details["new_files"] == 0
+    (directory / "private-statement.tmp").write_bytes(b"%PDF-incomplete")
+    with pytest.raises(download.DownloadNotReady) as caught:
+        download.collect(checkpoint, tmp_path / "output", timeout=0.001, interval=0.001)
+    assert caught.value.code == "pdf_not_ready"
+    assert caught.value.details["pdf_candidates"] == 1
+    assert "private-statement" not in str(caught.value.details)
+
+
+def test_diagnostics_distinguish_active_empty_and_oversize_files(tmp_path, monkeypatch):
+    directory, checkpoint = baseline(tmp_path)
+    monkeypatch.setattr(download, "MAX_BYTES", 100)
+    (directory / "active.crdownload").write_bytes(b"in progress")
+    (directory / "empty.tmp").write_bytes(b"")
+    (directory / "large.pdf").write_bytes(b"x" * 101)
+    counts = download.diagnose(checkpoint)
+    assert counts == {"new_files": 3, "active_downloads": 1, "empty_files": 1,
+                      "oversize_files": 1, "unreadable_files": 0, "pdf_candidates": 0}
+
+
+def test_cli_failure_records_diagnostics_but_never_a_receipt(tmp_path, monkeypatch):
+    directory, checkpoint = baseline(tmp_path)
+    root = tmp_path / "gmail-acceptance"
+    run = root / "retest-cli"
+    output = run / "ctbc"
+    output.mkdir(parents=True)
+    (output / "checkpoint.json").write_text(json.dumps(checkpoint), encoding="utf-8")
+    monkeypatch.setattr(download, "ACCEPTANCE_ROOT", root)
+    monkeypatch.setattr("sys.argv", ["download", "collect", "--run-directory", str(run),
+                                    "--label", "ctbc", "--timeout", "0.001"])
+    with pytest.raises(SystemExit) as caught:
+        download.main()
+    assert caught.value.code == 1
+    diagnostic = json.loads((output / "diagnostic.json").read_text(encoding="utf-8"))
+    assert diagnostic["status"] == "failed" and diagnostic["code"] == "no_new_file"
+    assert diagnostic["details"]["new_files"] == 0
+    assert not (output / "receipt.json").exists()
+
+
+def test_cli_failure_does_not_write_outside_the_guarded_run(tmp_path, monkeypatch):
+    outside = tmp_path / "production"
+    monkeypatch.setattr("sys.argv", ["download", "collect", "--run-directory", str(outside), "--label", "ctbc"])
+    with pytest.raises(SystemExit):
+        download.main()
+    assert not outside.exists()

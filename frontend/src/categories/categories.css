@@ -10,6 +10,8 @@
 .category-summary strong { display: block; color: #23352e; font-size: 23px; margin-top: 6px; font-variant-numeric: tabular-nums; }
 .category-chart-layout { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 40px; align-items: center; margin: 16px 0; }
 .category-chart { height: 272px; min-width: 0; }
+.category-pending { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; color: #65756f; font-size: 14px; }
+.category-pending button { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .category-legend, .category-merchant-list, .category-settings-list { list-style: none; padding: 0; margin: 0; }
 .category-legend li button { width: 100%; display: flex; align-items: center; gap: 12px; border: 0; border-bottom: 1px solid #e0e6e2; padding: 13px 2px; background: transparent; text-align: left; cursor: pointer; color: #23352e; }
 .category-swatch { width: 10px; height: 10px; flex: 0 0 10px; border-radius: 2px; }

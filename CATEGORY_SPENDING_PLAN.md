@@ -1,10 +1,10 @@
 # 家庭收支記錄：消費分類、支出圓餅圖與下鑽實作計畫
 
-> 狀態（2026-10-01）：**C1-C5 已正式部署；M13 的 A2 本機明確規則／16 類 taxonomy／Donut 與 A3 單筆／批次确认已實作並隔離驗證。** 使用者已要求依最新 Git／MD 實作；A1 真實人工標註盲測、A4 雲端與 A5 正式部署未完成，不把合成測試當成自動分類品質或正式部署授權。
+> 狀態（2026-10-01）：**C1-C5 與 M13 的 A2 本機明確規則／16 類 taxonomy／Donut、A3 單筆／批次確認已實作，並依另取得的正式升級授權部署至日常入口。** 正式 0013／82 筆與 Excel 核對一致；A1 真實人工標註盲測、A4 可選雲端與 A5 未知交易整理未完成，不把合成測試或部署成功當成自動分類品質。
 >
 > 使用者於 2026-09-30 明確把「每筆交易分類、同類歸組、支出圓餅圖、點類別查看子項目」提升為下一階段產品需求。本文件取代舊文件中「本輪不做分類／圖表」對這個特定功能的限制；仍不授權擴張成通用財務平台、AI 理財、Budget、Tag 系統或完整 Dashboard 重寫。
 >
-> 規劃起點為 `f34550d`，早期遠端分類文件基準為 `main @ bf3d4f6`，本次整合遠端為 `430ef5c`；目前版本與同步結果須以 `git status`、`git log` 及遠端 ref 重查，不由本文件推定。使用者授權後正式資料庫已升級 `0012_transaction_categories`，18 筆既有交易與來源保留；分類預覽仍是独立合成資料庫，不是正式日常入口。
+> 規劃起點為 `f34550d`，早期遠端分類文件基準為 `main @ bf3d4f6`，前輪整合遠端為 `430ef5c`；目前版本與同步結果須以 `git status`、`git log` 及遠端 ref 重查，不由本文件推定。使用者另授權後正式資料庫已升級 `0013_category_taxonomy`，82 筆既有交易與來源保留；分類預覽仍是獨立合成資料庫，不是正式日常入口。
 
 ## 1. 使用者目標
 
@@ -66,7 +66,7 @@ Transaction rows
 
 前端已加入 Recharts，以及 Vitest / React Testing Library / user-event / jsdom。分類功能以 lazy-loaded 元件載入，不重寫既有 Dashboard。
 
-正式 M12 服務／資料庫仍為 `0012_transaction_categories`、18 筆；開發 head 已是 `0013_category_taxonomy`，down revision 為 0012。0013 upgrade／downgrade／re-upgrade 與資料引用保留只在副本／隔離測試驗證，本次未正式部署。不得把新版程式直接重啟到正式舊 schema；須當次授權、成對備份及副本驗證。
+正式 M13 服務／資料庫與開發 head 均為 `0013_category_taxonomy`，正式暫 82 筆；down revision 為 0012。0013 upgrade／downgrade／re-upgrade 與資料引用保留在副本驗證後，依本輪升級授權正式只 upgrade。未來不得把新版程式直接重啟到正式舊 schema；仍須當次授權、成對備份及副本驗證。
 
 ---
 
@@ -178,7 +178,7 @@ payment  → 不計入消費
 
 ## 4. 分類 Taxonomy
 
-> 狀態：2026-09-30 核准規劃，2026-10-01 經「繼續實作」完成 M13 A2／A3 隔離驗證；`0013_category_taxonomy` 已有 16 類。正式 0012 仍為 14 類，尚未批准 M13 正式 migration／部署或消費資料送雲端。合成測試不是分類品質盲測。
+> 狀態：2026-09-30 核准規劃，2026-10-01 經「繼續實作」完成 M13 A2／A3 隔離驗證；其後另獲正式升級授權，日常入口已部署 `0013_category_taxonomy`／16 類。沒有取得消費資料送雲端的授權；合成測試不是分類品質盲測。
 
 分類設計的原則不是「圓餅圖只能有幾類」，而是把兩層問題分開：
 
@@ -467,7 +467,7 @@ Pie / Donut 不能畫負 slice。
 
 資料 taxonomy 可以有 10+ 類，但 Donut 不應把每一類都畫成 slice。
 
-正式 M12 仍是 Top 5 +「其餘類別」；M13 A2 已在隔離預覽實作以下顯示契約，尚未正式部署：
+舊 M12 為 Top 5 +「其餘類別」；2026-10-01 正式站已升級至 M13 A2，採以下顯示契約：
 
 - 若 `uncategorized` 净额 > 0，**保留一个明确的「未分类」slice**，不要让它被聚合进「其余类别」。
 - 总 slice 数仍最多 6。
@@ -637,7 +637,7 @@ backend/src/family_finance_hub/finance/categories/builtin.py
 frontend/src/categories/CategoryBatchPicker.tsx
 ```
 
-M12 的歷史 migration 為 0011 → 0012；M13 開發 head 已為 0013，正式 DB 仍為 0012。新增 migration 前仍須重新檢查 head，不能重用 revision 或直接升級正式帳本。
+M12 的歷史 migration 為 0011 → 0012；M13 開發 head 與正式 DB 已同為 0013。新增 migration 前仍須重新檢查 head，不能重用 revision 或未經當次授權直接升級正式帳本。
 
 Resolver 每次 request：
 
@@ -1145,13 +1145,13 @@ AI 只產生建議，不列入正式有效分類；確認後使用既有 overrid
 | 工作包 | 修改落點與步驟 | 驗收／停止條件 |
 | --- | --- | --- |
 | A1 基準與樣本 | 唯讀盤點既有交易，定義 taxonomy；在本機建立經人工標註的三銀行描述樣本及混合商家反例，區分分類與會計語意缺口 | 記錄样本數與正確答案／資訊不足理由；沒有來源就不判定真實商品；不改正式帳本 |
-| A2 本機自動分類 | 新 migration 加圖書／保險且保留引用；延伸 resolver、版本化清單、API 理由、Excel fingerprint 及最多六片的 Donut | 隔離完成；seed 冪等、upgrade／rollback 副本驗證；manual 優先、未知保留、自訂名稱不覆寫；正式尚未部署 |
+| A2 本機自動分類 | 新 migration 加圖書／保險且保留引用；延伸 resolver、版本化清單、API 理由、Excel fingerprint 及最多六片的 Donut | 已授權正式部署；seed 冪等、upgrade／rollback 副本驗證；manual 優先、未知保留、自訂名稱不覆寫 |
 | A3 逐筆整理 UI | 調整 `UncategorizedReview.tsx`／`CategoryPicker.tsx`：從商家進入逐筆，預設 transaction scope，顯示建議理由、記住商家影響預覽及批次確認 | 同商家可同時有飲食／圖書；寫入原子、失敗 rollback、過期預覽重查；手機／鍵盤操作與原 drill-down 不退化 |
 | A4 可選 AI 建議 | 只有取得雲端用途同意後才加小型 suggestion port／provider adapter；輸出限制 active category code 或 unknown，驗證 JSON schema，快取依描述摘要／taxonomy／provider 版本失效 | AI 關閉／離線仍可用；新 profile／模型／規則變更使舊建議失效；429／timeout 有界重試，無付費 fallback、無 PII／全文；不 eval、不執行模型指令 |
 | A5 既有資料整理 | 先產生分類與影響預覽；核准後只透過分類資料或讀取投影套用，更新 Donut／明細／owned Excel | 交易 ID／日期／金額／來源／kind／row_hash／Statement 全不變；重跑冪等、人工例外保留、Web／API／Excel 全相符 |
 | A6 交付 | 每步 focused tests／build／更新 TASKS、HANDOFF；完成時 full suite、production build、桌面／320px／390px，以及當次三銀行真實 Gmail 驗收 | 每家新下載、來源密碼提示、解鎖、完整解析／核對及冪等均 PASS；入帳另依核准隔離流程，不自動 confirm 正式草稿 |
 
-推薦先完成 A1-A3；本輪 A2／A3 已實作並隔離驗證，A1 尚無人工標註盲測，不能宣稱 precision／coverage 或直接部署正式帳本。以真實未知樣本決定是否需要 A4，不把 AI runtime 或通用 provider 平台當前置。
+本輪 A2／A3 已實作，並依另行取得的「正式站升級」授權部署；A1 尚無人工標註盲測，不能宣稱 precision／coverage。未知商家保持未分類，以真實未知樣本決定是否需要 A4，不把 AI runtime 或通用 provider 平台當前置。
 
 ### 18.5 新增測試矩陣與品質報告
 
@@ -1183,8 +1183,9 @@ AI 只產生建議，不列入正式有效分類；確認後使用既有 overrid
 
 ### 18.7 M13 分類實作與驗證狀態（2026-10-01）
 
-- A2／A3 已隔離實作：16 類 taxonomy、版本化完整比對規則、可追溯理由、逐筆預設、商家跨月影響預覽、最多 50 筆原子批次分類。人工 override 包含停用類別的既有指定，均不被批次覆蓋；過期 token、撤銷或途中失敗整批拒絕／rollback。
-- 後端完整測試 376 passed、2 個既有相依警告；前端 37 passed；TypeScript／Vite build 成功，輸出 `dist-category-preview`，未替換正式 dist。API／CSV 合成預覽逐列一致，已撤銷來源重啟不會被恢復。
-- 隔離桌面及實際 CSS 320／390px 已驗 Donut 非空、逐筆／批次操作、範圍提示與無溢出；不是實體手機或螢幕閱讀器驗收。
-- 分類實作驗收重新 Gmail 下載中信／國泰／永豐九月加密原件，依實際郵件提示解鎖；1／19／31 列全列與摘要核對及冪等均 PASS。證據只留 ignored `data/gmail-acceptance/retest-20261001-taxonomy/`。正式 18 → 18／0012 不變，confirm／外部 AI 均 0。
-- 上述三銀行是下載／解鎖／解析關卡，不是分類 precision／coverage 盲測。A1 人工標註盲測、A4 可選 AI、A5 正式 migration／分類及正式 Excel 驗收仍未完成，M13 不可全勾選。
+- A2／A3 已實作並授權正式部署：16 類 taxonomy、版本化完整比對規則、可追溯理由、逐筆預設、商家跨月影響預覽、最多 50 筆原子批次分類。人工 override 包含停用類別的既有指定均受保護；過期 token、撤銷或途中失敗整批拒絕／rollback。
+- 本輪規則 `2026-10-01.2` 補上真實明確捷運、指定餐飲／加油及 ChatGPT 訂閱描述；fullmatch、不把商城商品文字或支付平台當消費用途，費用／退款語意優先。增加正／反例與前端待分類入口回歸，圖表有初始尺寸，窄螢幕 body 不強制 320px。
+- 最新 backend **399 passed，2 個既有相依警告**、frontend **38 passed**、helper **7 passed**；TypeScript／Vite 隔離及正式 build 均成功。副本 0012 → 0013 → 0012 → 0013 已驗；正式 0013／82 筆保留交易與來源、人工資料，Web／API／owned Excel 核心欄位與八／九月分類合計相符。證據在 ignored `data/backups/20261001-m13-chart-fix/`。
+- 正式 HTTPS 九月五片圓環、分類名稱／金額、商家下鑽與整理入口已驗，console 無警告／錯誤；桌面 CSS 1524px 及工具實際回報的窄螢幕 CSS 300px 無橫向溢出。此次工具請求 390px、實際 300px，不當 390px 或實體手機驗收；前輪合成 320／390px 操作證據保留，screen reader 尚未驗。
+- 本輪重新 Gmail 下載中信／國泰／永豐九月加密原件，先讀實際郵件格式再解鎖；1／19／31 列全欄位、摘要／API／冪等均 PASS，隔離 Finance／confirm／外部 AI 均 0。證據只留 ignored `data/gmail-acceptance/retest-20261001-chart-fix/`；不重用舊原件或舊 PASS。
+- 上述三銀行是下載／解鎖／解析關卡，不是分類 precision／coverage 盲測。A1 人工標註盲測、A4 可選 AI、A5 未知交易整理與舊 CSV 語意重複仍未完成，M13 不可全勾選；本輪沒有擅自人工分類或撤銷。

@@ -6,14 +6,30 @@
 
 ## 0. 目前問題與處理
 
-目前正式 M12／live.db 仍為 0012／18 筆，已完成的 C1-C5 保留。M13 A2／A3 已隔離實作、開發 head 0013；backend 376 passed、frontend 37 passed 與隔離 build 通過。2026-10-01 分類實作驗收從 Gmail 新下載三銀行，全列／摘要／API／冪等 PASS，證據在 ignored `data/gmail-acceptance/retest-20261001-taxonomy/`。本次文件／Git 整理已重新跑相同數目的全套 tests／隔離 build，但當次三銀行原信下載未產生新完整 PDF，關卡 BLOCKED／audit FAIL；不是再次三銀行 PASS 或正式部署，重試證據見 0.9 及 [HANDOFF](HANDOFF.md)。
+正式站已依使用者 2026-10-01 的升級授權部署 M13／0013，82 筆交易與 20 個原件完整保留、owned Excel 同步。修正明確描述分類、圖表初始尺寸、待分類入口及窄螢幕溢出；backend **399 passed**（2 warnings）、frontend **38 passed**、Node helper **7 passed** 與正式 build 通過。本輪再次下載中信／國泰／永豐，原信格式／解鎖／全列／摘要／API／冪等均 PASS，證據在 ignored `data/gmail-acceptance/retest-20261001-chart-fix/`。前輪下載對照及歷史 FAIL 保留；未完成分類盲測、長期 MCP 或舊 CSV 語意去重，見 [HANDOFF](HANDOFF.md)。
 
-0.1-0.6 是已解決的 M12 問題及殘餘限制；1-4 節是 2026-09-29 歷史，不是今日待执行指令。未完成的實際工作為品質盲測、授權正式升級、長期 MCP、Groq runtime 及實體裝置驗收；不要因舊記錄再次要求網站 OAuth。
+0.1-0.6 是已解決的 M12 問題及殘餘限制；1-4 節是 2026-09-29 歷史，不是今日待執行指令。未完成工作為品質盲測、未知交易整理、長期 MCP、Groq runtime 及實體裝置驗收；不要因舊記錄再次要求網站 OAuth。
+
+### 0.11 Git 交付重測與文件狀態修正
+
+- **本次驗證：**新下載中信／國泰／永豐九月月帳單，解鎖、全列／摘要、API 及冪等 PASS 3/3；backend 399、frontend 38、Node helper 7 passed，隔離 build 通過。證據在 ignored `data/gmail-acceptance/retest-20261001-git-delivery/`；正式 82 筆／0013 不變，沒有額外入帳或外部 AI。驗收後只停止確認屬於本次的臨時 API 8031。
+- **文件矛盾：**TASKS 的 M13 標題與 CATEGORY_SPENDING_PLAN 7.4 仍寫未部署，已按正式狀態修正。HANDOFF 移除重複歷史驗證段落，保留目前環境、當次測試、證據路徑、缺口與停止條件；舊紀錄由 Git／既有 ignored 報告保留。
+- **Gmail 查詢：**搜尋操作後即刻快照曾仍顯示未篩選收件匣；廣泛讀取主區域被安全審查阻擋。改先送出限定銀行查詢、核對當前搜尋 URL，再只讀匹配月帳單列，不讀無關健保／認證郵件。過窄的假設標題沒有匹配時，改銀行／信用卡／帳單關鍵字並確認實際主旨，不把零結果當銀行沒有寄信。
+- **Git 連線：**sandbox fetch 曾因 Windows schannel 無可用認證失敗；相同命令經正常 Windows 帳戶的提升執行成功，沒有修改 TLS 驗證、取出憑證或更改 remote。起始本機／遠端均為 `2061e99`，不存在待 merge 提交；發布前再次 fetch／正常 merge／push 並核對 remote SHA，不 force push 或製造空 merge。
+
+### 0.10 正式圖表／分類與 M13 部署
+
+- **證據：**原正式服務仍載入 M12 程式／0012，九月 99.61% 支出落在未分類；repo 新功能存在不代表部署成功。真實描述的捷運法律名稱／A- 前綴及完整訂閱文字未匹配舊規則，ResponsiveContainer 初次尺寸警告，窄螢幕實際 CSS 300px 被 body min-width 320px 撐寬、金額被截。
+- **修復：**版本化 fullmatch 補明確描述及反例，不猜多用途商家；圖表提供固定初始尺寸／minWidth=0，增加待分類筆數與整理入口，body min-width=0。本輪副本 migration／回退及授權後成對備份、正式 migration／build／原帳戶排程啟動已完成。
+- **停止排程仍有程序：**`Stop-ScheduledTask` 後排程為 Ready、3000 卻仍由原 uvicorn Python 子程序監聽。先核對完整命令列、父程序及帳戶，再停止確認的本專案殘留，才備份遷移。沒有中止其他預覽服務；操作程序必須檢查實際監聽，不能只看排程狀態。
+- **資料保留檢查：**遷移只有版本／分類表變更。Runtime 初次檢查額外發現 import_jobs 改變，逐列比對確認只有新增一筆正常 completed excel_export、既有 jobs 全相同；檢查器只容許這種預期輸出工作，不放寬其他資料差異。交易全欄位、82 筆、20 個原件 hash 及 Excel／API parity 全 PASS。
+- **正式驗收：**私有 HTTPS 九月顯示五色圓環與分類／金額，下鑽與整理入口正常、console 無警告／錯誤。桌面 CSS 1524px／窄螢幕實際 CSS 300px 無橫向溢出；安全保存狀態正常。備份及截圖在 ignored `data/backups/20261001-m13-chart-fix/`。390px 請求未按指定尺寸回傳，不當作實測 390px；實體手機／Mac 未驗收。
+- **仍有未分類：**九月 20 筆支出仍待整理，商城及混合商家不能由帳单描述保證商品用途。正式帳本含待決策的舊 CSV 重複；未擅自撤銷，不把畫面正常當完整去重或分類準確率。
 
 ### 0.1 Gmail 下載事件逾時，完整附件以 `.tmp` 留在 Downloads
 
 - **證據：** 下載按鈕操作後，瀏覽器 download event 逾時且未回傳路徑；Windows Downloads 卻產生完整的新加密 PDF `.tmp`。最終再次下載中國信託／國泰／永豐，完整檔案分別為 643,152／902,897／743,221 bytes。先前只等事件或找 `.pdf` 的流程會誤報失敗，不能據此認定使用者沒有下載。
-- **修復：** 新增 `scripts/gmail_attachment_download.py`，固定先 `prepare` 記錄既有檔與唯一 checkpoint，再按原郵件的指定附件，最後 `collect`。只接受新檔，至少兩秒大小／修改時間穩定、讀取前後一致、PDF header／EOF／strict 結構通過才保存 SHA-256 命名的加密副本及 receipt；不改名或刪除 Downloads 原檔。
+- **修復：** `scripts/gmail_attachment_download.py` 先 `prepare` 記錄既有檔與唯一 checkpoint，再於原信呼叫 `scripts/gmail_browser_download.mjs` 先監聽再點指定附件，最後 `collect`（先監聽要求由 0.9 本輪對照補上）。只接受新檔，至少兩秒大小／修改時間穩定、讀取前後一致、PDF header／EOF／strict 結構通過才保存 SHA-256 命名的加密副本及 receipt；不改名或刪除 Downloads 原檔。
 - **失敗處理：** 舊檔、`.crdownload`、HTML、截斷檔、超限檔、多檔歧義及遭修改的副本不能冒充成功。預設等待 90 秒、上限 180 秒；checkpoint 十分鐘後失效。無完整新檔即非零退出，先查證 Downloads／附件／介面，再建立新 checkpoint 重試；不盲目連點或繞過瀏覽器安全限制。步驟見 `IMPLEMENTATION_PLAN.md` 4.1。
 - **回歸中發現的問題：** Windows 時間戳可能在兩次 `prepare` 相同；單靠時間會讓舊 receipt 被誤接受。改為 UUID checkpoint 與時間雙重綁定，新增同時間戳重測與失效 receipt 測試，完整後端重跑 326 passed。
 - **部署後重測：** 中信原郵件按鈕等待 90 秒沒有新檔，檢視器下載等待 30 秒亦無新檔，支援的連結下載工具逾時；這些嘗試不是 PASS。國泰／永豐的原信按鈕各產生新的完整 `.tmp`。中信重新載入來源郵件，觀察到「正在掃描病毒」／disabled，待掃描結束確認 enabled 後重新 prepare／下載，也產生完整新檔。此為實際成功恢復步驟，不足以證實前幾次失敗的内部根因；沒有盲目連點、改安全設定或查受限瀏覽器內部頁。
@@ -64,14 +80,18 @@
 - **處理：** 先保存實作 commit `90328b0`，正常 merge `origin/main`，逐段保留遠端用途邊界／AUTO-09-10 並同步隔離實作狀態；README 建立文件索引，所有 current／歷史／待驗收資訊分開。
 - **停止條件：** 新 head 0013 不可直接重啟正式 0012 服務。Git 整合不等於正式部署／分類套用或三銀行重新驗收；推送結果以 remote SHA 核對，不把本機 commit 當 push 成功。
 
-### 0.9 本次 Git 整合：三家 Gmail 下載無新原件（BLOCKED）
+### 0.9 指定附件只 click 無新檔（已修復／三銀行重測通過）
 
-- **實際範圍：** 2026-10-01 使用已登入的 Gmail 網頁，in:anywhere、不限日期搜尋；只選中國信託／國泰／永豐九月信用卡月帳單，不把每日消費通知、銀行綜合對帳單、證券文件或繳款聯當樣本。三家均先讀郵件密码格式，才嘗試下載指定帳單附件。
-- **可觀察證據：** 各銀行 prepare 記錄 Downloads，指定下載按鈕 enabled 且 Gmail 顯示已通過掃描；collect 30 秒後均 DownloadNotReady。Downloads 最新檔仍是既有 9/30 原件，沒有可通過新 checkpoint 的完整 PDF，不能由按鈕 active 宣稱下載成功。
-- **重試：** 國泰原信重新載入、確認掃描／指定按鈕、重建 checkpoint、正常 Windows 使用者 collect，仍無新檔；可見原始附件連結的支援下載工具 30 秒逾時。沒有讀取 cookies／隱藏 session、繞過下載保護或使用舊檔。瀏覽器內部下載頁不允許操作，且此次原生視窗操作不可用；已詢問使用者是否有另存新檔／提示，尚未取得回覆。這些限制不證實內部根因。
-- **Fail closed：** ignored `data/gmail-acceptance/retest-20261001-merge/` 留有三家 checkpoint、隔離 log 與 audit FAIL（FileNotFoundError，缺 fresh receipt）。實際執行驗收腳本為非零退出，未進入文件收錄、解密、parser 或正式 confirm；不把缺檔說成解析失敗，不修改腳本放寬 freshness。
-- **已完成與剩餘：** 整合後 backend 376／frontend 37、隔離 build、13 MD／38 本機檔案連結及預覽 Web／API 通過；不代替必測三銀行。臨時 8031 已停止，正式仍 18 筆，其他服務未重啟；沒有秘密修改、外部 AI 或 Excel 輸出。本次只同步 Git，不能宣稱真實驗收／正式部署完成。
-- **接手：** 確認使用者瀏覽器的下載提示及實際保存位置，或在 Gmail MCP 工具真正可呼叫後使用附件下載 API；當前工具清單沒有 Gmail。另建 retest 目錄、新 checkpoint／receipt，重跑三家解密、逐列／摘要／API 及冪等，不沿用上輪 PASS。
+- **實際範圍：** 2026-10-01 使用已登入 Gmail 網頁，`in:anywhere`、不限日期搜尋；只選中信／國泰／永豐九月信用卡月帳單，不把每日通知、銀行綜合對帳單、證券文件或繳款聯當樣本。三家先讀郵件密碼格式。當前工具清單沒有可呼叫的 Gmail MCP，使用 repository 允許的 browser fallback；不宣稱已完成 MCP／排程。
+- **先前失敗證據：** ignored `data/gmail-acceptance/retest-20261001-merge/` 保留三家 checkpoint 與 audit FAIL：指定按鈕 enabled，但 collect 沒有新完整原件，缺 receipt 使驗收非零退出，未進入解密或 parser。重新載入、換正常 Windows 使用者、延長等待均不足以解決；不是解析問題。
+- **同來源 A/B/A：** 在同一中信原信、同一可用按鈕，先註冊 `waitForEvent("download")` 再 click，兩次均產生新完整 643,152 bytes 加密 `.tmp`；中間僅 click，沒有新檔、無 receipt。證據在本輪 `download-control.json`。可確定流程缺少預先監聽是本環境中可重現、可修復的操作差異；尚不能確定瀏覽器內部實作、事件逾時或最終改名缺失的原因，也不能承諾外部服務永不失敗。
+- **固定流程：** `prepare → downloadGmailAttachment → collect`。Browser helper 限 HTTPS Gmail、唯一可見且 enabled 的指定 PDF 附件，先監聽再點一次，清理失敗 promise，不重點／不輸出 raw error。事件逾時仍 collect；event 或 path 不當完成證明。Python 保留兩秒穩定／PDF header／EOF／strict／SHA-256／唯一 checkpoint，僅複製新加密原件。操作見 IMPLEMENTATION_PLAN 4.1；不能在 click 後才註冊監聽。
+- **可診斷失敗：** 每個 label 有 `diagnostic.json`。`no_new_file` 先查監聽順序、原信／登入／指定按鈕及可觀察的下載位置；`pdf_not_ready` 提供進行中、空檔、超限及候選計數；`checkpoint_expired` 需新 prepare 並重新下載。診斷不保存私人檔名、密碼或全文，不拿舊檔／部分 bytes 填驗收；若多檔歧義、瀏覽器保護、權限或登入受阻，停止該來源並交接，不放寬安全檢查。
+- **中斷恢復：** 國泰一次因工作中斷超過十分鐘，checkpoint 正確失效；重新 prepare／helper／collect 後通過。不得延長 freshness 或利用舊 receipt 繞過。
+- **真實驗收：** 本輪 `data/gmail-acceptance/retest-20261001-download-fix/` 的三個 `*-final/` 各有 fresh checkpoint、加密原件與 receipt；三次事件都未觀察到，實體檔均驗證通過。中信 2 頁／1 列、國泰 3 頁／19 列、永豐 4 頁／31 列，本機解鎖、獨立全列欄位、摘要對帳、API 與冪等均 PASS；國泰 1 列利息依已批准的明示結帳日認列，未捏造來源交易日期。`audit-result.json` 為 `PASS_3BANK`。
+- **回歸：** Node helper 7 項測試包含先監聽、逾時／路徑不當 receipt、click 失敗不重試／不洩漏 raw error、來源與按鈕限制；Python collector 20 項含新增診斷及失敗不寫 receipt／不越界。完整 backend 380 passed（2 warnings）、frontend 37 passed、TypeScript／Vite 隔離 build 通過，沒有覆蓋正式 dist。
+- **安全與剩餘：** 隔離驗收使用既有 read-only SecretStore／NoExternalAI，外部 AI 0、confirm 0、隔離 Finance 0、不產生隔離 Excel；正式 Finance 18 → 18、fingerprint 與 schema 0012 不變，沒有重啟正式或預覽。這是草稿收錄／解析驗收，不是正式新增入帳、分類盲測、長期自動下載或正式部署。本輪修復尚未 commit／push；未新增 OAuth、讀 cookies、操控受限瀏覽器內部頁或停用安全保護。
+- **收尾：** 只停止核對歸屬為本輪的臨時 8031 API，正式 3000／預覽 3002 保留。正式本機與私有 HTTPS 首頁／同源 API 重新實測皆為此產品及 18 筆，Chrome 開啟首頁正常；不冒稱實體手機驗收。
 
 ## 1. 歷史範圍（2026-09-29）
 

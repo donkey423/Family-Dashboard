@@ -254,6 +254,14 @@ test("unknown donut opens review rather than another category", async () => {
   await waitFor(() => expect(api.uncategorizedMerchants).toHaveBeenCalledWith("2026-09", "TWD"));
   expect(window.location.search).not.toContain("category=");
 });
+test("pending count stays visible and opens the actual uncategorized review", async () => {
+  vi.mocked(api.spendingByCategory).mockResolvedValue({ ...summary, categories: [{ ...total, category_id: "uncategorized", code: "uncategorized", name: "未分類", transaction_count: 29 }] });
+  render(<SpendingByCategory month="2026-09" currency="TWD" currencies={["TWD"]} version={0} onChanged={vi.fn()} onOpenDocument={vi.fn()} />);
+  expect(await screen.findByText("29 筆支出待分類")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "整理分類" }));
+  await waitFor(() => expect(api.uncategorizedMerchants).toHaveBeenCalledWith("2026-09", "TWD"));
+  expect(api.assignCategory).not.toHaveBeenCalled();
+});
 test("detail loads only correct merchant page and reports load error", async () => {
   vi.mocked(api.transactions).mockRejectedValue(new Error("無法讀取"));
   render(<CategoryDetailPanel category={total} month="2026-09" currency="USD" categories={categories} version={0} merchantKey="SHOP" onMerchant={vi.fn()} onClose={vi.fn()} onChanged={vi.fn()} onOpenDocument={vi.fn()} />);

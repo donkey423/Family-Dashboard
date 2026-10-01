@@ -4,9 +4,9 @@
 
 - [x] 當次從 Gmail 重新下載三家不同銀行的真實信用卡對帳單，先確認來源郵件密碼格式，再完成加密解鎖、完整交易解析/核對及冪等重跑；三家全 PASS 才可宣稱專案交付完成。
 
-使用者 2026-09-30 指定強制執行，UI/設定/部署修復也不省略。詳細步驟、秘密保護、正式資料不自動入帳及 FAIL/BLOCKED 條件見 `IMPLEMENTATION_PLAN.md` 第 4.1 節；當次結果見 HANDOFF。舊測試結果、合成資料、只抽文字及三封同一家銀行都不算通過。此 checkbox 記錄上述分類實作驗收，不是永久通過；本次文件／Git 整合的當次關卡為 **BLOCKED**：三家原信已確認並嘗試指定附件下載，但 collect 無新完整 PDF，audit FAIL，解密／解析未開始。backend 376／frontend 37／隔離 build 通過不能替代此關卡。證據與下一步見 HANDOFF，接手必須重跑。
+使用者 2026-09-30 指定強制執行，UI/設定/部署修復也不省略。詳細步驟、秘密保護、正式資料不自動入帳及 FAIL/BLOCKED 條件見 `IMPLEMENTATION_PLAN.md` 第 4.1 節；當次結果見 HANDOFF。舊測試結果、合成資料、只抽文字及三封同一家銀行都不算通過。此 checkbox 只記錄本輪驗收，不是永久通過；下次交付仍須重新下載三家並核對。
 
-2026-10-01 分類實作驗收 **PASS（3/3）**，新下載證據在 `data/gmail-acceptance/retest-20261001-taxonomy/`：來源郵件密碼格式 → prepare／指定附件下載／collect → 本機解鎖 → 中信 1／國泰 19／永豐 31 列，獨立逐列／摘要／API 核對與冪等全通過。國泰首次沒有新檔，重新進入原信、等附件按鈕可用並重建 checkpoint 後才成功，不拿舊檔補驗收。隔離 Finance 0、AI 0、confirm 0；正式 18 → 18／0012 不變。backend 376 passed（2 warnings）、frontend 37 passed，隔離 build／桌面／CSS 320px／390px 通過。不是 MCP／cron、分類盲測或正式新交易／Excel 入帳驗收；實體手機未驗證。詳見 HANDOFF。
+2026-10-01 本次 Git 交付驗收 **PASS（3/3）**，當次新下載證據在 `data/gmail-acceptance/retest-20261001-git-delivery/`：原信格式 → prepare → 先監聽再單次 click → collect → 本機解鎖 → 中信 1／國泰 19／永豐 31 列，獨立逐列／摘要／API／冪等全通過。隔離 Finance／AI／confirm 均 0，正式 82 → 82／0013 與交易 fingerprint 不變。backend 399 passed（2 warnings，52.05 秒）、frontend 38 passed、Node helper 7 passed，隔離 TypeScript／Vite build 通過，未覆蓋正式 dist。本次已取得整理／commit／merge／push 授權，發布以 Git 歷史及 remote SHA 核對為準；不是長期 MCP 或人工分類盲測。前輪正式升級與歷史 FAIL 證據保留，現況與下一步見 HANDOFF。
 
 ## 目前執行入口：信用卡 PDF 到 Excel
 
@@ -38,7 +38,7 @@ M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自
 
 ## M12：消費分類、Donut 與下鑽
 
-2026-09-30 使用者已明確批准；**C1-C5 與正式部署已完成。** 正在執行的正式 M12 服務／DB 均為 0012；repository 開發 head 已是 0013，18 筆既有交易不變；原網址的真實 Donut／下鑽與分類 Excel 已驗。分類 preview 仍隔離，合成來源已撤銷、有效交易 0 筆。詳細測試對照見 `CATEGORY_SPENDING_PLAN.md`，執行入口與證據見 README／HANDOFF。
+2026-09-30 使用者批准的 **C1-C5 與 M12 正式部署已完成**；2026-10-01 又批准 M13 正式升級，目前程式／live.db 同為 0013，82 筆交易保留。原網址的真實 Donut／下鑽與分類 Excel 已驗；舊 M12 preview 的合成來源已撤銷、有效 0 筆，不恢復。測試對照見 `CATEGORY_SPENDING_PLAN.md`，執行入口與證據見 README／HANDOFF。
 
 - [x] C1：0012 migration、Category／Rule／Override，不修改 FinanceTransaction identity。
 - [x] C2：read-time resolver、正規化、穩定優先序、system default、批次 3 次配置 query。
@@ -51,7 +51,7 @@ M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自
 - [x] 使用者授權後：成對備份與副本還原／migration 演練、正式 0011 → 0012、正式 build／正常登入帳戶啟動、正式 Web／Excel 回歸及本輪新下載三銀行關卡。
 - [ ] 實體手機、真正螢幕閱讀器與重新開機後持續服務驗收。
 
-## M13：逐筆本機分類與安全確認（已實作，正式部署待授權）
+## M13：逐筆本機分類與安全確認（A2／A3 已正式部署，品質盲測與人工整理未完成）
 
 2026-10-01 依使用者「最新 Git／MD 繼續實作」完成 A2／A3 隔離驗證；採遠端核准 16 類、明確規則與未分類獨立槽位，不改正式資料、不送雲端。根因與測試 canonical plan 為 `CATEGORY_SPENDING_PLAN.md`。本機實作已保存為 `90328b0`，本次依使用者授權正常 merge 遠端 `430ef5c` 的六個 MD-only 提交；推送與當次驗證見 HANDOFF。
 
@@ -61,10 +61,10 @@ M9 為 S0-S6 的正確 Excel，M10 為 S7 最小操作介面，M11 為 S8-S9 自
 - [x] A2：0013 增加圖書／保險並保留既有引用及自訂名稱；版本化本機明確規則、理由／來源、版本／hash／啟停進入 Excel fingerprint；Donut 最多六片、未分類不被合併。
 - [x] A3：商家進入實際逐筆、預設單筆、跨月商家影響及 stale token；最多 50 筆批次預覽／確認，一次 transaction，原子回滾、保留人工指定，不建立商家規則；前端／隔離瀏覽器驗證通過。
 - [ ] A4：按實際未知樣本決定是否需要可選 AI；雲端用途同意、schema／白名單、安全降級與版本快取。
-- [ ] A5：既有資料分類 dry-run、核准後套用，保留原 identity 與 Web／API／Excel parity。
+- [ ] A5：正式 schema／本機明確規則投影已授權部署，Web／API／Excel parity 通過；資訊不足的交易仍須使用者整理，人工指定及舊 CSV 撤銷另確認，保留原 identity。
 - [ ] A6：完整測試／build、當次新下載三銀行、盲測品質報告與授權部署；未知不可冒充自動成功。
 
-分類實作階段的 A6 測試／build／三銀行已通過，A1 品質與 A5 正式部署仍未完成，因此 M13 不宣稱全部完成。新預覽為 3002／8032／HTTPS 8444，18 筆合成資料；正式 3000／HTTPS 443／18 筆／0012 不變，不能直接用新 head 重啟正式服務。
+本輪 A6 的全套測試／正式 build／新下載三銀行及授權部署已通過；A1 分類盲測品質、A5 剩餘未知整理仍未完成，M13 不宣稱全部完成。正式 3000／HTTPS 443 已為 0013／暫 82 筆，五色分類圖／下鑽／整理入口正常，成對備份與證據見 HANDOFF；合成預覽 3002／8032／8444 保持隔離。
 
 
 ## M0：產品與架構基線

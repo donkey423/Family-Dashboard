@@ -13,11 +13,11 @@
 - `ARCHITECTURE_REVIEW_BRIEF.md`：2026-09-28 使用者最新的信用卡帳單優先需求、Overdesign 假說、候選簡化方向與高階模型 review gate。
 - `FREE_AI_PASSWORD_RULE_PLAN.md`：Groq Free 密碼規則解析的 provider 設計、安全邊界與驗收規格；實作/切換前必須重新查官方額度與模型支援。
 - `GROQ_RUNTIME_REVIEW.md`：Groq 已實作後的程式級深度審查；明確區分 Recommended / Default / Active Provider，並定義 safe-switch preflight、runtime activation 與真實 smoke test。
-- `CATEGORY_SPENDING_PLAN.md`：分類的 canonical plan；C1-C5 已正式部署，M13 的 A2 本機規則／16 類 taxonomy／Donut 和 A3 單筆／批次確認已實作、隔離驗證。A1 人工標註盲測、A4 雲端、A5 正式部署仍未完成，不把研究或合成測試當成真實分類品質。
+- `CATEGORY_SPENDING_PLAN.md`：分類的 canonical plan；C1-C5 與 M13 A2 本機規則／16 類 taxonomy／Donut、A3 單筆／批次確認已正式部署。A1 人工標註盲測、A4 雲端及 A5 剩餘人工資料整理未完成，不把部署或合成測試當成真實分類品質。
 - `backend/src/family_finance_hub`：FastAPI、application use cases、domain services、ports 與 adapters。
 - `backend/tests`：後端自動化測試。
 - `frontend/src`：React/TypeScript Web UI。
-- `scripts/start_server.ps1`：正式 Web／API 單一入口；此主機的登入排程指定 `data/family-finance-hub-live.db`。當前正式仍是 M12／0012，未授權升級不可用 head 0013 重啟。
+- `scripts/start_server.ps1`：正式 Web／API 單一入口；此主機的登入排程指定 `data/family-finance-hub-live.db`。正式已授權升級為 M13／0013，前端 dist 與程式一致；未來升級仍另取當次授權，登入器不會自動 migration。
 
 ## 邊界與限制
 
@@ -37,8 +37,8 @@
 - 此主機的常態服務由 `FamilyFinanceHub` 互動式登入排程執行。`scripts/start_server.ps1` 會以獨立、隨機且立即清除的合成憑證測試安全儲存的寫入/讀取/清除；未通過不得占用 3000。Codex 沙箱帳戶曾造成 Windows 1312 寫入錯誤及已存憑證誤顯示未保存；重啟正式服務應使用既有 Windows 使用者排程，而非在沙箱中背景啟動。
 - 目前文件解鎖 UI 只收身分證字號及/或生日；內部固定個人 profile 沿用既有 schema，不能把銀行、機構或家庭成員設定重新變成使用者前置步驟。保存 AI key 後，加密 PDF 預覽可分析遮罩提示並在本機組合密碼；不得把這當作 PDF 交易自動入帳。
 - 新增模組應新增自己的 domain/service/schema migration，避免直接操作其他模組資料。分類功能必须放在 Finance categorization 边界，不把银行分类逻辑写进 BankStatementParser；V1 以 Category/Rule/TransactionOverride 做 read-time effective category，不把 category 写回 FinanceTransaction identity。
-- 2026-10-01 使用者要求依最新 Git／MD 繼續實作，已新增本機版本化明確規則與逐筆／批次確認；這不等於授權正式升級／部署或交易描述送雲端。新規則只對完整明確描述匹配；多用途商家／支付平台維持未分類，人工優先。規則版本／hash／啟停進入 Excel fingerprint，`FAMILY_FINANCE_HUB_BUILTIN_CATEGORY_RULES=false` 可停用。真實分類 precision／coverage 尚無人工標註盲測，不宣稱準確率。
-- 進度以 TASKS.md 與 HANDOFF.md 為準：平台、Excel、`0011_statement_import` 及 Codex MCP 匯入邊界已有實作；中國信託已完成真實 Finance/Excel，2026-10-01 分類實作驗收的中國信託/國泰/永豐新下載加密帳單皆通過逐列/合計核對及冪等，後兩家未自動確認入帳。第二期盲測、未知版型、Codex 排程真實/跨日及實體手機仍未完成；不得宣稱通用銀行支援。
+- 2026-10-01 使用者另批准「正式站升級」，已部署 M13 本機版本化明確規則與逐筆／批次確認；不包含交易描述送雲端、人工指定或舊 CSV 撤銷。規則 `2026-10-01.2` 只對完整明確描述匹配；多用途商家／支付平台維持未分類，人工優先。規則版本／hash／啟停進入 Excel fingerprint，`FAMILY_FINANCE_HUB_BUILTIN_CATEGORY_RULES=false` 可停用。真實分類 precision／coverage 尚無人工標註盲測，不宣稱準確率。
+- 進度以 TASKS.md 與 HANDOFF.md 為準：平台、Excel、Statement 及 Codex MCP 匯入邊界已有實作；中信九月、國泰九月及永豐八／九月已依收集授權入帳，正式暫 82 筆，舊 CSV 17 筆有語意重複風險、撤銷尚未批准。此輪重新下載中信／國泰／永豐，原信格式／解鎖／逐列／摘要／冪等均 PASS；測試沒有自動 confirm。第二期盲測、未知版型、Codex 排程真實／跨日及實體手機仍未完成；不得宣稱通用銀行支援。
 - 使用者批准未列日期的利息按明示結帳日認列。只在 `interest` 且 Statement 有 `closing_date` 時適用；用共用 resolver 保持正規化/月彙總一致，來源日期仍為空，API/raw_json 保留認列依據。其他缺日期列仍 pending，不可擴張為所有列自動補日。
 - 近期產品方向仍以信用卡帳單正確入帳為核心；但 2026-09-30 使用者已單獨批准分類支出扩展，實作時以 `CATEGORY_SPENDING_PLAN.md` 为准。除此之外仍不新增未核准平台能力，也不得把旧 brief 的候选简化直接视为删除/重构授权。
 - Excel 是 SQLite 已提交交易的可重建投影，不是資料來源。只能覆蓋帶應用程式 ownership marker 的專用工作簿；外部修改、檔案佔用與輸出 hash 不一致必須保留可見狀態，不得靜默覆蓋未知檔案或把 Excel 反向匯入 Finance。
@@ -58,13 +58,14 @@
 
 - 依使用者 2026-09-30 要求，本專案每次交付或宣稱工作完成前，必須重新從 Gmail 下載三家不同銀行的真實信用卡對帳單，確認來源郵件密碼格式、本機解鎖、交易明細解析及核對均成功。包括 UI、設定與部署修復，不得因程式測試通過或修改看似無關而省略。
 - 完整測試步驟及通過標準以 `IMPLEMENTATION_PLAN.md` 第 4.1 節為準；三封同一家銀行、快取附件、合成 PDF、舊驗收紀錄、只解鎖或只抽出文字都不能代替本次三銀行測試。
-- Gmail 網頁下載必須使用 `scripts/gmail_attachment_download.py`：下載前 `prepare`，點來源郵件的指定附件下載按鈕，再 `collect`。事件逾時不等於檔案不存在；但只有新的、穩定且結構完整的 PDF 才能收錄。禁止拿舊檔、`.crdownload` 或上一檢查點的 receipt 補成功；多個候選不猜。具體命令、重試及隔離核對見 IMPLEMENTATION_PLAN 4.1。
+- Gmail 網頁下載必須配合兩個 helper：`scripts/gmail_attachment_download.py` 先 `prepare`；在支援的瀏覽器 session 執行 `scripts/gmail_browser_download.mjs` 的函式，先註冊 `waitForEvent("download")`，再點一次來源郵件的指定附件；最後 `collect`。禁止只 click、不監聽，或在 click 後才監聽。本機對照實測中，兩次先監聽均有新完整 PDF，中間只 click 沒有新檔。
+- 事件逾時／有回傳 path 都不是完成判定，仍須 `collect`；只有新的、穩定且結構完整的 PDF 才能收錄。禁止拿舊檔、`.crdownload` 或上一檢查點的 receipt 補成功；多個候選不猜。`diagnostic.json` 區分沒有新檔、不完整檔及過期 checkpoint，不記錄敏感檔名。瀏覽器 helper 的回歸測試為 `node --test scripts/tests/gmail_browser_download.test.mjs`；具體命令、重試及隔離核對見 IMPLEMENTATION_PLAN 4.1。
 - 三家全部 PASS 才能宣稱真實驗收通過。任一 FAIL 必須先找證據、盡力修復並重跑三家，不得只記錄失敗就結束，也不得降低通過標準。只有缺權限、必要資料、外部服務阻塞或需要使用者決策才可交接；在 HANDOFF 及回覆列出已嘗試修復、具體阻塞及下一步。沒有 Gmail 工具、登入、秘密或受支援版型不是可略過的成功理由。
 - 測試不授權自動確認入帳、付費 AI fallback、公開或保存秘密。正式 Finance 不因重複驗收新增紀錄；入帳/Excel 寫入另在已授權隔離流程驗證。
 
 接手先檢查 Git HEAD/status 並保留未提交修改，再讀本指引、README、HANDOFF、TASKS、IMPLEMENTATION_PLAN、FREE_AI_PASSWORD_RULE_PLAN、GROQ_RUNTIME_REVIEW；若任務涉及分類/圖表，必讀 CATEGORY_SPENDING_PLAN。Groq adapter、S3F-C、S1-S3、Codex import、三銀行 parser、Statement 入帳及 M12 分類已有程式／驗證，不因舊紀錄重做。分類邊界在 `finance/categories/{domain,service,api}.py` 與 `frontend/src/categories`。
 
-正式 M12 DB 仍為 `0012_transaction_categories`／18 筆，3000／HTTPS 443、正式 dist／Excel 未因本輪改動。開發程式 head 已為 `0013_category_taxonomy`，不得直接重啟正式服務。M12 預覽 3001 → API 8030／HTTPS 8443 的合成来源已撤銷，有效交易 0 筆，不得自行恢復。新 M13 預覽 3002 → API 8032／HTTPS 8444，只用 `data/category-preview-20261001/synthetic.db`、18 筆合成交易，無 SecretStore／Excel。`start_category_preview.ps1` 可指定 FrontendPort／BackendPort／DataName；只 migration 受限合成目錄。測試用唯一 basetemp，未授權部署時 build 到 `dist-category-preview`，不覆蓋正式產物；命令見 README。
+正式 M13 DB 為 `0013_category_taxonomy`／暫 82 筆，3000／HTTPS 443 與正式 dist／owned Excel 已授權同步升級；成對備份及驗證在 ignored `data/backups/20261001-m13-chart-fix/`。本輪 backend 399、frontend 38、helper 7 passed；三銀行新下載隔離驗收 PASS，沒有外部 AI。正式九月五色圖／分類下鑽／整理入口及桌面 CSS 1524px／窄螢幕實際 CSS 300px 已驗，實體手機未驗。M12 預覽 3001 → API 8030／HTTPS 8443 的合成來源已撤銷、有效 0 筆，不得恢復；M13 預覽 3002 → API 8032／HTTPS 8444 仍為 18 筆合成、無 SecretStore／Excel，不能當正式帳本。preview 腳本只 migration 受限合成目錄；測試用唯一 basetemp，未授權下一次部署時 build 到 `dist-category-preview`，不覆蓋正式產物。
 
 三銀行真實附件的隔離驗收另用 `scripts/gmail_acceptance_app.py --run-directory data/gmail-acceptance/retest-<唯一識別>`，預設 API 8031，先確認該埠沒有其他服務。此腳本只對受控 retest 目錄做 migration，從正式 DB 唯讀複製 credential references，SecretStore 禁止寫入／刪除且外部 AI 關閉；不作正式啟動器。`scripts/gmail_statement_acceptance.py` 先確認隔離狀態及當次下載 receipt，才呼叫收錄／預覽／分析，永不呼叫 confirm。結果及原始加密附件均只留 Git 忽略的 data 目錄。
 

@@ -31,6 +31,7 @@ export function SpendingByCategory({ month, currency, currencies, version, onCha
     window.history.pushState({}, "", url.pathname + url.search); setSelected({ category, merchant });
   }, [chosenCurrency, month, currency]);
   const category = data?.categories.find(item => item.category_id === selected.category);
+  const uncategorized = data?.categories.find(item => item.code === "uncategorized");
   const other = data ? donutSlices(data.categories).find(item => item.id === "__other__") : null;
   const chooseSlice = (slice: ChartSlice) => { if (slice.code === "uncategorized") { select(null); setReview(true); } else { setReview(false); select(slice.id); } };
   return <section className="category-spending" aria-label="分類支出">
@@ -38,6 +39,7 @@ export function SpendingByCategory({ month, currency, currencies, version, onCha
     {loading && <p role="status">載入分類支出…</p>}{error && <div className="category-error" role="alert">{error}<button className="text-button" onClick={() => setRetry(retry + 1)}>重試</button></div>}
     {data && <><div className="category-summary"><span>期間淨支出<strong>{formatMoney(data.dashboard_expense, chosenCurrency)}</strong></span><span>正淨支出<strong>{formatMoney(data.positive_category_total, chosenCurrency)}</strong></span><span>退款／抵扣<strong>{formatMoney(data.refund_credit_total, chosenCurrency)}</strong></span></div>
       <CategoryDonut categories={data.categories} currency={chosenCurrency} onSelect={chooseSlice} />
+      {!!uncategorized?.transaction_count && <div className="category-pending"><span>{uncategorized.transaction_count} 筆支出待分類</span><button className="text-button" aria-expanded={review} onClick={() => { select(null); setReview(!review); }}>整理分類<ChevronRight size={16} /></button></div>}
       {!!data.negative_categories.length && <div className="category-refunds"><h3>退款／抵扣</h3>{data.negative_categories.map(item => <button className="text-button" key={item.category_id} onClick={() => select(item.category_id)}>{item.name}<strong>{formatMoney(item.net_amount, chosenCurrency)}</strong><ChevronRight size={16} /></button>)}</div>}
       {selected.category === "__other__" && other && <section className="category-other"><h3>其餘類別</h3>{other.categories.map(item => <button className="text-button" key={item.category_id} onClick={() => select(item.category_id)}>{item.name}<strong>{formatMoney(item.net_amount, chosenCurrency)}</strong><ChevronRight size={16} /></button>)}</section>}
       {category && <CategoryDetailPanel category={category} month={month} currency={chosenCurrency} categories={categories} version={version} merchantKey={selected.merchant} onMerchant={key => select(category.category_id, key)} onClose={() => select(null)} onChanged={onChanged} onOpenDocument={onOpenDocument} />}

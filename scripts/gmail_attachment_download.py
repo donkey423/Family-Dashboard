@@ -20,7 +20,10 @@ SUFFIXES = {".pdf", ".tmp", ".crdownload"}
 
 
 class DownloadNotReady(RuntimeError):
-    pass
+    def __init__(self, message, *, code="pdf_not_ready", details=None):
+        super().__init__(message)
+        self.code = code
+        self.details = details or {}
 
 
 class AmbiguousDownload(RuntimeError):
@@ -73,6 +76,32 @@ def candidates(baseline):
     return result
 
 
+def diagnose(baseline):
+    """Report stages without logging private filenames or document content."""
+    counts = {"new_files": 0, "active_downloads": 0, "empty_files": 0,
+              "oversize_files": 0, "unreadable_files": 0, "pdf_candidates": 0}
+    for path in Path(baseline["downloads"]).iterdir():
+        if path.is_symlink() or path.suffix.lower() not in SUFFIXES or name_key(path) in baseline["existing"]:
+            continue
+        try:
+            stat = path.stat()
+            if not path.is_file() or stat.st_mtime_ns < baseline["prepared_ns"]:
+                continue
+        except OSError:
+            counts["unreadable_files"] += 1
+            continue
+        counts["new_files"] += 1
+        if path.suffix.lower() == ".crdownload":
+            counts["active_downloads"] += 1
+        elif stat.st_size == 0:
+            counts["empty_files"] += 1
+        elif stat.st_size > MAX_BYTES:
+            counts["oversize_files"] += 1
+        else:
+            counts["pdf_candidates"] += 1
+    return counts
+
+
 def complete_pdf(content):
     if not content.startswith(b"%PDF-") or not content.rstrip().endswith(b"%%EOF"):
         return None
@@ -123,7 +152,7 @@ def verified_download(output):
 
 def collect(baseline, output, *, timeout=90, stable_seconds=2, interval=0.5):
     if time.time_ns() - baseline["prepared_ns"] > 10 * 60 * 1_000_000_000:
-        raise DownloadNotReady("Checkpoint expired; prepare again before clicking download")
+        raise DownloadNotReady("Checkpoint expired; prepare again before clicking download", code="checkpoint_expired")
     deadline = time.monotonic() + timeout
     observed = {}
     while True:
@@ -174,7 +203,14 @@ def collect(baseline, output, *, timeout=90, stable_seconds=2, interval=0.5):
             (output / "receipt.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
             return receipt
         if now >= deadline:
-            raise DownloadNotReady("No new stable complete PDF; do not use older downloads or import partial bytes")
+            details = diagnose(baseline)
+            if details["new_files"] == 0 and details["unreadable_files"] == 0:
+                raise DownloadNotReady(
+                    "No new file: arm the browser download listener BEFORE one attachment click, then collect; "
+                    "also verify the observed download directory. Do not reuse old files.",
+                    code="no_new_file", details=details)
+            raise DownloadNotReady("New files are not stable complete PDFs; do not import partial bytes",
+                                   code="pdf_not_ready", details=details)
         time.sleep(interval)
 
 
@@ -188,17 +224,30 @@ def main():
     args = parser.parse_args()
     if not 0 < args.timeout <= 180:
         parser.error("Timeout must be between 0 and 180 seconds")
+    output = None
     try:
         output = guarded_output(args.run_directory, args.label)
         checkpoint = output / "checkpoint.json"
         if args.action == "prepare":
             output.mkdir(parents=True, exist_ok=True)
             checkpoint.write_text(json.dumps(snapshot(args.downloads)), encoding="utf-8")
-            result = {"status": "prepared", "checkpoint": str(checkpoint)}
+            result = {"status": "prepared", "checkpoint": str(checkpoint),
+                      "next": "Run scripts/gmail_browser_download.mjs in the supported browser session, then collect"}
         else:
             result = collect(json.loads(checkpoint.read_text(encoding="utf-8")), output, timeout=args.timeout)
+        (output / "diagnostic.json").write_text(json.dumps({"status": result["status"],
+            "checkpoint_id": json.loads(checkpoint.read_text(encoding="utf-8"))["checkpoint_id"],
+            "recorded_ns": time.time_ns()}, indent=2), encoding="utf-8")
         print(json.dumps(result))
     except (OSError, ValueError, DownloadNotReady, AmbiguousDownload, RuntimeError) as error:
+        if args.action == "collect" and output is not None:
+            diagnostic = {"status": "failed", "code": getattr(error, "code", type(error).__name__),
+                          "details": getattr(error, "details", {}), "recorded_ns": time.time_ns()}
+            try:
+                output.mkdir(parents=True, exist_ok=True)
+                (output / "diagnostic.json").write_text(json.dumps(diagnostic, indent=2), encoding="utf-8")
+            except OSError:
+                pass
         parser.exit(1, type(error).__name__ + ": " + str(error) + "\n")
 
 

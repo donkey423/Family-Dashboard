@@ -2,9 +2,9 @@
 
 本文件供 Luna max 或其他接手模型逐步實作。2026-09-28 依目前程式重新收斂範圍；2026-09-29 已完成第一個已授權中國信託版型的 S4 parser、S5 statement migration、S6 原子確認／入帳／Excel 與 S7 最小介面。2026-09-30 使用者決定移除網站 Gmail OAuth 主流程，改由 Codex Gmail MCP／排程管理收件；同日另明確批准分類支出功能，完整設計與測試矩陣以 `CATEGORY_SPENDING_PLAN.md` 為準。
 
-**2026-10-01 更新：** M12 C1-C5 正式部署完成；M13 A2／A3 的 16 類 taxonomy、本機明確規則、逐筆／批次確認與未分類槽位已隔離實作。A1 分類品質、A5 正式部署與可選 A4 未完成，不重做已有工作。開發 head 0013、正式服務／DB 0012；Git merge／push 不授權正式升級或交易資料送雲端。詳見 [HANDOFF](HANDOFF.md)／[TASKS](TASKS.md)。
+**2026-10-01 更新：** M12 C1-C5 與 M13 A2／A3 的 16 類 taxonomy、本機明確規則、逐筆／批次確認與未分類槽位已實作。使用者另授權正式升級，本機正式服務／DB／前端與 Excel 已同步為 M13／0013，82 筆交易保留；A1 分類品質、A5 未知交易整理與可選 A4 未完成，不重做已有工作。下次 Git merge／push 仍不授權正式升級或交易資料送雲端。詳見 [HANDOFF](HANDOFF.md)／[TASKS](TASKS.md)。
 
-**核心流程狀態（2026-10-01；三銀行實測為當日分類實作驗收）：** 中國信託已完成真實 Finance/Excel；新下載中國信託/國泰/永豐加密帳單通過解鎖、全列/摘要核對及草稿冪等，國泰/永豐未自動確認正式入帳。parser 限上述已驗證文字版型與受限台新零交易。使用者批准未列日期的利息按明示結帳日認列，保留來源日期及認列依據，其他缺日期仍 pending。Codex MCP 匯入邊界已完成，網站 OAuth/scheduler 停用；Codex 自動化已建立，首次真實/跨日執行與第二期 parser 盲測未完成，不能因 API/合成測試成功宣稱無人收件或入帳。
+**核心流程狀態（2026-10-01）：** 中國信託／國泰九月及永豐八／九月已依收集登錄授權進入正式 Finance／Excel；82 筆含尚未批准撤銷的舊國泰 CSV 語意重複。最新三銀行新下載驗收通過解鎖、全列／摘要核對及草稿冪等，本次隔離驗收沒有自動確認正式入帳。parser 限上述已驗證文字版型與受限台新零交易。使用者批准未列日期的利息按明示結帳日認列，保留來源日期及認列依據，其他缺日期仍 pending。Codex MCP 匯入邊界已完成，網站 OAuth/scheduler 停用；Codex 自動化已建立，首次真實／跨日執行與第二期 parser 盲測未完成，不能因 API／合成測試成功宣稱無人收件或入帳。
 
 ## 1. 交付目標與授權
 
@@ -30,10 +30,10 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 | --- | --- | --- |
 | Git | 分類規劃基準 `f34550d`，遠端 taxonomy 基準 `430ef5c` 的六個文件提交，以正常 merge 整合；實作保存 commit `90328b0`。當前／推送結果須由 Git 命令驗證，不固定為舊 HEAD | 不能假定舊 HEAD 仍為目前版本、強推覆蓋遠端或移除未提交內容 |
 | S1-S3 | Gmail 自訂查詢隔離、提示上下文/遮罩、共用 PDF 解鎖用例已有程式與合成測試 | 需要全部重寫 |
-| S4 | 契約、月支出、穩定列 hash、pending 閘門及中國信託/國泰/永豐已驗證文字版型、受限台新零交易；三銀行新下載解鎖/解析/核對通過 | 已完成第二期盲測、國泰/永豐正式入帳或所有銀行 |
+| S4 | 契約、月支出、穩定列 hash、pending 閘門及中國信託／國泰／永豐已驗證文字版型、受限台新零交易；三銀行新下載解鎖／解析／核對通過，指定帳期另獲授權正式入帳 | 已完成第二期盲測、所有銀行或未知帳期自動入帳 |
 | PDF | 來源讀取、本機解密、文字抽取/預覽，OCR 有介面及 adapter | 已建立 Finance 交易 |
 | Gmail | Codex MCP 本機匯入 API 已完成；網站 OAuth/scheduler 預設停用，legacy 程式只供相容 | Codex 排程已完成真實／跨日驗收，或 PDF 可自動入帳 |
-| SQLite | 開發 head 0013；正式 `family-finance-hub-live.db`／正在執行的 M12 仍為 0012、18 筆。Statement 與分類各自擁有資料 | 可直接重啟正式服務、自動 confirm／恢復已撤銷資料或升級舊 DB |
+| SQLite | 開發 head 與正式 `family-finance-hub-live.db` 均為 0013；正式 M13 暫 82 筆。Statement 與分類各自擁有資料 | 未來可無授權升級、自動 confirm／恢復已撤銷資料或舊 CSV 已去重 |
 | Excel | 已有快照、背景檢查、ownership marker、原子替換及佔用重試；正式分類投影已核對交易／每期 API parity | 可把付款當收入，或將 legacy CSV 正值一律視為信用卡退款 |
 | 驗證 | 帳單／入帳與 Codex MCP import 有聚焦測試，frontend production build 成功；Groq/OpenAI dispatch 等以合成資料覆蓋 | 已完成第二期盲測、Groq runtime activation、Codex Gmail 真實長期自動化 |
 
@@ -84,23 +84,32 @@ S7 提供不需呼叫 API 的最小介面；S8 才串接無人處理；S9 做固
 
 **結果表必備欄：** 銀行、期別、Gmail 重新下載、來源密碼格式確認、加密解鎖、逐列解析/合計核對、冪等重跑、整體結果。程式測試/build 另外列示；不得建立永遠 skip 的測試來冒充這個外部關卡。
 
-#### Gmail 網頁下載：檢查點 → 下載 → 驗證
+#### Gmail 網頁下載：檢查點 → 先監聽再下載 → 驗證
 
-本機 Downloads 曾產生完整加密 PDF `.tmp`，但瀏覽器 download event 仍逾時；不能只等事件或搜尋新的 `.pdf`。每次選唯一 `retest-*` 目錄，三銀行依序操作，一次只下載一個指定附件。先讀來源郵件提示，排除繳款聯／通知／優惠信。
+本機 Downloads 曾產生完整加密 PDF `.tmp`，但瀏覽器 download event 仍逾時；不能只等事件或搜尋新的 `.pdf`。2026-10-01 同一中信原信的對照為「先監聽再 click：有新完整檔；只 click：無新檔；先監聽再 click：再次有新完整檔」。固定使用以下兩階段 helper，不只延長 timeout。每次選唯一 `retest-*` 目錄，三銀行依序操作，一次只下載一個指定附件。先讀來源郵件提示，排除繳款聯／通知／優惠信。
 
 ```powershell
 $run = 'data/gmail-acceptance/retest-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 .\.venv\Scripts\python.exe scripts/gmail_attachment_download.py prepare --run-directory $run --label ctbc
-# 在已登入 Gmail 的來源郵件，點「下載附件」而非 PDF 預覽器的下載控制。
+# 在 prepare 與 collect 之間執行下方瀏覽器 helper，不直接 click。
 .\.venv\Scripts\python.exe scripts/gmail_attachment_download.py collect --run-directory $run --label ctbc --timeout 90
 ```
 
-國泰、永豐依序使用各自 label，且每家都在點擊前 prepare。先確認附件掃描／載入結束、下載按鈕 enabled；「按鈕可見」不等於下載已成功。本輪中信首次沒有新檔，重新載入原信、確認可用並建立新 checkpoint 後才成功，仍不把此推論當成瀏覽器根因。預設檢查目前 Windows 帳戶的 Downloads；若瀏覽器另存其他位置，依可觀察的實際位置用 `--downloads '<資料夾>'`，不能猜路徑。CLI 任一步非零退出就不能匯入。
+瀏覽器步驟必須在已登入 Gmail 的支援 session 中執行。先讀 `scripts/gmail_browser_download.mjs`，把其 exported 函式本體（去掉 `export`）定義在 `cua_repl`，不另啟 Playwright／CDP 或讀取 cookies。使用已觀察到的 tab binding 及附件名稱：
+
+```javascript
+nodeRepl.write(await downloadGmailAttachment(tab, "CTBC_card_Estatement_11509.pdf"));
+```
+
+helper 限 HTTPS Gmail、唯一且 visible/enabled 的指定 PDF 附件下載按鈕。它在同一次呼叫中先建立 download listener，再 click 一次，處理並等待事件結果；不盲目重試、不輸出原始錯誤。`collect_required` 只表示接著驗檔，絕不是 PASS。附件檔名只作 UI 比對，不是密碼／prompt；要傳實際已觀察的檔名，不能把範例帳期當成目前帳期。回歸測試：`node --test scripts/tests/gmail_browser_download.test.mjs`。
+
+國泰、永豐依序使用各自 label，且每家都在 helper 前 prepare、helper 後立即 collect。先確認附件掃描／載入結束、下載按鈕 enabled；「按鈕可見」不等於下載已成功。預設檢查目前 Windows 帳戶的 Downloads；若瀏覽器另存其他位置，依可觀察的實際位置用 `--downloads '<資料夾>'`，不能猜路徑。helper 的事件 path 也只有候選效力；若落在其他資料夾，先記錄實際位置、重建 checkpoint 後重新下載，不把舊檔補成新驗收。CLI 任一步非零退出就不能匯入。
 
 - `prepare` 記錄既有檔名的 hash、時間及唯一檢查點識別碼；checkpoint 十分鐘後過期，需重新 prepare／下載。
 - `collect` 等大小／修改時間穩定兩秒，再驗 `%PDF-`、檔尾 `%%EOF`、strict PdfReader 結構、讀取前後一致及 SHA-256；拒絕舊檔、超過 25MB、HTML、截斷檔、symlink 與 `.crdownload`，多個完整 PDF 不猜。90 秒預設 timeout，CLI 最多 180 秒。
 - 成功後以 SHA-256 檔名複製原始加密 bytes 到 `$run/<label>/`，保存 receipt；原 Downloads 檔不刪除／改名。receipt 必須匹配當次 checkpoint，重新 prepare 後舊 receipt 無效。
-- 工具事件逾時時仍先 collect，不盲目連點。真的沒有完整新檔時，查當前 Gmail／登入／附件按鈕與實際下載位置；排除明確阻塞後用新 label prepare，再點一次，保留前次證據。遇多檔歧義、瀏覽器保護、登入或權限限制就停止該來源並交接，不停用保護或借用舊檔。
+- 工具事件逾時時仍先 collect，不盲目連點。每次 CLI 狀態寫入 label 下的 `diagnostic.json`；`no_new_file` 表示未見新檔，先查監聽順序／目前 Gmail／登入／附件按鈕及實際下載位置；`pdf_not_ready` 以計數區分 `.crdownload`、空檔、超限檔與候選，不能送 parser；`checkpoint_expired` 須新 label prepare 並重新下載。排除明確阻塞後用新 checkpoint 與 helper 重試，保留前次證據。遇多檔歧義、瀏覽器保護、登入或權限限制就停止該來源並交接，不停用保護或借用舊檔。
+- 這是本機已重複驗證的操作修復，瀏覽器事件未回傳及 `.tmp` 未改名的內部原因仍未證實；不承諾外部 Gmail／瀏覽器永不失敗。後續每次交付仍需實際重新下載及核對。
 - 文件完整不代表銀行正確或安全掃描通過；仍須以來源郵件、解鎖內容的銀行／期別及獨立逐列／摘要核對完成本關卡。
 
 三份附件可在隔離驗收 API 使用既有應用程式流程。先確認 8031 空閒，再於正常 Windows 登入帳戶啟動（背景啟動須 `Start-Process -WindowStyle Hidden`）；不要在沙箱帳戶假稱已保存的憑證不存在：

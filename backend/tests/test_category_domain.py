@@ -88,10 +88,32 @@ def test_explicit_local_purpose_rules(description, code):
     assert result.rule_id and result.reason
 
 
+@pytest.mark.parametrize("description,code", [
+    ("A- 臺北大眾捷運股份有限公司", "transport"),
+    ("OPENAI *CHATGPT SUBSCR OPENAI.COM US", "entertainment"),
+    ("A- １０１美食街", "food"), ("A- 三新奧特萊斯 林口Ⅰ館－餐飲", "food"),
+    ("小島泰式料理", "food"), ("瑪莎拉印度餐廳－板橋店", "food"),
+    ("阿義師的大茶壺茶餐廳", "food"), ("A- 洋城義大利餐酒館內湖店", "food"),
+    ("永秦加油站", "transport"), ("高加加油站", "transport"),
+    ("A- 車容坊元泰站－自助加油", "transport"), ("中油－基隆路站（Ｄ２１４４）", "transport"),
+])
+def test_statement_explicit_purposes_handle_bank_prefix_and_fullwidth(description, code):
+    result = resolver().resolve(description, Decimal("-100"), "s", "purchase")
+    assert (result.category.code, result.source) == (code, "builtin_rule")
+
+
+def test_subscription_fee_and_refund_keep_their_semantics():
+    description = "OPENAI *CHATGPT SUBSCR OPENAI.COM US"
+    assert resolver().resolve(description, Decimal("-10"), "s", "fee").category.code == "finance"
+    assert resolver().resolve(description, Decimal("100"), "s", "refund").source == "uncategorized"
+
+
 @pytest.mark.parametrize("description", [
     "7-ELEVEN 001", "全家便利商店", "COSTCO", "蝦皮", "momo", "PChome", "百貨公司",
     "LINE PAY", "街口支付", "APPLE PAY", "APPLE.COM/BILL", "GOOGLE", "UBER", "NETFLIXBOOKSTORE",
     "電子書店旁便利商店", "SHOP NETFLIX", "國泰人壽", "保險費退款", "BOOKS", "",
+    "樂購蝦皮-加油站模型", "樂購蝦皮-小島泰式料理食譜", "A- 全家便利商店－新店安和店",
+    "悠遊卡自動加值─台北捷", "OPENAI *CHATGPT SUBSCR BOOKSTORE", "A- 臺北大眾捷運股份有限公司商店",
 ])
 def test_ambiguous_merchants_and_false_keyword_matches_stay_unknown(description):
     assert resolver().resolve(description, Decimal("-100"), "s", "purchase").source == "uncategorized"

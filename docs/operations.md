@@ -1,6 +1,6 @@
 # 家庭收支記錄：操作與部署
 
-> 現況（2026-10-01）：repository head 為 `0013_category_taxonomy`，正在執行的正式 M12 服務／live.db 仍為 `0012_transaction_categories`。**本次 Git 整理／merge 不包含正式部署授權，不可直接 build 正式 dist 或重啟正式排程。** 升級依下方資料庫程序；目前開發請用 [README 的隔離預覽](../README.md#分類功能隔離預覽)。
+> 現況（2026-10-01）：使用者已另批准正式站升級，repository／正式 API／live.db 同為 M13／`0013_category_taxonomy`，正式前端與 owned Excel 已同步，82 筆交易保留。最新成對備份及檢查在 ignored `data/backups/20261001-m13-chart-fix/`。下次升級仍須當次授權，不因 Git 更新自動部署；開發使用 [隔離預覽](../README.md#分類功能隔離預覽)。
 
 ## Windows 本機
 
@@ -8,7 +8,7 @@
 
 可選 OCR 依賴以 `python -m pip install -e "backend[ocr]"` 安裝；Tesseract OCR 執行檔及繁體中文/英文語言資料需另外安裝。可用 `FAMILY_FINANCE_HUB_TESSERACT` 指定執行檔，`FAMILY_FINANCE_HUB_OCR_LANG` 指定語言，預設為 `chi_tra+eng`。OCR 僅在 PDF 文字抽取不足時啟動，先以 `tesseract --list-langs` 確認所需語言資料，再開始渲染；最多處理 20 頁、每頁限制約 8 百萬像素，總逾時 120 秒。缺少引擎或語言資料時，UI 會顯示不同狀態且不阻止 PDF 預覽。PDF 渲染及 OCR 內容只在記憶體處理，不保存辨識文字或臨時頁面影像。
 
-開發時兩個服務預設綁定 `127.0.0.1`，Vite 會將 `/api` 轉送到本機的 API。此 Windows 主機正在執行的正式服務由單一 FastAPI 在 `127.0.0.1:3000` 提供既有靜態網頁及 `/api`。`start_server.ps1` 是正式啟動器，但當前新 head／舊正式 schema 不相容，升級授權、副本驗證及配套 build 完成前不得觸發正式排程。Tailscale Serve 已將此主機的私有 HTTPS 網址轉送到 `localhost:3000`；不要為手機預覽改綁 `0.0.0.0` 或重設既有 Serve。
+開發時兩個服務預設綁定 `127.0.0.1`，Vite 將 `/api` 轉送到本機 API。正式由單一 FastAPI 在 `127.0.0.1:3000` 提供 M13 靜態網頁與 `/api`；`start_server.ps1` 是正式啟動器，透過既有 `FamilyFinanceHub` 排程明確指定 live.db。目前程式／schema／dist 相容，不重複啟動；未來不相容時先停止並完成授權升級程序。Tailscale 私有 HTTPS 轉送至 `localhost:3000`，不要改綁 `0.0.0.0` 或重設 Serve。
 
 `data/family-finance-hub-live.db` 是這台主機的新版資料庫。舊 `data/family-finance-hub.db` 仍是舊 revision `0003_gmail_sync_state`，不要將新版 API 或 Alembic 直接指向舊檔。升級前的一致性資料庫備份 `data/backups/2026-09-29-pre-deploy/family-finance-hub-online.db` 與文件備份保存在本機，不進 Git。舊開發連接埠可能仍寫入舊資料庫，請只用新網址操作；兩份資料庫不會自動同步。此主機的 `FamilyFinanceHub` 排程使用目前 Windows 使用者的互動式登入，不會保存密碼；登出或關機後需再次登入才能服務。排程已經由手動觸發測試，但尚未實際重開機驗證。
 
@@ -34,7 +34,7 @@ npm run dev -- --host <Windows-Tailscale-IP>
 
 | 環境 | 本機前端 → API | 私有 HTTPS 埠 | 資料 |
 | --- | --- | --- | --- |
-| 正式 M12 | 3000 同源 | 443 | live.db，0012／18 筆，不由本次更新 |
+| 正式 M13 | 3000 同源 | 443 | live.db，0013／暫 82 筆；舊 CSV 重複風險待決策 |
 | 舊 M12 預覽 | 3001 → 8030 | 8443 | category-preview/synthetic.db，有效 0 筆、來源已撤銷 |
 | M13 預覽 | 3002 → 8032 | 8444 | category-preview-20261001/synthetic.db，0013／18 筆合成 |
 
@@ -46,7 +46,11 @@ npm run dev -- --host <Windows-Tailscale-IP>
 
 ## 資料庫版本升級
 
-本版本 Alembic head 為 `0013_category_taxonomy`，此主機正式 live.db 仍為 `0012_transaction_categories`；`start_server.ps1` 不自動 migration。未來升級先取得當次授權、停止 API 並成對備份 DB／文件／owned workbook／舊 dist，在副本驗證後才對正確的 `FAMILY_FINANCE_HUB_DATABASE_URL` 執行 `python -m alembic -c backend/alembic.ini upgrade head`，同步 build 後以原使用者排程啟動。`0009` 增加撤銷，`0010` 增加 Excel 狀態，`0011` 增加可核對的帳單與冪等入帳，`0012` 新增 Category／Rule／Override；`0013` 新增圖書／保險並保留自訂名稱、ID、引用及人工資料，均不改寫 FinanceTransaction identity。正式升級前須另批准既有資料分類預覽／套用範圍，Git push 不構成部署批准。
+Alembic head 與正式 live.db 均為 `0013_category_taxonomy`；`start_server.ps1` 不自動 migration。未來升級先取得當次授權、停止 API 並成對備份 DB／文件／owned workbook／舊 dist，在副本驗證後才對正確的 `FAMILY_FINANCE_HUB_DATABASE_URL` 執行 `python -m alembic -c backend/alembic.ini upgrade head`，同步 build 後以原使用者排程啟動。`0009` 增加撤銷，`0010` 增加 Excel 狀態，`0011` 增加帳單及冪等入帳，`0012` 新增 Category／Rule／Override；`0013` 新增圖書／保險並保留自訂名稱、ID、引用及人工資料，均不改寫 FinanceTransaction identity。分類人工指定／規則變更範圍另確認；Git push 不構成部署批准。
+
+2026-10-01 M13 正式升級證據在 `data/backups/20261001-m13-chart-fix/`：一致性 DB、20 個文件原件、owned Excel、舊 dist、排程 XML、後端 source 及相容 M12 程式封存。副本 0012 → 0013 → 0012 → 0013 演練通過；正式只升級至 0013，遷移只改分類／版本表，其餘資料完整保留。82 筆交易核心欄位／分類及八／九月 Excel 分類合計與 API 相符；20 個原件 hash 不變。原帳戶排程啟動、SecretStore 保存狀態及正式 HTTPS／五色圖／分類下鑽已驗，沒有撤銷舊 CSV、外部 AI 或新 Git 寫入。正式實體手機／Mac 與重開機驗收仍待完成。
+
+停止 `FamilyFinanceHub` 排程可能留下 Python 子程序：本輪排程變 Ready，但 3000 仍由原 uvicorn 子程序監聽。**停止排程不等於 API 已停。** 操作時先用 `Get-NetTCPConnection`、`Get-CimInstance Win32_Process` 及 `GetOwner` 核對連接埠、完整命令列、父程序及帳戶，再只停止確認屬於本專案的殘留程序；不能按埠猜身分或中止其他長駐服務。3000 確實空閒後才遷移及啟動原排程。啟動後 `LastTaskResult=267009` 表示仍在執行，須連同 health／Finance API／畫面確認，不視為失敗碼。
 
 2026-09-30 正式分類部署備份與驗證證據在本機 `data/backups/20260930-categories-1845/`，不進 Git：一致性 DB、20 個文件、owned Excel、旧 dist、排程與基準程式封存。成對副本還原、0011 → 0012 → 0011 → 0012 演練及全原有表／文件 hash 保留通過；正式服務只升級到 0012，沒有 downgrade。原 18 筆交易保留，私有 HTTPS 443 與同源 API／分類畫面／Excel parity 已驗；8443 隔離預覽不變。回退須另有授權並配對資料與相容程式，勿用一份新 DB 搭配舊 dist／舊 API。
 
@@ -84,7 +88,7 @@ Excel 自動更新預設關閉。啟用後，每 30 秒比對 SQLite 快照；Ba
 
 ## 信用卡 PDF 到家庭收支
 
-支援版型的流程固定為：文件收錄 → 本機解鎖 → `BankStatementParser` 解析交易列 → 帳單合計核對 → UI 顯示待確認列 → 使用者確認 → Finance transaction → Excel rebuild。此版本已驗證中國信託／國泰／永豐指定文字版型及受限台新零交易；未知版型仍待處理，不猜欄位或金額。未列日期的利息只有在原件明示結帳日且依已批准政策時按結帳日認列，保留原始日期空值與 basis；其他缺日期不套用。重複確認重用既有交易，不新增第二份。部署後三銀行新下載／解鎖／逐列／摘要／冪等重測通過；國泰／永豐草稿沒有自動確認。
+支援版型的流程固定為：文件收錄 → 本機解鎖 → `BankStatementParser` 解析交易列 → 帳單合計核對 → UI 顯示待確認列 → 使用者確認 → Finance transaction → Excel rebuild。此版本已驗證中國信託／國泰／永豐指定文字版型及受限台新零交易；未知版型仍待處理，不猜欄位或金額。未列日期的利息只有在原件明示結帳日且依已批准政策時按結帳日認列，保留原始日期空值與 basis；其他缺日期不套用。重複確認重用既有交易，不新增第二份。本輪三銀行新下載／解鎖／逐列／摘要／冪等驗收通過，隔離測試沒有 confirm；此前正式中信／國泰／永豐已依使用者收集授權入帳，舊 CSV 語意重複仍待決策，詳見 HANDOFF。
 
 Codex MCP Gmail 來源會保存遮罩後的郵件規則提示供解鎖流程使用；一般本機上傳可由 UI 輸入不含實際密碼的規則提示。實際身分證、生日與組合密碼只從 Windows Credential Manager／本機記憶體使用，不寫入 SQLite、log 或 Excel。Codex 排程只收錄附件，仍需在文件詳情完成核對與確認，不把收件視為自動入帳。
 
