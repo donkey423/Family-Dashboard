@@ -4,7 +4,7 @@ from secure_documents.unlock.stores import MemorySecretStore
 
 
 def test_compose_full_national_id_and_birthday():
-    store = MemorySecretStore({"id-ref": "a123456789", "dob-ref": "1991-07-11"})
+    store = MemorySecretStore({"id-ref": "a123456789", "dob-ref": "2000-01-02"})
     rule = PasswordRule.model_validate({
         "status": "ambiguous",
         "candidates": [
@@ -14,5 +14,5 @@ def test_compose_full_national_id_and_birthday():
     })
     assert compose_candidates(rule, store, national_id_ref="id-ref", birthday_ref="dob-ref") == (
         "A123456789",
-        "19910711",
+        "20000102",
     )
