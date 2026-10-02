@@ -68,3 +68,13 @@ Serve 路由不啟動程式，裝置須加入同一 Tailscale，服務須持續�
 3. A1 真實人工標註與未參與規則調整的第二期盲測分開；報 precision／coverage／待確認率，不把未知當成功。
 4. 秘密只在 Windows Credential Manager／SecretStore；本機安全組合，不讀出或保存秘密、全文／PII 不送 AI。僅 interest + 明示 closing_date 可沿用既有批准認列；其他缺日期、未知列或對帳不符維持 pending。
 5. SQLite 是事實來源、Excel 是 owned 可重建投影；保留 Documents 1:N、SHA-256、原子入帳及可恢復撤銷。下載 helper 的監聽／collect 已有回歸測試，但不能承諾外部服務永不失敗。
+
+
+## Secure Documents Skill v0.1（2026-10-02）
+
+- 新增 `skills/secure-documents/` 實驗性獨立 Skill/package；目的為文件種類無關的安全 PDF unlock + native extraction → `DocumentIR`，不是信用卡銀行白名單，也不是新的 Dashboard。
+- 保留安全邊界：PasswordRule 只含 symbolic secret reference；實際 national ID／birthday／PDF password 不進 repo、IR 或 model prompt；最多 3 個本機候選，解密只在 memory，Windows Credential Manager adapter 為 read-only。
+- 包含 `SourceDocument`、`UnlockResult`、`DocumentIR`、`ExtractedFact+Evidence` contract、local PDF adapter、Family Dashboard credential-reference 唯讀匯入、CLI、PowerShell 入口及 regression tests。
+- 本輪隔離生成物已實跑 `pytest -q`：**6 passed**，另通過 `python -m compileall -q src`。測試含 synthetic encrypted PDF，驗證可由 symbolic rule + local in-memory secret 解鎖且 IR 不洩漏候選值。
+- **未驗證**：此執行環境不是使用者的 Windows 登入 session，因此尚未真實讀取該主機 Windows Credential Manager，也未拿真實加密文件跑 Skill；本輪亦未重新執行 Family Dashboard 的 E2E-GMAIL-3BANK。故此項為 prototype merge，不宣稱正式 runtime / 真實 Gmail 交付已驗收。
+- 此變更沒有啟動/重啟正式服務、沒有 migration、沒有修改 live DB、沒有寫入 Finance/Excel，也沒有修改任何 secret/provider。
