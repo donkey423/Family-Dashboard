@@ -179,3 +179,8 @@ npm run build -- --outDir dist-category-preview
 - [免費 AI 密碼規則 Provider 規格](FREE_AI_PASSWORD_RULE_PLAN.md)
 - [Groq Runtime 深度審查與切換方案](GROQ_RUNTIME_REVIEW.md)
 - [消費分類、支出 Donut 與下鑽規劃](CATEGORY_SPENDING_PLAN.md)
+
+
+## Secure Documents Skill v0.1（實驗性）
+
+`skills/secure-documents/` 是獨立的 local-first Secure Document extraction 原型，目標是把文件種類無關的 PDF（包含密碼保護 PDF）安全轉成 versioned `DocumentIR`。v0.1 只做 local file acquisition、SHA-256、symbolic PasswordRule、Windows Credential Manager read-only adapter、最多 3 組本機候選、memory-only decrypt、native text/position blocks 與 Family Dashboard credential-reference 匯入；不做 OCR、信用卡/保險 domain parsing、Dashboard/Excel、RAG 或 cloud AI。它目前未接到正式 Family Dashboard runtime，也沒有改正式 DB/schema/service。
