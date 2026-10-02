@@ -1,3 +1,8 @@
+---
+name: secure-documents
+description: Securely unlock and extract local or Gmail-delivered PDFs into versioned DocumentIR using local secrets; use when reading, inspecting, summarizing, organizing, or understanding PDFs/documents, especially password-protected files.
+---
+
 # Secure Documents Skill
 
 ## Purpose

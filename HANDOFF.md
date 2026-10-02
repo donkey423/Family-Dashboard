@@ -78,3 +78,4 @@ Serve 路由不啟動程式，裝置須加入同一 Tailscale，服務須持續�
 - 本輪隔離生成物已實跑 `pytest -q`：**6 passed**，另通過 `python -m compileall -q src`。測試含 synthetic encrypted PDF，驗證可由 symbolic rule + local in-memory secret 解鎖且 IR 不洩漏候選值。
 - **未驗證**：此執行環境不是使用者的 Windows 登入 session，因此尚未真實讀取該主機 Windows Credential Manager，也未拿真實加密文件跑 Skill；本輪亦未重新執行 Family Dashboard 的 E2E-GMAIL-3BANK。故此項為 prototype merge，不宣稱正式 runtime / 真實 Gmail 交付已驗收。
 - 此變更沒有啟動/重啟正式服務、沒有 migration、沒有修改 live DB、沒有寫入 Finance/Excel，也沒有修改任何 secret/provider。
+- 2026-10-03 補上 Codex repo-scoped discovery：`.codex/skills/secure-documents/SKILL.md` 是薄入口，canonical implementation 仍只有 `skills/secure-documents/`；canonical `SKILL.md` 已加入標準 front matter。這只改善 Codex 發現/載入，不等於 Windows Credential Manager 真機驗收。
