@@ -1,0 +1,5 @@
+[secrets]
+service_name = "family-finance-hub"
+# References only. Do not put the actual national ID, birthday, or PDF password here.
+national_id_ref = "personal-unlock:<uuid>:id"
+birthday_ref = "personal-unlock:<uuid>:birthday"

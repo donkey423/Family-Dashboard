@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "secure-documents-skill"
+version = "0.1.0"
+description = "Local-first secure PDF unlock and extraction core for agent skills."
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.8",
+  "pypdf>=5.0",
+]
+
+[project.optional-dependencies]
+windows = ["keyring>=25.0"]
+dev = ["pytest>=8", "reportlab>=4"]
+
+[project.scripts]
+secure-documents = "secure_documents.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
