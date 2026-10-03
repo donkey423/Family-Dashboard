@@ -1,21 +1,24 @@
-# Secure Documents Codex Skill v0.3 — install artifact
+# Secure Documents Codex Skill v0.3 — verified install artifact
 
 This branch carries the verified standalone user-scoped Codex Skill artifact.
 
 ## Canonical artifact
 
-The ZIP is stored as six Base64 text parts because the GitHub connector cannot safely round-trip binary ZIP bytes.
+The ZIP is stored as Base64 text parts because the GitHub connector cannot safely round-trip binary ZIP bytes.
 
-Files, in order:
+Use these files in this exact order:
 
-- `secure-documents-codex-skill-v0.3.zip.b64.part00`
-- `secure-documents-codex-skill-v0.3.zip.b64.part01`
-- `secure-documents-codex-skill-v0.3.zip.b64.part02`
-- `secure-documents-codex-skill-v0.3.zip.b64.part03`
-- `secure-documents-codex-skill-v0.3.zip.b64.part04`
-- `secure-documents-codex-skill-v0.3.zip.b64.part05`
+1. `secure-documents-codex-skill-v0.3.zip.b64.part00`
+2. `secure-documents-codex-skill-v0.3.zip.b64.part01`
+3. `secure-documents-codex-skill-v0.3.zip.b64.part02`
+4. `secure-documents-codex-skill-v0.3.zip.b64.part03a`
+5. `secure-documents-codex-skill-v0.3.zip.b64.part03b`
+6. `secure-documents-codex-skill-v0.3.zip.b64.part04`
+7. `secure-documents-codex-skill-v0.3.zip.b64.part05`
 
-Concatenate the six files exactly in lexical order, Base64-decode once, and write the bytes as:
+Do not use any other part names.
+
+Concatenate the seven files exactly in that order, Base64-decode once, and write:
 
 `secure-documents-codex-skill-v0.3.zip`
 
@@ -24,7 +27,11 @@ Expected decoded ZIP:
 - bytes: `21644`
 - SHA-256: `2edd94420bd960438e412d858781d0144d8f23dd6e78820e9dacfbc2106bc0f1`
 
-If the decoded ZIP hash differs, stop and do not install.
+A helper is included:
+
+`reconstruct.ps1`
+
+Run it from this artifact directory. It refuses to continue if the reconstructed ZIP size or SHA-256 differs.
 
 ## Install target
 
@@ -51,11 +58,21 @@ The installer backs up an existing Skill directory before replacement.
 - fail closed on ambiguous password rules
 - no project runtime dependency
 
-## Local validation before publishing
+## Validation
+
+Local package validation before publishing:
 
 - `pytest -q`: **14 passed**
 - `python -m compileall -q src`: PASS
 - `PYTHONPATH=src python -m secure_documents.cli --help`: PASS
-- ZIP structure check: PASS
-- synthetic encrypted-PDF tests: PASS
-- no real Windows Credential Manager secret was read during packaging
+- ZIP structure: PASS
+- synthetic encrypted-PDF E2E: PASS
+
+Remote artifact verification after upload:
+
+- Base64 parts total length: `28860`
+- decoded ZIP bytes: `21644`
+- reconstructed remote SHA-256: `2edd94420bd960438e412d858781d0144d8f23dd6e78820e9dacfbc2106bc0f1`
+- remote checksum match: **PASS**
+
+No real Windows Credential Manager secret was read during packaging or remote verification.
